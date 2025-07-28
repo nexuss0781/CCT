@@ -1,0 +1,18 @@
+[package]
+name = "causa_core"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "causa_py"  # The name Python will use to import the library
+crate-type = ["cdylib"] # Compile to a C-Dynamic Library
+
+[dependencies]
+# For high-performance, multi-dimensional arrays
+ndarray = "0.15"
+
+# The bridge for creating Python bindings from Rust code
+pyo3 = { version = "0.18", features = ["extension-module"] }
+
+# For creating professional, structured error types
+thiserror = "1.0"
