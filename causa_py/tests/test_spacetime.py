@@ -8,9 +8,12 @@ def test_event_creation_and_properties():
     temp_ten = [10, 1]
     caus_pot = [0.5, -0.5]
     event = Event(sem_vec, temp_ten, caus_pot)
-    assert event.semantic_vector == sem_vec
+    
+    # Use pytest.approx for floating point comparisons
+    assert event.semantic_vector == pytest.approx(sem_vec)
     assert event.temporal_tensor == temp_ten
-    assert event.causal_potential_vector == caus_pot
+    assert event.causal_potential_vector == pytest.approx(caus_pot)
+
     new_temp_ten = [11, 2]
     event.temporal_tensor = new_temp_ten
     assert event.temporal_tensor == new_temp_ten
