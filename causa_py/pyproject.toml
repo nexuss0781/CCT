@@ -22,3 +22,6 @@ dependencies = [
     "matplotlib",
     "plotly",
 ]
+
+[tool.maturin]
+manifest-path = "../causa_core/Cargo.toml"
