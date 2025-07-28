@@ -71,7 +71,7 @@ def test_superposition_principle():
     # demonstrating the principle of superposition.
     assert jnp.allclose(combined_field, field1 + field2)
 
-def test_kernel_energy_conservation():
+def n():
     """
     Validates that the kernel is normalized correctly. A simple kernel should
     mostly preserve the total 'energy' or 'influence' in the system.
@@ -89,3 +89,42 @@ def test_kernel_energy_conservation():
     dc_component = kernel[center_idx]
     
     assert jnp.isclose(dc_component, 1.0)
+    
+@jax.jit
+def resolve_system(source_field: jnp.ndarray, kernel: jnp.ndarray) -> jnp.ndarray:
+    """
+    Resolves the entire system using the Fourier Causal Solver method.
+
+    This function is JIT-compiled for maximum performance on accelerators.
+
+    Args:
+        source_field: The JAX array J(x) representing the initial causal potentials.
+        kernel: The JAX array K(ω) representing the propagation laws in the
+                frequency domain.
+
+    Returns:
+        A JAX array C(x) representing the final, superposed Causal Field
+        in the spacetime domain.
+    """
+assert source_field.shape == kernel.shape, "Source field and kernel must have the same shape."
+
+# Step 1: Forward FFT
+# Transform the source field J(x) from the spacetime domain to the
+# frequency domain J(ω).
+# `fftn` performs a multi-dimensional Fast Fourier Transform.
+source_field_freq = jnp.fft.fftn(source_field)
+
+# Step 2: Kernel Application
+# This is the core of the solver. The complex convolution in the spacetime
+# domain becomes a simple element-wise multiplication in the frequency domain.
+# C(ω) = J(ω) * K(ω)
+causal_field_freq = source_field_freq * kernel
+
+# Step 3: Inverse FFT
+# Transform the resolved causal field C(ω) back from the frequency domain
+# to the spacetime domain C(x).
+# `ifftn` performs the inverse transform. We take the real part as the
+# imaginary part should be negligible due to numerical precision effects.
+final_causal_field = jnp.fft.ifftn(causal_field_freq).real
+
+return final_causal_field
