@@ -1,3 +1,5 @@
+import sys
+sys.path.insert(0, '/content/CCT/causa_py') # Add the package to the path
 import pytest
 from causa_py import Manifold, Event
 
