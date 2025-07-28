@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "causa_py"
+version = "0.1.0"
+authors = [
+  { name="Genesis Architect", email="architect@cct.dev" },
+]
+description = "Python interface and JAX backend for the Causa Protosystem."
+requires-python = ">=3.9"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "jax[gpu]", # For GPU/TPU accelerated numerical computation
+    "numpy",
+    "optax", # Optimizer library for JAX
+    "matplotlib",
+    "plotly",
+]
