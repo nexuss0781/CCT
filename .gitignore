@@ -1,0 +1,15 @@
+# Rust build artifacts
+/causa_core/target/
+/causa_core/Cargo.lock
+
+# Python artifacts
+__pycache__/
+*.pyc
+.venv/
+/causa_py/dist/
+/causa_py/*.egg-info/
+
+# IDE and OS specific
+.vscode/
+.idea/
+.DS_Store
