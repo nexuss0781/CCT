@@ -1,10 +1,14 @@
 import jax
 import jax.numpy as jnp
 from typing import Dict, Any
-
-# We will import our Rust classes here. This will work once the library is built.
 from .causa_py import Manifold, Event
 
+@jax.jit
+def resolve_system(source_field: jnp.ndarray, kernel: jnp.ndarray) -> jnp.ndarray:
+    assert source_field.shape == kernel.shape, "Source field and kernel must have the same shape."
+    source_field_freq = jnp.fft.fftn(source_field)
+    causal_field_freq = source_field_freq * kernel
+    return jnp.fft.ifftn(causal_field_freq).real
 def create_source_field(manifold: Manifold) -> jnp.ndarray:
     """
     Constructs the initial Causal Source Field J(x) from the Events on the Manifold.
