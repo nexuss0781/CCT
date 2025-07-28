@@ -1,5 +1,7 @@
-// Declare the event module
+// Declare the event and manifold modules
 pub mod event;
+pub mod manifold;
 
-// Re-export the Event struct to make it easily accessible from parent modules
+// Re-export the structs to make them easily accessible
 pub use event::Event;
+pub use manifold::Manifold;
