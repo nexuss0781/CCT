@@ -11,3 +11,4 @@ spec.loader.exec_module(causa_py)
 
 Manifold = causa_py.Manifold
 Event = causa_py.Event
+from . import physics
