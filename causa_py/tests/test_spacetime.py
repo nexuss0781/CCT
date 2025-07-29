@@ -1,14 +1,13 @@
+import importlib.util
 import sys
-sys.path.insert(0, '/content/CCT/causa_py')
 
-import sys
-sys.path.insert(0, '/content/CCT/causa_py')
+so_path = "/content/CCT/causa_py.so"
+spec = importlib.util.spec_from_file_location("causa_py", so_path)
+causa_py = importlib.util.module_from_spec(spec)
+sys.modules["causa_py"] = causa_py
+spec.loader.exec_module(causa_py)
 
-import sys
-sys.path.insert(0, '/content/CCT/causa_py') # Add the package to the path
-import pytest
 from causa_py import Manifold, Event
-
 def test_event_creation_and_properties():
     sem_vec = [0.1, 0.2]
     temp_ten = [10, 1]
