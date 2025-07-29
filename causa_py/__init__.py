@@ -1,14 +1,18 @@
+# === /content/CCT/causa_py/__init__.py ===
+
+# Load Rust bindings from causa_native.so
 import importlib.util
 import sys
 import os
 
-so_path = os.path.join(os.path.dirname(__file__), "causa_py.so")
+_native_path = os.path.join(os.path.dirname(__file__), "causa_native.so")
+spec = importlib.util.spec_from_file_location("causa_native", _native_path)
+causa_native = importlib.util.module_from_spec(spec)
+sys.modules["causa_native"] = causa_native
+spec.loader.exec_module(causa_native)
 
-spec = importlib.util.spec_from_file_location("causa_py", so_path)
-causa_py = importlib.util.module_from_spec(spec)
-sys.modules["causa_py"] = causa_py
-spec.loader.exec_module(causa_py)
+Manifold = causa_native.Manifold
+Event = causa_native.Event
 
-Manifold = causa_py.Manifold
-Event = causa_py.Event
-from . import physics
+# ✅ Only after loading native, import local Python files
+import causa_py.physics  # NOT "from . import physics"
