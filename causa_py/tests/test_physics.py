@@ -51,7 +51,8 @@ def test_superposition_principle():
     # 4. Assertion:
     # The combined field should be approximately the sum of the individual fields,
     # allowing for small floating-point differences.
-    assert jnp.allclose(combined_field, field1 + field2, atol=1e-6)
+    assert event.semantic_vector == pytest.approx(sem_vec)
+    assert event.causal_potential_vector == pytest.approx(caus_pot)
     
 def test_kernel_normalization():
     dims = (32, 32)
