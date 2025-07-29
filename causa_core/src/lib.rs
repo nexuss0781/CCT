@@ -1,8 +1,8 @@
 use pyo3::prelude::*;
+use pyo3::exceptions::PyValueError;
 use ndarray::ArrayD;
 use thiserror::Error;
 
-// --- Error Definition ---
 #[derive(Error, Debug)]
 pub enum CausaError {
     #[error("Coordinates {0:?} are out of bounds.")]
@@ -15,30 +15,20 @@ impl From<CausaError> for PyErr {
     }
 }
 
-
-// --- Event Definition ---
-#[pyclass]
+#[pyclass(get_all, set_all)]
 #[derive(Clone, Debug)]
 pub struct Event {
-    #[pyo3(get, set)]
     pub semantic_vector: Vec<f32>,
-    #[pyo3(get, set)]
     pub temporal_tensor: Vec<isize>,
-    #[pyo3(get, set)]
     pub causal_potential_vector: Vec<f32>,
 }
 
 #[pymethods]
 impl Event {
     #[new]
-    pub fn new(
-        semantic_vector: Vec<f32>,
-        temporal_tensor: Vec<isize>,
-        causal_potential_vector: Vec<f32>,
-    ) -> Self {
+    pub fn new(semantic_vector: Vec<f32>, temporal_tensor: Vec<isize>, causal_potential_vector: Vec<f32>) -> Self {
         Event { semantic_vector, temporal_tensor, causal_potential_vector }
     }
-
     fn __repr__(&self) -> String {
         format!(
             "Event(temporal_pos: {:?}, semantic_dim: {}, causal_dim: {})",
@@ -49,8 +39,6 @@ impl Event {
     }
 }
 
-
-// --- Manifold Definition ---
 #[pyclass]
 #[derive(Debug)]
 pub struct Manifold {
@@ -66,7 +54,6 @@ impl Manifold {
         let grid = ArrayD::from_elem(dimensions.as_slice(), None);
         Ok(Manifold { dimensions, grid })
     }
-
     pub fn place_event(&mut self, event: Event) -> PyResult<()> {
         let coordinates: Vec<usize> = event.temporal_tensor.iter().map(|&x| x as usize).collect();
         let cell = self.grid.get_mut(coordinates.as_slice())
@@ -74,15 +61,12 @@ impl Manifold {
         *cell = Some(event);
         Ok(())
     }
-
-    #[pyo3(text_signature = "($self, coordinates)")]
     pub fn get_event(&self, coordinates: Vec<isize>) -> PyResult<Option<Event>> {
         let coordinates_usize: Vec<usize> = coordinates.iter().map(|&x| x as usize).collect();
         let cell = self.grid.get(coordinates_usize.as_slice())
             .ok_or_else(|| CausaError::OutOfBounds(coordinates.clone()))?;
         Ok(cell.as_ref().cloned())
     }
-
     fn __repr__(&self) -> String {
         format!(
             "Manifold(dimensions: {:?}, filled_cells: {})",
@@ -92,8 +76,6 @@ impl Manifold {
     }
 }
 
-
-// --- Python Module Definition ---
 #[pymodule]
 fn causa_py(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<Event>()?;
