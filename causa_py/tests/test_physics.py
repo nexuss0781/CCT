@@ -1,8 +1,10 @@
 import pytest
 import jax.numpy as jnp
-import physics
-from physics import create_source_field, create_propagation_kernel, resolve_system
+from causa_py import physics
+from causa_py.physics import create_source_field, create_propagation_kernel, resolve_system
 from causa_py import Manifold, Event
+
+# Your tests here
 
 
 def test_single_source_propagation():
