@@ -1,4 +1,4 @@
-# CCT
+
 # Chrono-Causal Tapestry (CCT) - The Genesis Project
 
 This repository contains the foundational source code for the Chrono-Causal Tapestry (CCT), a next-generation AI architecture.
