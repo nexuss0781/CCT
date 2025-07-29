@@ -1,7 +1,7 @@
 import jax
 import jax.numpy as jnp
 from typing import Dict, Any
-from .causa_py import Manifold, Event
+from . import Manifold, Event
 
 @jax.jit
 def resolve_system(source_field: jnp.ndarray, kernel: jnp.ndarray) -> jnp.ndarray:

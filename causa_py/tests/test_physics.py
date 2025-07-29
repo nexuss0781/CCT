@@ -1,8 +1,7 @@
-import pytest
 import jax.numpy as jnp
-from causa_py import physics
-from causa_py.physics import create_source_field, create_propagation_kernel, resolve_system
+import pytest
 from causa_py import Manifold, Event
+from causa_py.physics import create_propagation_kernel, resolve_system
 
 # Your tests here
 
@@ -53,8 +52,7 @@ def test_superposition_principle():
     # 4. Assertion:
     # The combined field should be approximately the sum of the individual fields,
     # allowing for small floating-point differences.
-    assert event.semantic_vector == pytest.approx(sem_vec)
-    assert event.causal_potential_vector == pytest.approx(caus_pot)
+    assert jnp.allclose(combined_field, field1 + field2)
     
 def test_kernel_normalization():
     dims = (32, 32)
