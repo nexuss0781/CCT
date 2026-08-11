@@ -1,15 +1,19 @@
-import importlib.util
-import os
-import sys
+"""Public Python interface for the CCT prototype.
 
-so_path = os.path.join(os.path.dirname(__file__), "causa_py.so")
+The native Rust extension is deliberately imported through its canonical
+module name. This avoids loading stale shared objects from the source tree and
+makes a missing native build an explicit, actionable installation error.
+"""
 
-spec = importlib.util.spec_from_file_location("causa_py", so_path)
-causa_py = importlib.util.module_from_spec(spec)
-sys.modules["causa_py"] = causa_py
-spec.loader.exec_module(causa_py)
-
-Manifold = causa_py.Manifold
-Event = causa_py.Event
+try:
+    from causa_native import Event, Manifold
+except ImportError as exc:  # pragma: no cover - exercised in clean-install diagnostics
+    raise ImportError(
+        "The CCT native extension is unavailable. Build it with "
+        "`make install-native` (or `maturin develop --manifest-path "
+        "causa_core/Cargo.toml`)."
+    ) from exc
 
 from . import physics
+
+__all__ = ["Event", "Manifold", "physics"]

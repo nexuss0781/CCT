@@ -2,17 +2,14 @@
 name = "causa_core"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
+description = "Rust/PyO3 substrate for the CCT-ASE research prototype."
 
 [lib]
-name = "causa_native"  # The name Python will use to import the library
-crate-type = ["cdylib"] # Compile to a C-Dynamic Library
+name = "causa_native"
+crate-type = ["cdylib"]
 
 [dependencies]
-# For high-performance, multi-dimensional arrays
-ndarray = "0.15"
-
-# The bridge for creating Python bindings from Rust code
-pyo3 = { version = "0.18", features = ["extension-module"] }
-
-# For creating professional, structured error types
-thiserror = "1.0"
+ndarray = "0.15.6"
+pyo3 = { version = "0.18.3", features = ["extension-module"] }
+thiserror = "1.0.69"
