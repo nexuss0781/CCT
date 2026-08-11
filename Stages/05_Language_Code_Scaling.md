@@ -4,19 +4,19 @@
 **Stage ID:** 5  
 **Predecessor:** Stage 4 — Persistent Verifiable Memory  
 **Successor:** Stage 6 — Deliberation and Verification  
-**Status:** Specification; implementation not started
+**Status:** Implemented in native C++20; Stage 5 gate validation in progress; Stage 6 approval required
 
 ## Purpose
 
 Stage 5 scales the validated CCT-ASE core to language and code while preserving the recurrence, causal-event, and memory contracts. The central question is whether the architecture provides a favorable quality–compute–memory trade-off on realistic data, not whether it can produce fluent text.
 
-The stage must compare CCT-ASE with matched Transformer, recurrent, and state-space baselines under controlled data, token, parameter, training-compute, and inference-latency budgets. It must also establish data provenance, contamination controls, checkpoint reproducibility, and code-execution evaluation.
+The implemented small-scale stage compares CCT-ASE with matched dense causal attention, GRU, diagonal SSM, CCT without memory, and CCT with frozen exact memory under controlled fixture, token, parameter, and training budgets. Large-scale distributed optimization remains outside this release. It must also establish data provenance, contamination controls, checkpoint reproducibility, and code-execution evaluation.
 
 ## Scope and non-goals
 
 The stage includes tokenizer or event vocabulary decisions, licensed and provenance-tracked corpora, deduplication, data mixture configuration, scalable training, checkpointing, language modeling, code modeling, long-context evaluation, memory-augmented training, and model documentation. It does not add autonomous tool use, unrestricted internet access, self-modification, or open-ended agent deployment.
 
-The initial scale should be deliberately small enough to support repeated ablations. Large-scale training is allowed only after the small-scale scaling trend is reproducible and no mandatory Stage 4 memory or Stage 2 sequence gate has regressed.
+The released scale is deliberately small enough to support repeated native ablations. The gate uses official Project Gutenberg text fixtures and repository-owned C++ fixtures for provenance auditing, while the bounded token micro-run evaluates a compact byte-fallback objective. Large-scale training remains blocked until this small-scale result is independently reviewed and reproduced.
 
 ## Data and governance contract
 
@@ -32,7 +32,7 @@ Every training and evaluation sample must carry dataset, source, license, split,
 | Contamination | Maintain held-out canaries and overlap checks | Benchmark leakage is unknown |
 | Reproducibility | Persist manifest hash and sampling seed | Training data cannot be reconstructed |
 
-The evaluation set must remain inaccessible to training jobs. Benchmark answers, hidden test files, and evaluator-only labels must be stored outside the training data path.
+The evaluation canary and evaluator-only labels remain outside the training data path. The native gate records a manifest audit, split identities, unique SHA-256 hashes, and a canary-overlap check; generated code is checked statically and is never executed on the host.
 
 ## Model and training contract
 
@@ -133,7 +133,7 @@ Stage 5 does not require CCT-ASE to beat every Transformer. It requires an hones
 
 ## Transition to Stage 6
 
-Stage 6 may begin when a named CCT-ASE checkpoint has passed data, reproducibility, language, code, long-context, memory-integrity, and efficiency gates. The checkpoint must be frozen for the first deliberation experiments so that improvements from the new workspace can be measured.
+Stage 6 may begin only after the named native C++ Stage 5 checkpoint has passed data, reproducibility, language/code micro-run, long-context, memory-attribution, code-safety, and efficiency-reporting checks, followed by explicit user approval. The checkpoint must be frozen for the first deliberation experiments so that improvements from the new workspace can be measured.
 
 The transition package must include manifests, hashes, training logs, checkpoint metadata, baseline configurations, contamination report, code-sandbox report, quality–compute curves, long-context curves, model card, and an explicit list of capabilities not demonstrated.
 

@@ -1,0 +1,6 @@
+# source_id split license source transformation sha256
+pg1342 train public_domain_us https://www.gutenberg.org/cache/epub/1342/pg1342.txt lowercase_filter 74f2665d6e6925fc2c17dec644bec9e87df478a0f1836822125e8acbb3777806
+pg11 validation public_domain_us https://www.gutenberg.org/cache/epub/11/pg11.txt lowercase_filter 01b38ea4c710a84bc18d0bd41271a5a1a92b94e97b2812f4dece97d4a694725e
+cct_memory_cpp train MIT https://github.com/nexuss0781/CCT/tree/49767f4672aa032e008ecc82ed33e963e9fa04b5/cpp/src/memory.cpp native_source d580a6c966910cef67e04cc6b546906ea19ae7f6670fcbb0d7f221cb54259370
+cct_causal_cpp test MIT https://github.com/nexuss0781/CCT/tree/49767f4672aa032e008ecc82ed33e963e9fa04b5/cpp/src/causal.cpp native_source 80b8f6085ddd7473c359228f2f605e74679032d298707810d327044a26a56c53
+stage5_canary canary evaluator_only local_generated heldout_literal 96a40a79f37e02a6960e5436c1f510c34f3df6b78e808ec56f449e1e75c5deea

@@ -1,12 +1,12 @@
 # CCT-ASE Native C++ Research Prototype
 
-The **Chrono-Causal Tapestry — Adaptive Spectral Engine (CCT-ASE)** is a research prototype for testing causal event fields and efficient spectral dynamics. The repository currently provides a reproducible **native C++20 numerical, sequence, causal-event, and persistent-memory substrate**; it does not claim to be a language model or superintelligence system. The implemented Stage 0 through Stage 4 gates establish reproducibility, numerical correctness, recurrent trainability, efficiency measurement, leakage-controlled graph conditioning, intervention prediction, counterfactual evaluation, persistent checksummed memory, exact retrieval, provenance, deletion, conflict handling, poisoning resistance, and recovery on declared local fixtures.
+The **Chrono-Causal Tapestry — Adaptive Spectral Engine (CCT-ASE)** is a research prototype for testing causal event fields and efficient spectral dynamics. The repository currently provides a reproducible **native C++20 numerical, sequence, causal-event, persistent-memory, and small-scale language/code substrate**; it does not claim to be a general language model or superintelligence system. The implemented Stage 0 through Stage 5 gates establish reproducibility, numerical correctness, recurrent trainability, efficiency measurement, leakage-controlled graph conditioning, intervention prediction, counterfactual evaluation, persistent checksummed memory, exact retrieval, provenance, deletion, conflict handling, poisoning resistance, checkpoint replay, bounded token learning, code-safety checks, and memory attribution on declared fixtures.
 
-> **Current status:** Stages 0 through 4 are implemented in native C++ and pass their mandatory gates. Stage 5 has not been implemented and requires explicit approval.
+> **Current status:** Stages 0 through 5 are implemented in native C++ and pass their mandatory gates. Stage 6 has not been implemented and requires explicit approval.
 
 ## Implemented scope
 
-The active runtime is C++20 with CMake and FFTW3. The native library provides event/manifold storage, periodic spectral Laplacians, an independent finite-difference reference Laplacian, leapfrog and RK4 integration, periodic/Dirichlet/Neumann boundaries, CFL rejection, bounded local potentials, analytic one-step gradients, a real/complex selective recurrent sequence core, segmented prefix-scan execution, optional RMS normalization, checkpointing, trained dense-attention/GRU/diagonal-SSM comparators, deterministic algorithmic benchmark executables, versioned causal event storage, DAG queries, leakage-safe graph-conditioned recurrence, synthetic structural-equation generation, intervention/counterfactual prediction, robustness, abstention, checksummed append-only memory logs, exact metadata/vector retrieval, versioning, citations, retention/deletion, conflict sets, and recovery.
+The active runtime is C++20 with CMake and FFTW3. The native library provides event/manifold storage, periodic spectral Laplacians, an independent finite-difference reference Laplacian, leapfrog and RK4 integration, periodic/Dirichlet/Neumann boundaries, CFL rejection, bounded local potentials, analytic one-step gradients, a real/complex selective recurrent sequence core, segmented prefix-scan execution, optional RMS normalization, checkpointing, trained dense-attention/GRU/diagonal-SSM comparators, deterministic algorithmic benchmark executables, versioned causal event storage, DAG queries, leakage-safe graph-conditioned recurrence, synthetic structural-equation generation, intervention/counterfactual prediction, robustness, abstention, checksummed append-only memory logs, exact metadata/vector retrieval, versioning, citations, retention/deletion, conflict sets, recovery, byte-fallback vocabulary, manifest-addressed fixtures, checkpoint-resumable token models, matched dense-attention/GRU/diagonal-SSM/CCT comparators, frozen-memory attribution, long-context diagnostics, and static code-safety checks.
 
 The implementation is deliberately split into clear reference paths and optimized paths. The spectral and finite-difference solvers are compared on identical inputs, and the sequence loop and prefix scan are compared on identical inputs, including complex state and segmented masks. Gates check manufactured solutions, temporal convergence, energy drift, boundary residuals, recurrent path equivalence, gradient agreement, checkpoint recovery, copy/parity/associative/overwrite learning, trained matched baselines, ablations, and measured scaling.
 
@@ -17,7 +17,8 @@ The implementation is deliberately split into clear reference paths and optimize
 | Stage 2 — Efficient sequence core | **PASS** | `cct_sequence_tests`, `cct_stage2_gate`, `Stages/02_Sequence_Core.md` |
 | Stage 3 — Causal event learning | **PASS** | `cct_causal_tests`, `cct_stage3_gate`, `Stages/03_Causal_Event_Learning.md` |
 | Stage 4 — Persistent verifiable memory | **PASS** | `cct_memory_tests`, `cct_stage4_gate`, `Stages/04_Persistent_Verifiable_Memory.md` |
-| Stages 5–7 | Specification only | Stage 5 requires explicit approval |
+| Stage 5 — Language and code scaling | **PASS** | `cct_scaling_tests`, `cct_stage5_gate`, `Stages/05_Language_Code_Scaling.md` |
+| Stages 6–7 | Specification only | Stage 6 requires explicit approval |
 
 ## Requirements
 
@@ -46,10 +47,12 @@ make stage3-test
 make stage3-gate
 make stage4-test
 make stage4-gate
-make ci-stage4
+make stage5-test
+make stage5-gate
+make ci-stage5
 ```
 
-`make native-build` configures and compiles the C++ library and executables under `build-cpp/`. `make native-test` runs the CTest suite. The gate commands create machine-readable artifacts under `artifacts/stage-0/cpp-gate/`, `artifacts/stage-1/cpp-gate/`, `artifacts/stage-2/cpp-gate/`, `artifacts/stage-3/cpp-gate/`, and `artifacts/stage-4/cpp-gate/`. `make ci-stage4` executes the complete native Stage 4 pipeline, including all prior gates, and returns a nonzero status if any mandatory check fails.
+`make native-build` configures and compiles the C++ library and executables under `build-cpp/`. `make native-test` runs the CTest suite. The gate commands create machine-readable artifacts under `artifacts/stage-0/cpp-gate/`, `artifacts/stage-1/cpp-gate/`, `artifacts/stage-2/cpp-gate/`, `artifacts/stage-3/cpp-gate/`, and `artifacts/stage-4/cpp-gate/`. `make ci-stage4` executes the complete native Stage 4 pipeline, including all prior gates, and returns a nonzero status if any mandatory check fails. `make ci-stage5` extends this to the manifest-audited language/code scaling suite and Stage 5 gate.
 
 A clean build can also be invoked directly:
 
@@ -134,6 +137,12 @@ The strengthened Stage 2 gate requires **12 mandatory checks** plus limitation-c
 | `cpp/tests/memory_tests.cpp` | Stage 4 persistent-memory regression suite |
 | `cpp/tools/stage4_gate.cpp` | Stage 4 artifact-producing gate |
 | `Stages/04_Expanded_Gate_Contract.md` | Stage 4 thresholds, controls, and artifact contract |
+| `cpp/include/cct/scaling.hpp` | Stage 5 vocabulary, model, trainer, checkpoint, and memory-augmentation API |
+| `cpp/src/scaling.cpp` | Native Stage 5 model wrapper, metrics, checkpointing, and memory attribution |
+| `cpp/tests/scaling_tests.cpp` | Stage 5 vocabulary, training, checkpoint, baseline, and memory regression suite |
+| `cpp/tools/stage5_gate.cpp` | Stage 5 artifact-producing gate |
+| `data/stage-5/manifests/stage5_manifest.txt` | Immutable Stage 5 provenance and SHA-256 manifest |
+| `Stages/05_Expanded_Gate_Contract.md` | Stage 5 thresholds, controls, and artifact contract |
 | `cpp/tools/stage0_gate.cpp` | Stage 0 artifact-producing gate |
 | `cpp/tools/stage1_gate.cpp` | Stage 1 artifact-producing gate |
 | `cpp/tools/stage2_gate.cpp` | Stage 2 artifact-producing gate |
@@ -144,7 +153,7 @@ The strengthened Stage 2 gate requires **12 mandatory checks** plus limitation-c
 
 ## Research limitations
 
-The current implementation validates a numerical operator substrate, a deterministic real/complex selective recurrent core, a native causal-event learner, and a local persistent verifiable memory subsystem on controlled synthetic and fixture tasks. It does not validate general causal discovery, deployed language-model memory, general reasoning, language competence, multimodal transfer, autonomous research, distributed storage, or superintelligence. Those claims require real data, larger-scale matched baselines, safety controls, and independent evaluation in later approved stages.
+The current implementation validates a numerical operator substrate, a deterministic real/complex selective recurrent core, a native causal-event learner, a local persistent verifiable memory subsystem, and a small native language/code scaling benchmark on controlled synthetic and provenance-tracked fixtures. Stage 5 uses a compact byte-fallback objective and five small matched models; it does not validate broad language competence, unrestricted code generation, real-world repository engineering, distributed scaling, general causal discovery, autonomous research, or superintelligence. Those claims require larger real-data studies, stronger baselines, sandboxed evaluation, safety controls, and independent evaluation in later approved stages.
 
 ## License
 
