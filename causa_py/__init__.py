@@ -1,9 +1,4 @@
-"""Public Python interface for the CCT prototype.
-
-The native Rust extension is deliberately imported through its canonical
-module name. This avoids loading stale shared objects from the source tree and
-makes a missing native build an explicit, actionable installation error.
-"""
+"""Public Python interface for the CCT-ASE research prototype."""
 
 try:
     from causa_native import Event, Manifold
@@ -15,5 +10,49 @@ except ImportError as exc:  # pragma: no cover - exercised in clean-install diag
     ) from exc
 
 from . import physics
+from .numerical_engine import (
+    FieldState,
+    FiniteDifferenceSolver,
+    NumericalEngineError,
+    SolverConfig,
+    SpectralSolver,
+    StabilityError,
+    Trajectory,
+    UnsupportedPrecisionError,
+    apply_boundary_conditions,
+    bounded_local_potential,
+    bounded_spectral_potential,
+    cfl_limit,
+    finite_difference_gradient,
+    finite_difference_laplacian,
+    frequency_grids,
+    manufactured_mode,
+    manufactured_mode_frequency,
+    spectral_laplacian,
+    validate_stability,
+)
 
-__all__ = ["Event", "Manifold", "physics"]
+__all__ = [
+    "Event",
+    "Manifold",
+    "physics",
+    "FieldState",
+    "FiniteDifferenceSolver",
+    "NumericalEngineError",
+    "SolverConfig",
+    "SpectralSolver",
+    "StabilityError",
+    "Trajectory",
+    "UnsupportedPrecisionError",
+    "apply_boundary_conditions",
+    "bounded_local_potential",
+    "bounded_spectral_potential",
+    "cfl_limit",
+    "finite_difference_gradient",
+    "finite_difference_laplacian",
+    "frequency_grids",
+    "manufactured_mode",
+    "manufactured_mode_frequency",
+    "spectral_laplacian",
+    "validate_stability",
+]
