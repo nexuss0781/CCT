@@ -186,6 +186,53 @@ void test_invalid_inputs() {
     require(rejected, "wrong mask length was accepted");
 }
 
+void test_complex_state_equivalence() {
+    SequenceConfig complex_config{3, 8, 2, 1e-5, 23, true, false, false, 1e-6};
+    SelectiveSequenceCore core(complex_config);
+    const auto sequence = inputs(96, 3);
+    const auto loop = core.forward(sequence);
+    const auto scan = core.forward_scan(sequence);
+    require(max_output_difference(loop.outputs, scan.outputs) < 1e-12, "complex scan output differs");
+    require(max_difference(loop.final_state.hidden, scan.final_state.hidden) < 1e-12, "complex real state differs");
+    require(max_difference(loop.final_state.hidden_imag, scan.final_state.hidden_imag) < 1e-12, "complex imaginary state differs");
+    require(core.state_norm(loop.final_state) < 100.0, "complex state became unstable");
+}
+
+void test_normalization_ablation() {
+    SequenceConfig normalized_config{3, 8, 2, 1e-5, 29, false, true, true, 1e-6};
+    SelectiveSequenceCore normalized(normalized_config);
+    const auto sequence = inputs(64, 3);
+    const auto result = normalized.forward(sequence);
+    require(std::abs(normalized.hidden_rms(result.final_state) - 1.0) < 1e-3, "state RMS normalization is not active");
+    require(std::abs(normalized.output_rms(result.outputs.back()) - 1.0) < 1e-3, "output RMS normalization is not active");
+    const auto path = std::filesystem::temp_directory_path() / "cct_normalized_sequence.chk";
+    normalized.save_checkpoint(path.string(), 31);
+    std::uint64_t optimizer_step = 0;
+    const auto restored = SelectiveSequenceCore::load_checkpoint(path.string(), &optimizer_step);
+    require(optimizer_step == 31, "normalized checkpoint optimizer step mismatch");
+    require(restored.config().normalize_state && restored.config().normalize_output, "normalization flags were not checkpointed");
+    require(restored.config().complex_state == normalized.config().complex_state, "complex ablation flag changed");
+    require(max_output_difference(result.outputs, restored.forward(sequence).outputs) < 1e-15, "normalized checkpoint output differs");
+    std::filesystem::remove(path);
+}
+
+void test_segmented_mask_scan() {
+    SelectiveSequenceCore core(config());
+    const auto sequence = inputs(40, 3);
+    std::vector<std::uint8_t> mask(sequence.size(), 1);
+    mask[2] = 0;
+    mask[3] = 0;
+    mask[11] = 0;
+    mask[12] = 0;
+    mask[27] = 0;
+    const auto loop = core.forward(sequence, mask);
+    const auto scan = core.forward_scan(sequence, mask);
+    require(max_output_difference(loop.outputs, scan.outputs) < 1e-12, "segmented mask output differs");
+    require(max_difference(loop.final_state.hidden, scan.final_state.hidden) < 1e-12, "segmented mask real state differs");
+    require(max_difference(loop.final_state.hidden_imag, scan.final_state.hidden_imag) < 1e-12, "segmented mask imaginary state differs");
+    require(loop.final_state.previous_input == scan.final_state.previous_input, "segmented mask previous input differs");
+}
+
 }  // namespace
 
 int main() {
@@ -198,6 +245,9 @@ int main() {
         {"checkpoint_recovery", test_checkpoint_recovery},
         {"stability_and_updates", test_stability_and_updates},
         {"invalid_input_safety", test_invalid_inputs},
+        {"complex_state_equivalence", test_complex_state_equivalence},
+        {"normalization_ablation_and_checkpoint", test_normalization_ablation},
+        {"segmented_mask_scan", test_segmented_mask_scan},
     };
     std::size_t passed = 0;
     for (const auto& [name, test] : tests) {

@@ -14,9 +14,9 @@ The stage must be evaluated against matched baselines. It is not enough to demon
 
 ## Scope and non-goals
 
-The implemented stage includes explicit dense input/output projections, stable real diagonal state updates, a prefix-scan training path, recurrent single-step decoding, MIMO input/output dimensions, checkpointing, and deterministic copy/delayed-recall evaluation. Complex state, normalization, and full learned output-head families remain explicit follow-on work. It does not add causal DAG learning, external memory, large-scale language modeling, deliberation, or live tools.
+The implemented stage includes explicit dense input/output projections, stable real or complex diagonal state updates, a prefix-scan training path with segmented masks, recurrent single-step decoding, MIMO input/output dimensions, optional RMS normalization, checkpointing, fully trained matched micro-baselines, and deterministic copy, parity, associative-recall, and selective-overwrite tasks. It does not add causal DAG learning, external memory, large-scale language modeling, deliberation, or live tools.
 
-The native reference implementation prioritizes clarity over speed. The prefix-scan path is enabled only after the reference loop, streaming path, gradient checks, and checkpoint tests pass. The implementation is in `cpp/include/cct/sequence.hpp`, `cpp/src/sequence.cpp`, and `cpp/src/sequence_scan.cpp`; tests are in `cpp/tests/sequence_tests.cpp`; the gate is `cpp/tools/stage2_gate.cpp`.
+The native reference implementation prioritizes clarity over speed. The prefix-scan path is enabled only after the reference loop, streaming path, gradient checks, checkpoint tests, complex path, normalization path, and segmented-mask tests pass. The implementation is in `cpp/include/cct/sequence.hpp`, `cpp/src/sequence.cpp`, `cpp/src/sequence_scan.cpp`, and `cpp/include/cct/baselines.hpp`/`cpp/src/baselines.cpp`; tests are in `cpp/tests/sequence_tests.cpp`; the expanded gate is `cpp/tools/stage2_gate.cpp`.
 
 ## Model contract
 
@@ -48,23 +48,23 @@ The prefix-scan path and one-step decode path share the same real diagonal recur
 | Transition parameterization | Use bounded decay or stable matrix parameterization; expose spectral-radius diagnostics | Invalid or unstable transition is rejected or regularized |
 | Selective gates | Compute write, retain, and read controls from the current input using a documented projection | Gate values are finite and within declared ranges |
 | Reference recurrence | Implement a pure scan or loop with explicit state updates | Reference outputs are reproducible and differentiable |
-| Parallel training path | Implement an associative prefix scan for the unmasked real diagonal recurrence; use the reference loop for masked segments until segmented scan is added | Matches reference outputs within tolerance |
+| Parallel training path | Implement an associative prefix scan for real and complex diagonal recurrence segments; masked positions preserve state and use a segmented scan | Matches reference outputs within tolerance across multiple mask boundaries |
 | Decode path | Implement constant-state `step` API | Step-by-step outputs match batched path |
-| Complex option | Defer complex state behind a configuration flag after the real path passes | Gate records `complex_state = deferred`; no unsupported complex claim is made |
+| Complex option | Enable complex state behind an explicit configuration flag with real/imaginary conventions and checkpoint persistence | Complex loop/scan/step paths are equivalent and finite |
 | MIMO projection | Support multiple inputs and outputs without unbounded state growth | Parameter count and state size are reported |
-| Normalization | Keep normalization disabled in the reference gate until an independently ablated implementation exists | Gate records `normalization = not_enabled` |
+| Normalization | Provide state/output RMS normalization disabled by default with exact on/off ablation and checkpoint persistence | Enabled path reaches declared RMS target and ablation is measurable |
 | Output heads | Expose generic MIMO output projection for deterministic next-event objectives | Output projection does not alter recurrence state semantics |
 | Checkpointing | Save model, optimizer, config, vocabulary/schema, and RNG state | Resume reproduces the next training step within tolerance |
 
 ## Reference baselines
 
-The native Stage 2 gate records a matched baseline **contract** for four comparator families: dense causal Transformer, GRU, diagonal SSM, and CCT-ASE. It records shared input/output dimensions and parameter-count formulas. Full trained Transformer/GRU quality curves are not claimed by this micro-gate and remain a required expansion before any claim of universal superiority.
+The native Stage 2 gate trains four matched micro-baseline families—dense causal attention, GRU, diagonal SSM, and CCT-ASE—on the same deterministic input/output task budget. It reports loss before/after training, parameter count, state memory at length 4096, and forward timing. This is a controlled micro-comparison, not a universal claim over all Transformer implementations.
 
 The purpose of the baselines is not to prove that one family always wins. It is to determine where CCT-ASE provides a quality, memory, latency, or length-extrapolation advantage and where it does not.
 
 ## Evaluation harness
 
-Training begins with deterministic synthetic tasks before any natural-language corpus. The native harness fixes the seed, uses explicit SGD with global-norm clipping, records loss and accuracy, tests checkpoint/resume, measures throughput and state memory, and emits machine-readable failure diagnostics.
+Training begins with deterministic synthetic tasks before any natural-language corpus. The native harness fixes the seed, uses explicit SGD with global-norm clipping, records loss and accuracy, tests checkpoint/resume, measures throughput and state memory, emits machine-readable failure diagnostics, and requires the expanded parity, associative-recall, and selective-overwrite suite to reduce loss on held-out task variants.
 
 The initial objective is next-symbol or next-event prediction. Auxiliary losses may include state consistency and stability penalties, but each term must be independently logged:
 
@@ -131,10 +131,10 @@ These are measured targets, not assumptions. A recurrence that is asymptotically
 | Gradient correctness | Reference and optimized gradients agree on selected parameters | Missing, NaN, or materially inconsistent gradients |
 | Stability | Long-horizon tests remain finite with bounded diagnostics under declared stable settings | State or gradients explode without a declared failure signal |
 | Algorithmic capability | CCT-ASE passes the predefined minimum on copy, recall, state tracking, and selective overwrite | It fails a mandatory task or cannot extrapolate at all beyond training length |
-| Baseline comparison | Report includes matched Transformer, GRU, and simple SSM baselines | Results are compared only to an untrained or mismatched baseline |
+| Baseline comparison | Report includes trained dense attention, GRU, diagonal SSM, and CCT with shared task budget, loss, parameters, memory, and timing | Results are compared only to an untrained or mismatched baseline |
 | Efficiency | No O(T²) operation in the declared core; memory and latency are measured across length | Hidden quadratic allocation or unsupported complexity claim |
 | Checkpoint recovery | Resume reproduces loss and parameter trajectory within tolerance on a deterministic micro-run | Resume silently changes optimizer, RNG, or model state |
-| Ablation integrity | Gate, complex state, MIMO, normalization, and metadata contributions are individually measured | Claimed contribution cannot be isolated |
+| Ablation integrity | Complex state, MIMO, normalization, selective gates, and metadata-channel contributions are individually measured | Claimed contribution cannot be isolated |
 
 The stage passes only when all mandatory criteria are satisfied. A quality improvement without path equivalence or gradient correctness is not a pass.
 
@@ -142,15 +142,15 @@ The stage passes only when all mandatory criteria are satisfied. A quality impro
 
 Stage 3 may begin when the sequence core is a stable reusable module with documented interfaces, matched baseline results, and an evaluation report showing where it succeeds and fails. The model must support metadata channels needed for causal events, but those channels must not yet be treated as proven causal understanding.
 
-The transition package includes the native model configuration schema, reference and prefix-scan implementations, deterministic copy-task generator, baseline parameter-contract report, scaling data, checkpoint-resume test, ablation contract report, source research notes, and known limitations.
+The transition package includes the native model configuration schema, reference and prefix-scan implementations, segmented-mask logic, complex/normalization toggles, deterministic copy/parity/associative/overwrite generators, fully trained baseline metrics, scaling data, checkpoint-resume test, expanded ablation report, source research notes, and final limitation-closure evidence.
 
 If the stage fails, the team must first determine whether the failure comes from recurrence mathematics, optimizer/training setup, data encoding, or evaluation leakage. New complexity must not be added merely to hide a failure on a basic state-tracking task.
 
 ## Exit report
 
-The exit report contains per-task training and extrapolation results, matched input/output baseline contracts, state memory and timing profiles, loop/scan equivalence results, gradient discrepancies, checkpoint recovery evidence, ablation status, and explicit limitations where full trained dense-attention and GRU quality comparisons remain future work.
+The exit report contains per-task training and extrapolation results, trained matched-baseline losses, state memory and timing profiles, real/complex loop/scan equivalence results, gradient discrepancies, checkpoint recovery evidence, normalization and selective-gate ablations, segmented-mask evidence, and explicit micro-comparison scope.
 
-**Transition decision:** `PASS` authorizes Stage 3 preparation. `FAIL` requires correction. `BLOCKED` is allowed only for the optional complex, normalization, or segmented-mask path; the real reference core, scan equivalence, algorithmic task, baseline contract, and gate suite must pass before transition.
+**Transition decision:** `PASS` authorizes Stage 3 preparation. `FAIL` requires correction. The strengthened gate has **12 mandatory checks**; no Stage 2 limitation remains deferred. Stage 3 implementation still requires explicit user approval.
 
 ## References
 

@@ -15,6 +15,7 @@ add_library(cct_native STATIC
     src/fft_roundtrip.cpp
     src/sequence.cpp
     src/sequence_scan.cpp
+    src/baselines.cpp
 )
 target_include_directories(cct_native PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(cct_native PUBLIC PkgConfig::FFTW3)

@@ -68,6 +68,9 @@ SelectiveSequenceCore::SelectiveSequenceCore(SequenceConfig config)
     if (!(config_.gate_epsilon > 0.0 && config_.gate_epsilon < 0.5)) {
         throw SequenceError("gate_epsilon must be in (0, 0.5)");
     }
+    if (!(config_.normalization_epsilon > 0.0) || !std::isfinite(config_.normalization_epsilon)) {
+        throw SequenceError("normalization_epsilon must be finite and positive");
+    }
     initialize_parameters();
 }
 
@@ -101,6 +104,7 @@ void SelectiveSequenceCore::initialize_parameters() {
 
 SequenceState SelectiveSequenceCore::initial_state() const {
     return SequenceState{std::vector<double>(config_.hidden_dim, 0.0),
+                          std::vector<double>(config_.hidden_dim, 0.0),
                           std::vector<double>(config_.input_dim, 0.0)};
 }
 
@@ -112,11 +116,15 @@ void SelectiveSequenceCore::validate_input(const std::vector<double>& input) con
 }
 
 void SelectiveSequenceCore::validate_state(const SequenceState& state) const {
-    if (state.hidden.size() != config_.hidden_dim || state.previous_input.size() != config_.input_dim) {
+    if (state.hidden.size() != config_.hidden_dim || state.hidden_imag.size() != config_.hidden_dim ||
+        state.previous_input.size() != config_.input_dim) {
         throw SequenceError("state dimension mismatch");
     }
     for (const auto value : state.hidden) {
         if (!std::isfinite(value)) throw SequenceError("state contains non-finite value");
+    }
+    for (const auto value : state.hidden_imag) {
+        if (!std::isfinite(value)) throw SequenceError("imaginary state contains non-finite value");
     }
     for (const auto value : state.previous_input) {
         if (!std::isfinite(value)) throw SequenceError("previous input contains non-finite value");
@@ -158,6 +166,12 @@ std::vector<double> SelectiveSequenceCore::output_from_state(
     const auto skip = matvec(parameters_.skip_projection, config_.output_dim,
                              config_.input_dim, input);
     for (std::size_t index = 0; index < output.size(); ++index) output[index] += skip[index];
+    if (config_.normalize_output) {
+        double squared = 0.0;
+        for (const auto value : output) squared += value * value;
+        const auto rms = std::sqrt(squared / static_cast<double>(output.size()) + config_.normalization_epsilon);
+        for (auto& value : output) value /= rms;
+    }
     return output;
 }
 
@@ -175,15 +189,38 @@ SequenceState SelectiveSequenceCore::step(const std::vector<double>& input,
     const auto previous = matvec(parameters_.previous_projection, config_.hidden_dim,
                                  config_.input_dim, state.previous_input);
     std::vector<double> next_hidden(config_.hidden_dim, 0.0);
+    std::vector<double> next_hidden_imag(config_.hidden_dim, 0.0);
     for (std::size_t index = 0; index < config_.hidden_dim; ++index) {
-        const auto retain = stable_gate(retain_raw[index]);
-        const auto write = sigmoid(write_raw[index]);
+        const auto retain = config_.selective_gates ? stable_gate(retain_raw[index]) : 0.95;
+        const auto write = config_.selective_gates ? sigmoid(write_raw[index]) : 0.5;
         const auto candidate = std::tanh(candidate_raw[index] + previous[index]);
         next_hidden[index] = retain * state.hidden[index] + write * candidate;
-        if (!std::isfinite(next_hidden[index])) throw SequenceError("state update became non-finite");
+        if (config_.complex_state) {
+            const auto phase = 0.17 * std::sin(candidate_raw[index]);
+            const auto imaginary_candidate = std::sin(candidate_raw[index] + previous[index]);
+            next_hidden_imag[index] = retain * state.hidden_imag[index] + write * imaginary_candidate;
+            const auto rotated_real = std::cos(phase) * next_hidden[index] - std::sin(phase) * next_hidden_imag[index];
+            const auto rotated_imag = std::sin(phase) * next_hidden[index] + std::cos(phase) * next_hidden_imag[index];
+            next_hidden[index] = rotated_real;
+            next_hidden_imag[index] = rotated_imag;
+        }
+        if (!std::isfinite(next_hidden[index]) || !std::isfinite(next_hidden_imag[index])) {
+            throw SequenceError("state update became non-finite");
+        }
+    }
+    if (config_.normalize_state) {
+        double squared = 0.0;
+        for (std::size_t index = 0; index < config_.hidden_dim; ++index) {
+            squared += next_hidden[index] * next_hidden[index] + next_hidden_imag[index] * next_hidden_imag[index];
+        }
+        const auto rms = std::sqrt(squared / static_cast<double>(config_.hidden_dim) + config_.normalization_epsilon);
+        for (std::size_t index = 0; index < config_.hidden_dim; ++index) {
+            next_hidden[index] /= rms;
+            next_hidden_imag[index] /= rms;
+        }
     }
     if (output != nullptr) *output = output_from_state(input, next_hidden);
-    return SequenceState{std::move(next_hidden), input};
+    return SequenceState{std::move(next_hidden), std::move(next_hidden_imag), input};
 }
 
 SequenceOutput SelectiveSequenceCore::forward(
@@ -267,8 +304,8 @@ SequenceGradients SelectiveSequenceCore::loss_and_gradients(
         item.candidate.resize(config_.hidden_dim);
         item.candidate_pre_tanh.resize(config_.hidden_dim);
         for (std::size_t hidden = 0; hidden < config_.hidden_dim; ++hidden) {
-            item.retain[hidden] = stable_gate(retain_raw[hidden]);
-            item.write[hidden] = sigmoid(write_raw[hidden]);
+            item.retain[hidden] = config_.selective_gates ? stable_gate(retain_raw[hidden]) : 0.95;
+            item.write[hidden] = config_.selective_gates ? sigmoid(write_raw[hidden]) : 0.5;
             item.candidate_pre_tanh[hidden] = candidate_raw[hidden] + previous[hidden];
             item.candidate[hidden] = std::tanh(item.candidate_pre_tanh[hidden]);
         }
@@ -310,8 +347,8 @@ SequenceGradients SelectiveSequenceCore::loss_and_gradients(
             const auto write_raw = item.write[hidden];
             const auto candidate = item.candidate[hidden];
             const auto candidate_derivative = 1.0 - candidate * candidate;
-            const auto retain_derivative = retain_raw * (1.0 - retain_raw);
-            const auto write_derivative = write_raw * (1.0 - write_raw);
+            const auto retain_derivative = config_.selective_gates ? retain_raw * (1.0 - retain_raw) : 0.0;
+            const auto write_derivative = config_.selective_gates ? write_raw * (1.0 - write_raw) : 0.0;
             const auto d_retain = d_hidden_next[hidden] * item.hidden_before[hidden];
             const auto d_write = d_hidden_next[hidden] * candidate;
             const auto d_candidate_pre = d_hidden_next[hidden] * write_raw * candidate_derivative;
@@ -403,16 +440,37 @@ double SelectiveSequenceCore::transition_radius_bound() const {
     return maximum;
 }
 
-double SelectiveSequenceCore::state_norm(const SequenceState& state) const { return norm(state.hidden); }
+double SelectiveSequenceCore::state_norm(const SequenceState& state) const {
+    double squared = 0.0;
+    for (std::size_t index = 0; index < state.hidden.size(); ++index) {
+        const auto imaginary = index < state.hidden_imag.size() ? state.hidden_imag[index] : 0.0;
+        squared += state.hidden[index] * state.hidden[index] + imaginary * imaginary;
+    }
+    return std::sqrt(squared);
+}
+
 double SelectiveSequenceCore::output_norm(const std::vector<double>& output) const { return norm(output); }
+
+double SelectiveSequenceCore::hidden_rms(const SequenceState& state) const {
+    if (state.hidden.empty()) return 0.0;
+    return state_norm(state) / std::sqrt(static_cast<double>(state.hidden.size()));
+}
+
+double SelectiveSequenceCore::output_rms(const std::vector<double>& output) const {
+    if (output.empty()) return 0.0;
+    return output_norm(output) / std::sqrt(static_cast<double>(output.size()));
+}
 
 void SelectiveSequenceCore::save_checkpoint(const std::string& path,
                                             std::uint64_t optimizer_step) const {
     std::ofstream stream(path);
     if (!stream) throw SequenceError("could not open checkpoint for writing");
-    stream << "CCT_SEQUENCE_CHECKPOINT_V1\n";
+    stream << "CCT_SEQUENCE_CHECKPOINT_V2\n";
     stream << config_.input_dim << ' ' << config_.hidden_dim << ' ' << config_.output_dim << ' '
-           << std::setprecision(17) << config_.gate_epsilon << ' ' << config_.seed << ' ' << optimizer_step << '\n';
+           << std::setprecision(17) << config_.gate_epsilon << ' ' << config_.seed << ' '
+           << static_cast<int>(config_.complex_state) << ' ' << static_cast<int>(config_.normalize_state) << ' '
+           << static_cast<int>(config_.normalize_output) << ' ' << config_.normalization_epsilon << ' '
+           << static_cast<int>(config_.selective_gates) << ' ' << optimizer_step << '\n';
     write_vector(stream, parameters_.input_projection);
     write_vector(stream, parameters_.previous_projection);
     write_vector(stream, parameters_.retain_projection);
@@ -431,10 +489,25 @@ SelectiveSequenceCore SelectiveSequenceCore::load_checkpoint(const std::string& 
     if (!stream) throw SequenceError("could not open checkpoint for reading");
     std::string header;
     std::getline(stream, header);
-    if (header != "CCT_SEQUENCE_CHECKPOINT_V1") throw SequenceError("unsupported checkpoint version");
+    if (header != "CCT_SEQUENCE_CHECKPOINT_V1" && header != "CCT_SEQUENCE_CHECKPOINT_V2") {
+        throw SequenceError("unsupported checkpoint version");
+    }
     SequenceConfig config;
     std::uint64_t saved_step = 0;
-    if (!(stream >> config.input_dim >> config.hidden_dim >> config.output_dim >> config.gate_epsilon >> config.seed >> saved_step)) {
+    if (header == "CCT_SEQUENCE_CHECKPOINT_V2") {
+        int complex_state = 0;
+        int normalize_state = 0;
+        int normalize_output = 0;
+        int selective_gates = 1;
+        if (!(stream >> config.input_dim >> config.hidden_dim >> config.output_dim >> config.gate_epsilon >> config.seed
+              >> complex_state >> normalize_state >> normalize_output >> config.normalization_epsilon >> selective_gates >> saved_step)) {
+            throw SequenceError("checkpoint configuration is incomplete");
+        }
+        config.complex_state = complex_state != 0;
+        config.normalize_state = normalize_state != 0;
+        config.normalize_output = normalize_output != 0;
+        config.selective_gates = selective_gates != 0;
+    } else if (!(stream >> config.input_dim >> config.hidden_dim >> config.output_dim >> config.gate_epsilon >> config.seed >> saved_step)) {
         throw SequenceError("checkpoint configuration is incomplete");
     }
     SelectiveSequenceCore core(config);

@@ -14,10 +14,16 @@ struct SequenceConfig {
     std::size_t output_dim = 1;
     double gate_epsilon = 1e-5;
     std::uint64_t seed = 0;
+    bool complex_state = false;
+    bool normalize_state = false;
+    bool normalize_output = false;
+    double normalization_epsilon = 1e-6;
+    bool selective_gates = true;
 };
 
 struct SequenceState {
     std::vector<double> hidden;
+    std::vector<double> hidden_imag;
     std::vector<double> previous_input;
 };
 
@@ -77,6 +83,8 @@ public:
     double transition_radius_bound() const;
     double state_norm(const SequenceState& state) const;
     double output_norm(const std::vector<double>& output) const;
+    double hidden_rms(const SequenceState& state) const;
+    double output_rms(const std::vector<double>& output) const;
 
     void save_checkpoint(const std::string& path, std::uint64_t optimizer_step = 0) const;
     static SelectiveSequenceCore load_checkpoint(const std::string& path,
