@@ -6,9 +6,9 @@ The **Chrono-Causal Tapestry — Adaptive Spectral Engine (CCT-ASE)** is a resea
 
 ## Implemented scope
 
-The active runtime is C++20 with CMake and FFTW3. The native library provides event/manifold storage, periodic spectral Laplacians, an independent finite-difference reference Laplacian, leapfrog and RK4 integration, periodic/Dirichlet/Neumann boundaries, CFL rejection, bounded local potentials, analytic one-step gradients, a selective recurrent sequence core, prefix-scan execution, checkpointing, algorithmic copy training, and deterministic benchmark executables.
+The active runtime is C++20 with CMake and FFTW3. The native library provides event/manifold storage, periodic spectral Laplacians, an independent finite-difference reference Laplacian, leapfrog and RK4 integration, periodic/Dirichlet/Neumann boundaries, CFL rejection, bounded local potentials, analytic one-step gradients, a real/complex selective recurrent sequence core, segmented prefix-scan execution, optional RMS normalization, checkpointing, trained dense-attention/GRU/diagonal-SSM comparators, and deterministic algorithmic benchmark executables.
 
-The implementation is deliberately split into clear reference paths and optimized paths. The spectral and finite-difference solvers are compared on identical inputs, and the sequence loop and prefix scan are compared on identical inputs. Gates check manufactured solutions, temporal convergence, energy drift, boundary residuals, recurrent path equivalence, gradient agreement, checkpoint recovery, algorithmic recall, and measured scaling.
+The implementation is deliberately split into clear reference paths and optimized paths. The spectral and finite-difference solvers are compared on identical inputs, and the sequence loop and prefix scan are compared on identical inputs, including complex state and segmented masks. Gates check manufactured solutions, temporal convergence, energy drift, boundary residuals, recurrent path equivalence, gradient agreement, checkpoint recovery, copy/parity/associative/overwrite learning, trained matched baselines, ablations, and measured scaling.
 
 | Stage | Status | Native entry points |
 |---|---|---|
@@ -95,20 +95,29 @@ The Stage 1 and Stage 2 gates are intentionally stricter than build smoke tests.
 | Sequence gradient finite differences | PASS |
 | Long-horizon state stability | PASS |
 | Copy and delayed-recall training | PASS |
+| Parity/state tracking | PASS |
+| Associative recall | PASS |
+| Selective overwrite | PASS |
 | Checkpoint recovery | PASS |
-| Matched baseline contract | PASS |
+| Trained dense-attention/GRU/diagonal-SSM baselines | PASS |
+| Complex-state equivalence | PASS |
+| Normalization and checkpoint persistence | PASS |
+| Segmented masked scan | PASS |
+| Selective-gate/MIMO/normalization ablations | PASS |
 | Linear scaling and constant decode state memory | PASS |
 
-A Stage 2 `PASS` authorizes Stage 3 preparation only. It does not authorize Stage 3 implementation without explicit user approval.
+The strengthened Stage 2 gate requires **12 mandatory checks** plus limitation-closure metrics. A Stage 2 `PASS` authorizes Stage 3 preparation only. It does not authorize Stage 3 implementation without explicit user approval.
 
 ## Repository map
 
 | Path | Purpose |
 |---|---|
 | `cpp/include/cct/` | Public native C++ headers |
-| `cpp/src/` | Event, field, FFT, and numerical-engine implementations |
+| `cpp/src/` | Event, field, FFT, sequence, baseline, and numerical-engine implementations |
 | `cpp/tests/cct_tests.cpp` | Stage 0/1 native regression suite |
-| `cpp/tests/sequence_tests.cpp` | Stage 2 sequence regression suite |
+| `cpp/tests/sequence_tests.cpp` | Stage 2 sequence regression suite, including complex, normalization, and segmented-mask tests |
+| `cpp/include/cct/baselines.hpp` | Matched baseline public API |
+| `cpp/src/baselines.cpp` | Dense attention, GRU, and diagonal SSM implementations |
 | `cpp/tools/stage0_gate.cpp` | Stage 0 artifact-producing gate |
 | `cpp/tools/stage1_gate.cpp` | Stage 1 artifact-producing gate |
 | `cpp/tools/stage2_gate.cpp` | Stage 2 artifact-producing gate |
@@ -119,7 +128,7 @@ A Stage 2 `PASS` authorizes Stage 3 preparation only. It does not authorize Stag
 
 ## Research limitations
 
-The current implementation validates a numerical operator substrate and a deterministic selective recurrent core on synthetic algorithmic tasks. It does not validate causal discovery, general reasoning, memory persistence, language competence, multimodal transfer, autonomous research, or superintelligence. Those claims require full trained baseline comparisons, real data, ablations, safety controls, and independent evaluation in later approved stages.
+The current implementation validates a numerical operator substrate and a deterministic real/complex selective recurrent core on synthetic algorithmic tasks with trained micro-baselines. It does not validate causal discovery, general reasoning, memory persistence, language competence, multimodal transfer, autonomous research, or superintelligence. Those claims require real data, larger-scale matched baselines, safety controls, and independent evaluation in later approved stages.
 
 ## License
 
