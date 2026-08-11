@@ -1,12 +1,12 @@
 # CCT-ASE Native C++ Research Prototype
 
-The **Chrono-Causal Tapestry — Adaptive Spectral Engine (CCT-ASE)** is a research prototype for testing causal event fields and efficient spectral dynamics. The repository currently provides a reproducible **native C++20 numerical and sequence substrate**; it does not claim to be a language model or superintelligence system. The implemented Stage 0, Stage 1, and Stage 2 gates establish reproducibility, numerical correctness, recurrent trainability, and efficiency measurement.
+The **Chrono-Causal Tapestry — Adaptive Spectral Engine (CCT-ASE)** is a research prototype for testing causal event fields and efficient spectral dynamics. The repository currently provides a reproducible **native C++20 numerical, sequence, and causal-event substrate**; it does not claim to be a language model or superintelligence system. The implemented Stage 0, Stage 1, Stage 2, and Stage 3 gates establish reproducibility, numerical correctness, recurrent trainability, efficiency measurement, leakage-controlled graph conditioning, intervention prediction, counterfactual evaluation, robustness, and abstention on declared synthetic distributions.
 
-> **Current status:** Stages 0, 1, and 2 are implemented in native C++ and pass their mandatory gates. Stage 3 has not been implemented.
+> **Current status:** Stages 0, 1, 2, and 3 are implemented in native C++ and pass their mandatory gates. Stage 4 has not been implemented and requires explicit approval.
 
 ## Implemented scope
 
-The active runtime is C++20 with CMake and FFTW3. The native library provides event/manifold storage, periodic spectral Laplacians, an independent finite-difference reference Laplacian, leapfrog and RK4 integration, periodic/Dirichlet/Neumann boundaries, CFL rejection, bounded local potentials, analytic one-step gradients, a real/complex selective recurrent sequence core, segmented prefix-scan execution, optional RMS normalization, checkpointing, trained dense-attention/GRU/diagonal-SSM comparators, and deterministic algorithmic benchmark executables.
+The active runtime is C++20 with CMake and FFTW3. The native library provides event/manifold storage, periodic spectral Laplacians, an independent finite-difference reference Laplacian, leapfrog and RK4 integration, periodic/Dirichlet/Neumann boundaries, CFL rejection, bounded local potentials, analytic one-step gradients, a real/complex selective recurrent sequence core, segmented prefix-scan execution, optional RMS normalization, checkpointing, trained dense-attention/GRU/diagonal-SSM comparators, deterministic algorithmic benchmark executables, versioned causal event storage, DAG queries, leakage-safe graph-conditioned recurrence, synthetic structural-equation generation, intervention/counterfactual prediction, robustness, and abstention.
 
 The implementation is deliberately split into clear reference paths and optimized paths. The spectral and finite-difference solvers are compared on identical inputs, and the sequence loop and prefix scan are compared on identical inputs, including complex state and segmented masks. Gates check manufactured solutions, temporal convergence, energy drift, boundary residuals, recurrent path equivalence, gradient agreement, checkpoint recovery, copy/parity/associative/overwrite learning, trained matched baselines, ablations, and measured scaling.
 
@@ -15,7 +15,8 @@ The implementation is deliberately split into clear reference paths and optimize
 | Stage 0 — Reproducible baseline | **PASS** | `cct_stage0_gate`, `Stages/00_Reproducible_Baseline.md` |
 | Stage 1 — Differentiable numerical engine | **PASS** | `cct_native`, `cct_tests`, `cct_stage1_gate`, `Stages/01_Numerical_Engine.md` |
 | Stage 2 — Efficient sequence core | **PASS** | `cct_sequence_tests`, `cct_stage2_gate`, `Stages/02_Sequence_Core.md` |
-| Stages 3–7 | Specification only | Stage 3 requires explicit approval |
+| Stage 3 — Causal event learning | **PASS** | `cct_causal_tests`, `cct_stage3_gate`, `Stages/03_Causal_Event_Learning.md` |
+| Stages 4–7 | Specification only | Stage 4 requires explicit approval |
 
 ## Requirements
 
@@ -40,10 +41,12 @@ make stage1-test
 make stage1-gate
 make stage2-test
 make stage2-gate
-make ci-stage2
+make stage3-test
+make stage3-gate
+make ci-stage3
 ```
 
-`make native-build` configures and compiles the C++ library and executables under `build-cpp/`. `make native-test` runs the CTest suite. The gate commands create machine-readable artifacts under `artifacts/stage-0/cpp-gate/`, `artifacts/stage-1/cpp-gate/`, and `artifacts/stage-2/cpp-gate/`. `make ci-stage2` executes the complete native Stage 2 pipeline and returns a nonzero status if any mandatory check fails.
+`make native-build` configures and compiles the C++ library and executables under `build-cpp/`. `make native-test` runs the CTest suite. The gate commands create machine-readable artifacts under `artifacts/stage-0/cpp-gate/`, `artifacts/stage-1/cpp-gate/`, `artifacts/stage-2/cpp-gate/`, and `artifacts/stage-3/cpp-gate/`. `make ci-stage3` executes the complete native Stage 3 pipeline, including the prior Stage 0/1/2 gates, and returns a nonzero status if any mandatory check fails.
 
 A clean build can also be invoked directly:
 
@@ -118,6 +121,11 @@ The strengthened Stage 2 gate requires **12 mandatory checks** plus limitation-c
 | `cpp/tests/sequence_tests.cpp` | Stage 2 sequence regression suite, including complex, normalization, and segmented-mask tests |
 | `cpp/include/cct/baselines.hpp` | Matched baseline public API |
 | `cpp/src/baselines.cpp` | Dense attention, GRU, and diagonal SSM implementations |
+| `cpp/include/cct/causal.hpp` | Versioned causal event, graph, encoder, dataset, and learner API |
+| `cpp/src/causal.cpp` | Native causal graph store, generator, learner, and Stage 2 integration |
+| `cpp/tests/causal_tests.cpp` | Stage 3 causal regression suite |
+| `cpp/tools/stage3_gate.cpp` | Stage 3 artifact-producing gate |
+| `Stages/03_Expanded_Gate_Contract.md` | Stage 3 thresholds, controls, and artifact contract |
 | `cpp/tools/stage0_gate.cpp` | Stage 0 artifact-producing gate |
 | `cpp/tools/stage1_gate.cpp` | Stage 1 artifact-producing gate |
 | `cpp/tools/stage2_gate.cpp` | Stage 2 artifact-producing gate |
@@ -128,7 +136,7 @@ The strengthened Stage 2 gate requires **12 mandatory checks** plus limitation-c
 
 ## Research limitations
 
-The current implementation validates a numerical operator substrate and a deterministic real/complex selective recurrent core on synthetic algorithmic tasks with trained micro-baselines. It does not validate causal discovery, general reasoning, memory persistence, language competence, multimodal transfer, autonomous research, or superintelligence. Those claims require real data, larger-scale matched baselines, safety controls, and independent evaluation in later approved stages.
+The current implementation validates a numerical operator substrate, a deterministic real/complex selective recurrent core, and a native causal-event learner on controlled synthetic structural-equation tasks with graph, intervention, counterfactual, robustness, and abstention checks. It does not validate general causal discovery, general reasoning, memory persistence, language competence, multimodal transfer, autonomous research, or superintelligence. Those claims require real data, larger-scale matched baselines, safety controls, and independent evaluation in later approved stages.
 
 ## License
 

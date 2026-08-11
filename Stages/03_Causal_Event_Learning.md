@@ -4,7 +4,7 @@
 **Stage ID:** 3  
 **Predecessor:** Stage 2 — Efficient Sequence Core  
 **Successor:** Stage 4 — Persistent Verifiable Memory  
-**Status:** Specification; implementation not started
+**Status:** Implemented in native C++20; Stage 3 gate PASS; Stage 4 approval required
 
 ## Purpose
 
@@ -14,7 +14,7 @@ The output is a causal-structure-aware learner, not a claim of human-level causa
 
 ## Scope and non-goals
 
-The stage includes a versioned event schema, Rust event storage, DAG validation, causal queries, event-to-sequence encoding, graph-conditioned recurrent updates, intervention datasets, counterfactual objectives, and causal evaluation. It does not implement persistent semantic memory, large-scale language modeling, deliberation, or live tools.
+The stage includes a versioned event schema, native C++ event storage, DAG validation, causal queries, event-to-sequence encoding, graph-conditioned recurrent updates, intervention datasets, counterfactual objectives, leakage auditing, robustness checks, calibration, abstention, and causal evaluation. It does not implement persistent semantic memory, large-scale language modeling, deliberation, or live tools.
 
 The initial graph family should be synthetic and fully controlled so that ground-truth structural equations, interventions, and counterfactual outcomes are known. Natural data may be added only when provenance and causal assumptions are documented.
 
