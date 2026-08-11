@@ -4,13 +4,15 @@
 **Stage ID:** 1  
 **Predecessor:** Stage 0 — Reproducible Baseline  
 **Successor:** Stage 2 — Efficient Sequence Core  
-**Status:** Specification; implementation not started
+**Status:** Implemented; Stage 1 gate PASS
 
 ## Purpose
 
 Stage 1 implements a correct, differentiable numerical substrate for learned field and operator dynamics. It converts the current single FFT/filter path into a testable numerical engine with explicit discretization, boundary conditions, stable time stepping, learnable kernels, and verified gradients.
 
 The output of this stage is not a language model. It is a reference-quality operator library that can later serve as an inductive-bias branch inside CCT-ASE. Numerical correctness is a hard prerequisite: a model cannot be credited with reasoning if its core propagation is unstable, aliased, or incorrectly differentiated.
+
+The implementation is located in `causa_py/numerical_engine.py`, with regression coverage in `tests/test_stage1_numerical_engine.py` and the independent gate runner in `scripts/stage1_harness.py`. The final gate is recorded in `artifacts/stage-1/gate/` and must be regenerated whenever the implementation or thresholds change.
 
 ## Scope and non-goals
 
