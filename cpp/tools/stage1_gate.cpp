@@ -88,7 +88,7 @@ std::string git_command(const char* command) {
     while (fgets(buffer, sizeof(buffer), pipe) != nullptr) output += buffer;
     pclose(pipe);
     while (!output.empty() && (output.back() == '\n' || output.back() == '\r')) output.pop_back();
-    return output.empty() ? "unknown" : output;
+    return output;
 }
 
 std::string config_hash() {
@@ -378,7 +378,8 @@ int main(int argc, char** argv) {
 
     std::vector<Metric> metrics;
     metrics.push_back({"mandatory_check_count", static_cast<double>(checks.size()), "checks", "all PASS", passed ? "PASS" : "FAIL"});
-    const auto commit = git_command("git rev-parse HEAD 2>/dev/null");
+    const auto commit_value = git_command("git rev-parse HEAD 2>/dev/null");
+    const auto commit = commit_value.empty() ? std::string("unknown") : commit_value;
     const auto dirty = git_command("git status --porcelain 2>/dev/null");
     const auto hash = config_hash();
     write_file(output / "checks.json", checks_json(checks));
