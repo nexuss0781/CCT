@@ -17,6 +17,7 @@ add_library(cct_native STATIC
     src/sequence_scan.cpp
     src/baselines.cpp
     src/causal.cpp
+    src/memory.cpp
 )
 target_include_directories(cct_native PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(cct_native PUBLIC PkgConfig::FFTW3)
@@ -49,6 +50,12 @@ target_compile_options(cct_causal_tests PRIVATE -Wall -Wextra -Wpedantic -Werror
 add_executable(cct_stage3_gate tools/stage3_gate.cpp)
 target_link_libraries(cct_stage3_gate PRIVATE cct_native)
 target_compile_options(cct_stage3_gate PRIVATE -Wall -Wextra -Wpedantic -Werror)
+add_executable(cct_memory_tests tests/memory_tests.cpp)
+target_link_libraries(cct_memory_tests PRIVATE cct_native)
+target_compile_options(cct_memory_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+add_executable(cct_stage4_gate tools/stage4_gate.cpp)
+target_link_libraries(cct_stage4_gate PRIVATE cct_native)
+target_compile_options(cct_stage4_gate PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
 include(CTest)
 enable_testing()
@@ -59,3 +66,5 @@ add_test(NAME cct_stage1_gate COMMAND cct_stage1_gate --output ${CMAKE_BINARY_DI
 add_test(NAME cct_stage2_gate COMMAND cct_stage2_gate --output ${CMAKE_BINARY_DIR}/artifacts/stage-2/gate)
 add_test(NAME cct_causal_tests COMMAND cct_causal_tests)
 add_test(NAME cct_stage3_gate COMMAND cct_stage3_gate --output ${CMAKE_BINARY_DIR}/artifacts/stage-3/gate)
+add_test(NAME cct_memory_tests COMMAND cct_memory_tests)
+add_test(NAME cct_stage4_gate COMMAND cct_stage4_gate --output ${CMAKE_BINARY_DIR}/artifacts/stage-4/gate)

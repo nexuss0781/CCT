@@ -1,0 +1,621 @@
+#include "cct/memory.hpp"
+
+#include <algorithm>
+#include <cmath>
+#include <cstring>
+#include <fstream>
+#include <iomanip>
+#include <limits>
+#include <numeric>
+#include <sstream>
+#include <tuple>
+#include <utility>
+
+namespace cct {
+namespace {
+
+void require(bool condition, const std::string& message) {
+    if (!condition) throw MemoryError(message);
+}
+
+bool finite(double value) { return std::isfinite(value); }
+
+std::uint64_t mix_hash(std::uint64_t state, std::uint64_t value) {
+    state ^= value + 0x9e3779b97f4a7c15ULL + (state << 6U) + (state >> 2U);
+    return state;
+}
+
+std::uint64_t hash_bytes(std::uint64_t state, const std::string& value) {
+    for (const auto character : value) state = mix_hash(state, static_cast<unsigned char>(character));
+    return state;
+}
+
+std::uint64_t double_bits(double value) {
+    std::uint64_t bits = 0;
+    static_assert(sizeof(bits) == sizeof(value));
+    std::memcpy(&bits, &value, sizeof(value));
+    return bits;
+}
+
+bool vector_equal(const std::vector<double>& left, const std::vector<double>& right) {
+    if (left.size() != right.size()) return false;
+    for (std::size_t index = 0; index < left.size(); ++index) {
+        if (left[index] != right[index]) return false;
+    }
+    return true;
+}
+
+unsigned int status_value(MemoryStatus value) { return static_cast<unsigned int>(value); }
+unsigned int retention_value(RetentionClass value) { return static_cast<unsigned int>(value); }
+unsigned int event_type_value(MemoryEventType value) { return static_cast<unsigned int>(value); }
+
+void write_record(std::ostream& output, const MemoryRecord& record) {
+    output << "RECORD " << record.schema_version << ' ' << record.memory_id << ' ' << record.version << ' '
+           << std::quoted(record.content) << ' ' << record.embedding.size();
+    for (const auto value : record.embedding) output << ' ' << std::setprecision(17) << value;
+    output << ' ' << record.event_ids.size();
+    for (const auto value : record.event_ids) output << ' ' << value;
+    output << ' ' << record.causal_parents.size();
+    for (const auto value : record.causal_parents) output << ' ' << value;
+    output << ' ' << record.created_at << ' ' << record.valid_from << ' ' << (record.valid_until.has_value() ? 1 : 0);
+    if (record.valid_until.has_value()) output << ' ' << *record.valid_until;
+    output << ' ' << std::quoted(record.source.source_id) << ' ' << record.source.span_start << ' ' << record.source.span_end
+           << ' ' << std::setprecision(17) << record.confidence << ' ' << status_value(record.status) << ' '
+           << retention_value(record.retention) << ' ' << std::quoted(record.conflict_group) << ' ' << record.checksum << '\n';
+}
+
+MemoryRecord read_record(std::istream& input) {
+    std::string token;
+    input >> token;
+    require(token == "RECORD", "invalid memory record marker");
+    MemoryRecord record;
+    unsigned int status = 0;
+    unsigned int retention = 0;
+    int has_valid_until = 0;
+    std::size_t count = 0;
+    input >> record.schema_version >> record.memory_id >> record.version >> std::quoted(record.content) >> count;
+    record.embedding.resize(count);
+    for (auto& value : record.embedding) input >> value;
+    input >> count;
+    record.event_ids.resize(count);
+    for (auto& value : record.event_ids) input >> value;
+    input >> count;
+    record.causal_parents.resize(count);
+    for (auto& value : record.causal_parents) input >> value;
+    input >> record.created_at >> record.valid_from >> has_valid_until;
+    if (has_valid_until != 0) {
+        LogicalTime until = 0;
+        input >> until;
+        record.valid_until = until;
+    }
+    input >> std::quoted(record.source.source_id) >> record.source.span_start >> record.source.span_end >> record.confidence >>
+        status >> retention >> std::quoted(record.conflict_group) >> record.checksum;
+    record.status = static_cast<MemoryStatus>(status);
+    record.retention = static_cast<RetentionClass>(retention);
+    require(static_cast<bool>(input), "truncated memory record");
+    return record;
+}
+
+}  // namespace
+
+MemoryEncoder::MemoryEncoder(std::size_t embedding_dim, std::uint32_t schema_version)
+    : embedding_dim_(embedding_dim), schema_version_(schema_version) {
+    require(embedding_dim_ > 0, "memory embedding dimension must be positive");
+    require(schema_version_ == MemoryRecord::kSchemaVersion, "unsupported memory encoder schema");
+}
+
+std::uint64_t MemoryEncoder::content_checksum(const MemoryRecord& record) const {
+    std::uint64_t hash = 1469598103934665603ULL;
+    hash = mix_hash(hash, record.schema_version);
+    hash = mix_hash(hash, record.memory_id);
+    hash = mix_hash(hash, record.version);
+    hash = hash_bytes(hash, record.content);
+    for (const auto value : record.embedding) hash = mix_hash(hash, double_bits(value));
+    for (const auto value : record.event_ids) hash = mix_hash(hash, value);
+    for (const auto value : record.causal_parents) hash = mix_hash(hash, value);
+    hash = mix_hash(hash, static_cast<std::uint64_t>(record.created_at));
+    hash = mix_hash(hash, static_cast<std::uint64_t>(record.valid_from));
+    hash = mix_hash(hash, record.valid_until.has_value() ? static_cast<std::uint64_t>(*record.valid_until) : 0ULL);
+    hash = hash_bytes(hash, record.source.source_id);
+    hash = mix_hash(hash, record.source.span_start);
+    hash = mix_hash(hash, record.source.span_end);
+    hash = mix_hash(hash, double_bits(record.confidence));
+    hash = mix_hash(hash, status_value(record.status));
+    hash = mix_hash(hash, retention_value(record.retention));
+    hash = hash_bytes(hash, record.conflict_group);
+    return hash;
+}
+
+std::vector<double> MemoryEncoder::encode(const MemoryRecord& record) const {
+    require(record.embedding.size() == embedding_dim_, "memory embedding dimension mismatch");
+    std::vector<double> result(embedding_dim_, 0.0);
+    const auto seed = content_checksum(record);
+    for (std::size_t index = 0; index < embedding_dim_; ++index) {
+        const auto bits = seed ^ (0x9e3779b97f4a7c15ULL * static_cast<std::uint64_t>(index + 1));
+        const auto normalized = static_cast<double>(bits % 1000003ULL) / 1000003.0;
+        result[index] = 0.7 * record.embedding[index] + 0.1 * normalized +
+                        0.02 * static_cast<double>(record.event_ids.size()) +
+                        0.01 * static_cast<double>(record.status == MemoryStatus::Active);
+    }
+    return result;
+}
+
+MemoryWriteController::MemoryWriteController(double novelty_threshold, double quarantine_threshold)
+    : novelty_threshold_(novelty_threshold), quarantine_threshold_(quarantine_threshold) {
+    require(novelty_threshold_ >= 0.0 && quarantine_threshold_ >= 0.0 && quarantine_threshold_ <= 1.0,
+            "invalid memory controller thresholds");
+}
+
+MemoryDecision MemoryWriteController::decide(const MemoryRecord& candidate,
+                                             const std::vector<MemoryRecord>& existing_active) const {
+    if (candidate.confidence < quarantine_threshold_) {
+        return {MemoryDecisionKind::Quarantine, candidate.memory_id, candidate.version, "confidence_below_quarantine_threshold"};
+    }
+    for (const auto& existing : existing_active) {
+        if (existing.memory_id == candidate.memory_id) {
+            if (existing.content == candidate.content && vector_equal(existing.embedding, candidate.embedding)) {
+                return {MemoryDecisionKind::Ignore, candidate.memory_id, existing.version, "duplicate_content_and_embedding"};
+            }
+            return {MemoryDecisionKind::Update, candidate.memory_id, existing.version + 1, "same_identity_new_version"};
+        }
+        if (!candidate.conflict_group.empty() && candidate.conflict_group == existing.conflict_group &&
+            existing.content == candidate.content && vector_equal(existing.embedding, candidate.embedding)) {
+            return {MemoryDecisionKind::Ignore, existing.memory_id, existing.version, "duplicate_conflict_group_content"};
+        }
+    }
+    return {MemoryDecisionKind::Write, candidate.memory_id, 1, "novel_record"};
+}
+
+PersistentMemory::PersistentMemory(MemoryConfig config)
+    : config_(std::move(config)), encoder_(config_.embedding_dim), write_controller_(), next_sequence_(1) {
+    require(config_.embedding_dim > 0, "memory embedding dimension must be positive");
+    require(config_.max_active_records > 0, "memory capacity must be positive");
+    require(finite(config_.minimum_confidence) && config_.minimum_confidence >= 0.0 && config_.minimum_confidence <= 1.0,
+            "invalid memory confidence threshold");
+}
+
+void PersistentMemory::validate_record(const MemoryRecord& record) const {
+    require(record.schema_version == MemoryRecord::kSchemaVersion, "unsupported memory record schema");
+    require(record.memory_id != 0, "memory ID must be nonzero");
+    require(record.version > 0, "memory version must be positive");
+    require(!record.content.empty(), "memory content must not be empty");
+    require(record.embedding.size() == config_.embedding_dim, "memory embedding dimension mismatch");
+    for (const auto value : record.embedding) require(finite(value), "memory embedding is non-finite");
+    require(std::is_sorted(record.event_ids.begin(), record.event_ids.end()), "memory event IDs must be sorted");
+    require(std::adjacent_find(record.event_ids.begin(), record.event_ids.end()) == record.event_ids.end(),
+            "memory event IDs must be unique");
+    require(std::is_sorted(record.causal_parents.begin(), record.causal_parents.end()),
+            "memory causal parents must be sorted");
+    require(std::adjacent_find(record.causal_parents.begin(), record.causal_parents.end()) == record.causal_parents.end(),
+            "memory causal parents must be unique");
+    require(record.valid_from <= record.created_at || record.created_at == 0, "memory validity starts after creation");
+    if (record.valid_until.has_value()) require(*record.valid_until > record.valid_from, "memory validity interval is empty");
+    require(finite(record.confidence) && record.confidence >= 0.0 && record.confidence <= 1.0,
+            "memory confidence must be in [0,1]");
+    require(record.source.span_start <= record.source.span_end, "memory source span is reversed");
+    if (record.status == MemoryStatus::Active) require(record.confidence >= config_.minimum_confidence, "memory confidence below policy");
+}
+
+MemoryEvent PersistentMemory::make_event(MemoryEventType type, const MemoryRecord& record, MemoryId target_id,
+                                          std::uint64_t previous_version, const std::string& reason) const {
+    MemoryEvent event;
+    event.sequence = next_sequence_;
+    event.type = type;
+    event.record = record;
+    event.target_id = target_id;
+    event.previous_version = previous_version;
+    event.reason = reason;
+    event.previous_event_checksum = event_log_.empty() ? config_.chain_seed : event_log_.back().event_checksum;
+    event.event_checksum = event_checksum(event);
+    return event;
+}
+
+std::uint64_t PersistentMemory::event_checksum(const MemoryEvent& event) const {
+    std::uint64_t hash = 1469598103934665603ULL;
+    hash = mix_hash(hash, event.sequence);
+    hash = mix_hash(hash, event_type_value(event.type));
+    hash = mix_hash(hash, event.target_id);
+    hash = mix_hash(hash, event.previous_version);
+    hash = mix_hash(hash, event.previous_event_checksum);
+    hash = hash_bytes(hash, event.reason);
+    hash = mix_hash(hash, event.record.checksum);
+    hash = mix_hash(hash, event.record.memory_id);
+    hash = mix_hash(hash, event.record.version);
+    return hash;
+}
+
+void PersistentMemory::apply_event(const MemoryEvent& event, bool validate_chain) {
+    require(event.record.checksum == encoder_.content_checksum(event.record), "memory record checksum mismatch");
+    if (validate_chain) {
+        const auto expected_previous = event.sequence == 1 ? config_.chain_seed : event_log_.back().event_checksum;
+        require(event.sequence == next_sequence_, "memory event sequence mismatch");
+        require(event.previous_event_checksum == expected_previous, "memory event chain mismatch");
+        require(event.event_checksum == event_checksum(event), "memory event checksum mismatch");
+    }
+    auto& versions = versions_[event.target_id];
+    if (event.type == MemoryEventType::Append || (event.type == MemoryEventType::Quarantine && versions.empty())) {
+        require(versions.empty(), "append event targets an existing memory");
+        versions.push_back(event.record);
+        if (event.record.status == MemoryStatus::Active) active_[event.record.memory_id] = event.record;
+        return;
+    }
+    require(!versions.empty(), "mutation event targets an unknown memory");
+    if (event.type == MemoryEventType::Update) {
+        require(active_.count(event.target_id) != 0U, "update event targets inactive memory");
+        require(event.previous_version == active_.at(event.target_id).version, "update version predecessor mismatch");
+        versions.back().status = MemoryStatus::Superseded;
+        active_.erase(event.target_id);
+        versions.push_back(event.record);
+        if (event.record.status == MemoryStatus::Active) active_[event.target_id] = event.record;
+        return;
+    }
+    require(event.previous_version == versions.back().version, "status mutation version predecessor mismatch");
+    if (active_.count(event.target_id) != 0U) {
+        versions.back().status = MemoryStatus::Superseded;
+        active_.erase(event.target_id);
+    }
+    versions.push_back(event.record);
+    if (event.record.status == MemoryStatus::Active) active_[event.target_id] = event.record;
+}
+
+void PersistentMemory::append_event(MemoryEvent event) {
+    require(event.sequence == next_sequence_, "event append sequence mismatch");
+    require(event.event_checksum == event_checksum(event), "event checksum not finalized");
+    apply_event(event, true);
+    event_log_.push_back(std::move(event));
+    ++next_sequence_;
+}
+
+MemoryDecision PersistentMemory::write(MemoryRecord record, const std::string& reason) {
+    validate_record(record);
+    const auto decision = write_controller_.decide(record, active_records());
+    if (decision.kind == MemoryDecisionKind::Ignore) return decision;
+    if (decision.kind == MemoryDecisionKind::Update) return update(std::move(record), reason);
+    if (decision.kind == MemoryDecisionKind::Quarantine) {
+        record.status = MemoryStatus::Quarantined;
+        record.checksum = encoder_.content_checksum(record);
+        const auto event = make_event(MemoryEventType::Quarantine, record, record.memory_id, 0, reason + ":quarantine");
+        append_event(event);
+        return {MemoryDecisionKind::Quarantine, record.memory_id, record.version, "quarantined_by_write_controller"};
+    }
+    record.version = 1;
+    record.status = MemoryStatus::Active;
+    record.checksum = encoder_.content_checksum(record);
+    const auto event = make_event(MemoryEventType::Append, record, record.memory_id, 0, reason);
+    append_event(event);
+    return {MemoryDecisionKind::Write, record.memory_id, record.version, reason};
+}
+
+MemoryDecision PersistentMemory::update(MemoryRecord record, const std::string& reason) {
+    validate_record(record);
+    require(active_.count(record.memory_id) != 0U, "cannot update inactive or unknown memory");
+    const auto& previous = active_.at(record.memory_id);
+    if (previous.content == record.content && vector_equal(previous.embedding, record.embedding)) {
+        return {MemoryDecisionKind::Ignore, record.memory_id, previous.version, "duplicate_update"};
+    }
+    record.version = previous.version + 1;
+    record.status = MemoryStatus::Active;
+    record.checksum = encoder_.content_checksum(record);
+    const auto event = make_event(MemoryEventType::Update, record, record.memory_id, previous.version, reason);
+    append_event(event);
+    return {MemoryDecisionKind::Update, record.memory_id, record.version, reason};
+}
+
+MemoryDecision PersistentMemory::delete_memory(MemoryId memory_id, const std::string& reason) {
+    require(memory_id != 0, "memory ID must be nonzero");
+    const auto iterator = active_.find(memory_id);
+    if (iterator == active_.end()) return {MemoryDecisionKind::Ignore, memory_id, 0, "memory_not_active"};
+    MemoryRecord tombstone = iterator->second;
+    tombstone.version += 1;
+    tombstone.status = MemoryStatus::Deleted;
+    tombstone.checksum = encoder_.content_checksum(tombstone);
+    const auto event = make_event(MemoryEventType::Tombstone, tombstone, memory_id, iterator->second.version, reason);
+    append_event(event);
+    return {MemoryDecisionKind::Update, memory_id, tombstone.version, "deleted_immediately"};
+}
+
+MemoryDecision PersistentMemory::quarantine(MemoryId memory_id, const std::string& reason) {
+    require(memory_id != 0, "memory ID must be nonzero");
+    const auto iterator = active_.find(memory_id);
+    if (iterator == active_.end()) return {MemoryDecisionKind::Ignore, memory_id, 0, "memory_not_active"};
+    MemoryRecord quarantined = iterator->second;
+    quarantined.version += 1;
+    quarantined.status = MemoryStatus::Quarantined;
+    quarantined.checksum = encoder_.content_checksum(quarantined);
+    const auto event = make_event(MemoryEventType::Quarantine, quarantined, memory_id, iterator->second.version, reason);
+    append_event(event);
+    return {MemoryDecisionKind::Quarantine, memory_id, quarantined.version, "quarantined_immediately"};
+}
+
+std::size_t PersistentMemory::expire(LogicalTime now, const std::string& reason) {
+    std::vector<MemoryId> expired;
+    for (const auto& [memory_id, record] : active_) {
+        if (record.valid_until.has_value() && *record.valid_until <= now && record.retention != RetentionClass::LegalHold) {
+            expired.push_back(memory_id);
+        }
+    }
+    for (const auto memory_id : expired) (void)delete_memory(memory_id, reason);
+    return expired.size();
+}
+
+std::size_t PersistentMemory::enforce_capacity(const std::string& reason) {
+    std::size_t deleted = 0;
+    while (active_.size() > config_.max_active_records) {
+        auto candidate = active_.end();
+        for (auto iterator = active_.begin(); iterator != active_.end(); ++iterator) {
+            if (iterator->second.retention == RetentionClass::LegalHold) continue;
+            if (candidate == active_.end() ||
+                std::tie(iterator->second.retention, iterator->second.created_at, iterator->second.confidence, iterator->first) <
+                    std::tie(candidate->second.retention, candidate->second.created_at, candidate->second.confidence, candidate->first)) {
+                candidate = iterator;
+            }
+        }
+        if (candidate == active_.end()) break;
+        (void)delete_memory(candidate->first, reason);
+        ++deleted;
+    }
+    return deleted;
+}
+
+MemoryDecision PersistentMemory::write_event(const CausalEvent& event, const std::vector<double>& embedding,
+                                             MemoryId memory_id, const std::string& reason) {
+    require(memory_id != 0, "memory ID must be nonzero");
+    require(event.semantic_payload.size() == 1, "causal event memory adapter expects scalar payload");
+    MemoryRecord record;
+    record.memory_id = memory_id;
+    record.content = "causal_event:" + std::to_string(event.id) + ":" + std::to_string(event.semantic_payload.front());
+    record.embedding = embedding;
+    record.event_ids = {event.id};
+    record.causal_parents = event.causal_parents;
+    record.created_at = event.timestamp;
+    record.valid_from = event.timestamp;
+    record.source = {"causal_event", 0, record.content.size()};
+    record.confidence = event.uncertainty.confidence;
+    record.retention = RetentionClass::Standard;
+    return write(std::move(record), reason);
+}
+
+bool PersistentMemory::valid_at(const MemoryRecord& record, const MemoryQuery& query) const {
+    if (query.valid_at.has_value()) {
+        if (record.valid_from > *query.valid_at) return false;
+        if (!query.include_expired && record.valid_until.has_value() && *record.valid_until <= *query.valid_at) return false;
+    }
+    if (query.created_after.has_value() && record.created_at < *query.created_after) return false;
+    if (query.created_before.has_value() && record.created_at > *query.created_before) return false;
+    if (!query.include_expired && record.valid_until.has_value() && !query.valid_at.has_value() && record.valid_until.value() <= record.created_at) return false;
+    return true;
+}
+
+double PersistentMemory::cosine_similarity(const std::vector<double>& left, const std::vector<double>& right) const {
+    require(left.size() == right.size(), "memory query embedding dimension mismatch");
+    double dot = 0.0;
+    double left_norm = 0.0;
+    double right_norm = 0.0;
+    for (std::size_t index = 0; index < left.size(); ++index) {
+        dot += left[index] * right[index];
+        left_norm += left[index] * left[index];
+        right_norm += right[index] * right[index];
+    }
+    if (left_norm == 0.0 || right_norm == 0.0) return 0.0;
+    return dot / std::sqrt(left_norm * right_norm);
+}
+
+std::vector<MemoryHit> PersistentMemory::retrieve(const MemoryQuery& query) const {
+    require(query.embedding.empty() || query.embedding.size() == config_.embedding_dim,
+            "memory query embedding dimension mismatch");
+    struct Candidate {
+        MemoryHit hit;
+    };
+    std::vector<Candidate> candidates;
+    if (query.include_history) {
+        for (const auto& [memory_id, versions] : versions_) {
+            for (const auto& record : versions) {
+                if (record.status == MemoryStatus::Deleted || record.status == MemoryStatus::Quarantined) continue;
+                if (record.status == MemoryStatus::Superseded && !query.include_history) continue;
+                if (record.confidence < query.minimum_confidence || !valid_at(record, query)) continue;
+                if (query.source_id.has_value() && record.source.source_id != *query.source_id) continue;
+                if (query.event_id.has_value() && std::find(record.event_ids.begin(), record.event_ids.end(), *query.event_id) == record.event_ids.end()) continue;
+                if (query.conflict_group.has_value() && record.conflict_group != *query.conflict_group) continue;
+                const auto score = query.embedding.empty() ? 0.0 : cosine_similarity(query.embedding, record.embedding);
+                candidates.push_back({{record.memory_id, record.version, score, record.source, record.source.span_start,
+                                       record.source.span_end, record.confidence, record.status, record.conflict_group, record.checksum}});
+            }
+        }
+    } else {
+        for (const auto& [memory_id, record] : active_) {
+            (void)memory_id;
+            if (record.status != MemoryStatus::Active || record.confidence < query.minimum_confidence || !valid_at(record, query)) continue;
+            if (query.source_id.has_value() && record.source.source_id != *query.source_id) continue;
+            if (query.event_id.has_value() && std::find(record.event_ids.begin(), record.event_ids.end(), *query.event_id) == record.event_ids.end()) continue;
+            if (query.conflict_group.has_value() && record.conflict_group != *query.conflict_group) continue;
+            const auto score = query.embedding.empty() ? 0.0 : cosine_similarity(query.embedding, record.embedding);
+            candidates.push_back({{record.memory_id, record.version, score, record.source, record.source.span_start,
+                                   record.source.span_end, record.confidence, record.status, record.conflict_group, record.checksum}});
+        }
+    }
+    std::sort(candidates.begin(), candidates.end(), [](const Candidate& left, const Candidate& right) {
+        if (left.hit.score != right.hit.score) return left.hit.score > right.hit.score;
+        if (left.hit.confidence != right.hit.confidence) return left.hit.confidence > right.hit.confidence;
+        if (left.hit.version != right.hit.version) return left.hit.version > right.hit.version;
+        return left.hit.memory_id < right.hit.memory_id;
+    });
+    std::vector<MemoryHit> result;
+    const auto limit = std::min(query.budget, candidates.size());
+    result.reserve(limit);
+    for (std::size_t index = 0; index < limit; ++index) result.push_back(candidates[index].hit);
+    return result;
+}
+
+CitationBinding PersistentMemory::bind_citation(const std::string& claim_id, const std::vector<MemoryHit>& hits,
+                                                CitationSupport support) const {
+    CitationBinding binding;
+    binding.claim_id = claim_id;
+    binding.support = hits.empty() ? CitationSupport::Unsupported : support;
+    binding.reason = hits.empty() ? "no_retrieved_evidence" : "evidence_bound_to_memory_records";
+    for (const auto& hit : hits) {
+        const auto iterator = active_.find(hit.memory_id);
+        if (iterator == active_.end() || iterator->second.version != hit.version || iterator->second.checksum != hit.checksum) {
+            binding.support = CitationSupport::Abstained;
+            binding.reason = "evidence_record_no_longer_active_or_checksum_mismatch";
+            binding.memory_ids.clear();
+            binding.evidence.clear();
+            return binding;
+        }
+        binding.memory_ids.push_back(hit.memory_id);
+        binding.evidence.push_back(hit.source);
+    }
+    return binding;
+}
+
+EvidenceContext PersistentMemory::evidence_context(const MemoryQuery& query) const {
+    return {retrieve(query), true};
+}
+
+EvidenceContext PersistentMemory::no_memory_context() { return {{}, false}; }
+
+bool PersistentMemory::contains(MemoryId memory_id) const noexcept { return active_.count(memory_id) != 0U; }
+
+const MemoryRecord& PersistentMemory::active_record(MemoryId memory_id) const {
+    const auto iterator = active_.find(memory_id);
+    if (iterator == active_.end()) throw MemoryError("active memory ID not found");
+    return iterator->second;
+}
+
+std::vector<MemoryRecord> PersistentMemory::active_records() const {
+    std::vector<MemoryRecord> result;
+    result.reserve(active_.size());
+    for (const auto& [memory_id, record] : active_) {
+        (void)memory_id;
+        result.push_back(record);
+    }
+    return result;
+}
+
+std::vector<MemoryRecord> PersistentMemory::history(MemoryId memory_id) const {
+    const auto iterator = versions_.find(memory_id);
+    if (iterator == versions_.end()) return {};
+    return iterator->second;
+}
+
+std::vector<MemoryRecord> PersistentMemory::conflict_set(const std::string& conflict_group) const {
+    std::vector<MemoryRecord> result;
+    for (const auto& [memory_id, record] : active_) {
+        (void)memory_id;
+        if (!conflict_group.empty() && record.conflict_group == conflict_group) result.push_back(record);
+    }
+    std::sort(result.begin(), result.end(), [](const MemoryRecord& left, const MemoryRecord& right) {
+        if (left.confidence != right.confidence) return left.confidence > right.confidence;
+        if (left.created_at != right.created_at) return left.created_at > right.created_at;
+        return left.memory_id < right.memory_id;
+    });
+    return result;
+}
+
+void PersistentMemory::verify_log() const {
+    PersistentMemory replayed(config_);
+    for (const auto& event : event_log_) {
+        replayed.apply_event(event, true);
+        replayed.event_log_.push_back(event);
+        replayed.next_sequence_ = event.sequence + 1;
+    }
+    require(replayed.canonical_state_export() == canonical_state_export(), "memory replay changed canonical state");
+    require(replayed.log_export() == log_export(), "memory replay changed event log");
+}
+
+void PersistentMemory::reset_state() {
+    event_log_.clear();
+    versions_.clear();
+    active_.clear();
+    next_sequence_ = 1;
+}
+
+void PersistentMemory::rebuild_from_log() {
+    const auto saved_log = event_log_;
+    reset_state();
+    for (const auto& event : saved_log) {
+        apply_event(event, true);
+        event_log_.push_back(event);
+        next_sequence_ = event.sequence + 1;
+    }
+}
+
+std::string PersistentMemory::canonical_state_export() const {
+    std::ostringstream output;
+    output << "CCT_MEMORY_CANONICAL_V1\n";
+    for (const auto& [memory_id, record] : active_) {
+        (void)memory_id;
+        write_record(output, record);
+    }
+    return output.str();
+}
+
+std::string PersistentMemory::log_export() const {
+    std::ostringstream output;
+    output << "CCT_MEMORY_LOG_V1\n";
+    for (const auto& event : event_log_) {
+        output << "EVENT " << event.sequence << ' ' << event_type_value(event.type) << ' ' << event.target_id << ' '
+               << event.previous_version << ' ' << std::quoted(event.reason) << ' ' << event.previous_event_checksum << ' '
+               << event.event_checksum << '\n';
+        write_record(output, event.record);
+    }
+    return output.str();
+}
+
+std::string PersistentMemory::serialize_snapshot() const {
+    std::ostringstream output;
+    output << "CCT_MEMORY_SNAPSHOT_V1\n" << std::setprecision(17);
+    output << "CONFIG " << config_.embedding_dim << ' ' << config_.max_active_records << ' '
+           << config_.minimum_confidence << ' ' << config_.chain_seed << ' ' << (config_.immediate_deletion ? 1 : 0) << '\n';
+    for (const auto& event : event_log_) {
+        output << "EVENT " << event.sequence << ' ' << event_type_value(event.type) << ' ' << event.target_id << ' '
+               << event.previous_version << ' ' << std::quoted(event.reason) << ' ' << event.previous_event_checksum << ' '
+               << event.event_checksum << '\n';
+        write_record(output, event.record);
+    }
+    return output.str();
+}
+
+PersistentMemory PersistentMemory::deserialize_snapshot(const std::string& snapshot) {
+    std::istringstream input(snapshot);
+    std::string header;
+    std::getline(input, header);
+    require(header == "CCT_MEMORY_SNAPSHOT_V1", "invalid memory snapshot header");
+    std::string token;
+    MemoryConfig config;
+    int immediate_deletion = 0;
+    input >> token >> config.embedding_dim >> config.max_active_records >> config.minimum_confidence >> config.chain_seed >> immediate_deletion;
+    require(token == "CONFIG", "missing memory snapshot configuration");
+    config.immediate_deletion = immediate_deletion != 0;
+    PersistentMemory memory(config);
+    while (input >> token) {
+        require(token == "EVENT", "invalid memory snapshot event marker");
+        MemoryEvent event;
+        unsigned int event_type = 0;
+        input >> event.sequence >> event_type >> event.target_id >> event.previous_version >> std::quoted(event.reason) >>
+            event.previous_event_checksum >> event.event_checksum;
+        event.type = static_cast<MemoryEventType>(event_type);
+        event.record = read_record(input);
+        require(static_cast<bool>(input), "truncated memory snapshot event");
+        memory.apply_event(event, true);
+        memory.event_log_.push_back(event);
+        memory.next_sequence_ = event.sequence + 1;
+    }
+    memory.verify_log();
+    return memory;
+}
+
+void PersistentMemory::save_snapshot(const std::string& path) const {
+    std::ofstream stream(path);
+    require(static_cast<bool>(stream), "could not write memory snapshot");
+    stream << serialize_snapshot();
+}
+
+PersistentMemory PersistentMemory::load_snapshot(const std::string& path) {
+    std::ifstream stream(path);
+    require(static_cast<bool>(stream), "could not read memory snapshot");
+    std::ostringstream content;
+    content << stream.rdbuf();
+    return deserialize_snapshot(content.str());
+}
+
+}  // namespace cct

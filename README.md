@@ -1,12 +1,12 @@
 # CCT-ASE Native C++ Research Prototype
 
-The **Chrono-Causal Tapestry — Adaptive Spectral Engine (CCT-ASE)** is a research prototype for testing causal event fields and efficient spectral dynamics. The repository currently provides a reproducible **native C++20 numerical, sequence, and causal-event substrate**; it does not claim to be a language model or superintelligence system. The implemented Stage 0, Stage 1, Stage 2, and Stage 3 gates establish reproducibility, numerical correctness, recurrent trainability, efficiency measurement, leakage-controlled graph conditioning, intervention prediction, counterfactual evaluation, robustness, and abstention on declared synthetic distributions.
+The **Chrono-Causal Tapestry — Adaptive Spectral Engine (CCT-ASE)** is a research prototype for testing causal event fields and efficient spectral dynamics. The repository currently provides a reproducible **native C++20 numerical, sequence, causal-event, and persistent-memory substrate**; it does not claim to be a language model or superintelligence system. The implemented Stage 0 through Stage 4 gates establish reproducibility, numerical correctness, recurrent trainability, efficiency measurement, leakage-controlled graph conditioning, intervention prediction, counterfactual evaluation, persistent checksummed memory, exact retrieval, provenance, deletion, conflict handling, poisoning resistance, and recovery on declared local fixtures.
 
-> **Current status:** Stages 0, 1, 2, and 3 are implemented in native C++ and pass their mandatory gates. Stage 4 has not been implemented and requires explicit approval.
+> **Current status:** Stages 0 through 4 are implemented in native C++ and pass their mandatory gates. Stage 5 has not been implemented and requires explicit approval.
 
 ## Implemented scope
 
-The active runtime is C++20 with CMake and FFTW3. The native library provides event/manifold storage, periodic spectral Laplacians, an independent finite-difference reference Laplacian, leapfrog and RK4 integration, periodic/Dirichlet/Neumann boundaries, CFL rejection, bounded local potentials, analytic one-step gradients, a real/complex selective recurrent sequence core, segmented prefix-scan execution, optional RMS normalization, checkpointing, trained dense-attention/GRU/diagonal-SSM comparators, deterministic algorithmic benchmark executables, versioned causal event storage, DAG queries, leakage-safe graph-conditioned recurrence, synthetic structural-equation generation, intervention/counterfactual prediction, robustness, and abstention.
+The active runtime is C++20 with CMake and FFTW3. The native library provides event/manifold storage, periodic spectral Laplacians, an independent finite-difference reference Laplacian, leapfrog and RK4 integration, periodic/Dirichlet/Neumann boundaries, CFL rejection, bounded local potentials, analytic one-step gradients, a real/complex selective recurrent sequence core, segmented prefix-scan execution, optional RMS normalization, checkpointing, trained dense-attention/GRU/diagonal-SSM comparators, deterministic algorithmic benchmark executables, versioned causal event storage, DAG queries, leakage-safe graph-conditioned recurrence, synthetic structural-equation generation, intervention/counterfactual prediction, robustness, abstention, checksummed append-only memory logs, exact metadata/vector retrieval, versioning, citations, retention/deletion, conflict sets, and recovery.
 
 The implementation is deliberately split into clear reference paths and optimized paths. The spectral and finite-difference solvers are compared on identical inputs, and the sequence loop and prefix scan are compared on identical inputs, including complex state and segmented masks. Gates check manufactured solutions, temporal convergence, energy drift, boundary residuals, recurrent path equivalence, gradient agreement, checkpoint recovery, copy/parity/associative/overwrite learning, trained matched baselines, ablations, and measured scaling.
 
@@ -16,7 +16,8 @@ The implementation is deliberately split into clear reference paths and optimize
 | Stage 1 — Differentiable numerical engine | **PASS** | `cct_native`, `cct_tests`, `cct_stage1_gate`, `Stages/01_Numerical_Engine.md` |
 | Stage 2 — Efficient sequence core | **PASS** | `cct_sequence_tests`, `cct_stage2_gate`, `Stages/02_Sequence_Core.md` |
 | Stage 3 — Causal event learning | **PASS** | `cct_causal_tests`, `cct_stage3_gate`, `Stages/03_Causal_Event_Learning.md` |
-| Stages 4–7 | Specification only | Stage 4 requires explicit approval |
+| Stage 4 — Persistent verifiable memory | **PASS** | `cct_memory_tests`, `cct_stage4_gate`, `Stages/04_Persistent_Verifiable_Memory.md` |
+| Stages 5–7 | Specification only | Stage 5 requires explicit approval |
 
 ## Requirements
 
@@ -43,10 +44,12 @@ make stage2-test
 make stage2-gate
 make stage3-test
 make stage3-gate
-make ci-stage3
+make stage4-test
+make stage4-gate
+make ci-stage4
 ```
 
-`make native-build` configures and compiles the C++ library and executables under `build-cpp/`. `make native-test` runs the CTest suite. The gate commands create machine-readable artifacts under `artifacts/stage-0/cpp-gate/`, `artifacts/stage-1/cpp-gate/`, `artifacts/stage-2/cpp-gate/`, and `artifacts/stage-3/cpp-gate/`. `make ci-stage3` executes the complete native Stage 3 pipeline, including the prior Stage 0/1/2 gates, and returns a nonzero status if any mandatory check fails.
+`make native-build` configures and compiles the C++ library and executables under `build-cpp/`. `make native-test` runs the CTest suite. The gate commands create machine-readable artifacts under `artifacts/stage-0/cpp-gate/`, `artifacts/stage-1/cpp-gate/`, `artifacts/stage-2/cpp-gate/`, `artifacts/stage-3/cpp-gate/`, and `artifacts/stage-4/cpp-gate/`. `make ci-stage4` executes the complete native Stage 4 pipeline, including all prior gates, and returns a nonzero status if any mandatory check fails.
 
 A clean build can also be invoked directly:
 
@@ -126,6 +129,11 @@ The strengthened Stage 2 gate requires **12 mandatory checks** plus limitation-c
 | `cpp/tests/causal_tests.cpp` | Stage 3 causal regression suite |
 | `cpp/tools/stage3_gate.cpp` | Stage 3 artifact-producing gate |
 | `Stages/03_Expanded_Gate_Contract.md` | Stage 3 thresholds, controls, and artifact contract |
+| `cpp/include/cct/memory.hpp` | Persistent memory, log, retrieval, citation, and retention API |
+| `cpp/src/memory.cpp` | Checksummed append-only memory implementation and causal-event adapter |
+| `cpp/tests/memory_tests.cpp` | Stage 4 persistent-memory regression suite |
+| `cpp/tools/stage4_gate.cpp` | Stage 4 artifact-producing gate |
+| `Stages/04_Expanded_Gate_Contract.md` | Stage 4 thresholds, controls, and artifact contract |
 | `cpp/tools/stage0_gate.cpp` | Stage 0 artifact-producing gate |
 | `cpp/tools/stage1_gate.cpp` | Stage 1 artifact-producing gate |
 | `cpp/tools/stage2_gate.cpp` | Stage 2 artifact-producing gate |
@@ -136,7 +144,7 @@ The strengthened Stage 2 gate requires **12 mandatory checks** plus limitation-c
 
 ## Research limitations
 
-The current implementation validates a numerical operator substrate, a deterministic real/complex selective recurrent core, and a native causal-event learner on controlled synthetic structural-equation tasks with graph, intervention, counterfactual, robustness, and abstention checks. It does not validate general causal discovery, general reasoning, memory persistence, language competence, multimodal transfer, autonomous research, or superintelligence. Those claims require real data, larger-scale matched baselines, safety controls, and independent evaluation in later approved stages.
+The current implementation validates a numerical operator substrate, a deterministic real/complex selective recurrent core, a native causal-event learner, and a local persistent verifiable memory subsystem on controlled synthetic and fixture tasks. It does not validate general causal discovery, deployed language-model memory, general reasoning, language competence, multimodal transfer, autonomous research, distributed storage, or superintelligence. Those claims require real data, larger-scale matched baselines, safety controls, and independent evaluation in later approved stages.
 
 ## License
 

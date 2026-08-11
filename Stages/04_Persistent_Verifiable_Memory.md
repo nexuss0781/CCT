@@ -4,7 +4,7 @@
 **Stage ID:** 4  
 **Predecessor:** Stage 3 — Causal Event Learning  
 **Successor:** Stage 5 — Language and Code Scaling  
-**Status:** Specification; implementation not started
+**Status:** Implemented in native C++20; Stage 4 gate validation in progress; Stage 5 approval required
 
 ## Purpose
 
@@ -14,9 +14,9 @@ The memory system must be evaluated as an independent subsystem and as a model-a
 
 ## Scope and non-goals
 
-The stage includes an append-only event log, versioned records, embedding and metadata indexes, learned write/read controllers, memory compression, provenance-aware retrieval, citation generation, retention/deletion policies, corruption tests, and long-context evaluation. It does not scale the full language model, add autonomous tools, or claim that topological summaries alone constitute memory.
+The stage includes a checksummed append-only event log, versioned records, deterministic exact embedding and metadata indexes, auditable write/read controllers, provenance-aware retrieval, citation generation, retention/deletion policies, conflict handling, poisoning-boundary tests, causal-event integration, recovery tests, and long-context evaluation. Approximate indexing and distributed storage remain outside this correctness stage. It does not scale the full language model, add autonomous tools, or claim that topological summaries alone constitute memory.
 
-The first implementation may use a local embedded index or an in-process exact search implementation. Approximate nearest-neighbor indexing and distributed storage are optimization paths, not prerequisites for correctness.
+The implemented local baseline uses an in-process exact search implementation. Approximate nearest-neighbor indexing and distributed storage are optimization paths, not prerequisites for correctness or claimed by this stage.
 
 ## Memory contract
 

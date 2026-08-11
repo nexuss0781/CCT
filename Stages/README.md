@@ -10,7 +10,7 @@ This directory contains the independent implementation and evaluation specificat
 | 1 | [Differentiable Numerical Engine](01_Numerical_Engine.md) | Correct and differentiable field/operator substrate | Authorizes sequence core |
 | 2 | [Efficient Sequence Core](02_Sequence_Core.md) | Stable selective recurrent model with streaming equivalence | Authorizes causal event learning |
 | 3 | [Causal Event Learning](03_Causal_Event_Learning.md) and [Expanded Gate Contract](03_Expanded_Gate_Contract.md) | Native event identity, DAG structure, leakage audit, intervention, counterfactual, robustness, and abstention tests | PASS complete; Stage 4 requires explicit approval |
-| 4 | [Persistent Verifiable Memory](04_Persistent_Verifiable_Memory.md) | Recoverable, provenance-aware, policy-controlled memory | Authorizes language/code scaling |
+| 4 | [Persistent Verifiable Memory](04_Persistent_Verifiable_Memory.md) and [Expanded Gate Contract](04_Expanded_Gate_Contract.md) | Native checksummed log, exact retrieval, provenance/citations, deletion, conflicts, retention, poisoning boundary, and recovery | Stage 4 gate in progress; Stage 5 requires explicit approval |
 | 5 | [Language and Code Scaling](05_Language_Code_Scaling.md) | Matched quality–compute–memory evaluation on realistic data | Authorizes bounded deliberation |
 | 6 | [Deliberation and Verification](06_Deliberation_Verification.md) | Bounded planning, independent verification, and offline tools | Authorizes multimodal research |
 | 7 | [Multimodal and Open-Ended Research](07_Multimodal_Open_Ended.md) | Controlled cross-modal transfer and research continuation decision | Requires research review |
