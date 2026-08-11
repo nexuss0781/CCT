@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cct-ase.local/schemas/benchmark_record.schema.json",
+  "title": "CCT-ASE Benchmark Record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "name",
+    "value",
+    "unit",
+    "seed",
+    "commit",
+    "config_hash",
+    "hardware",
+    "timestamp_utc",
+    "status"
+  ],
+  "properties": {
+    "name": {"type": "string", "minLength": 1},
+    "value": {"type": "number", "finite": true},
+    "unit": {"type": "string", "minLength": 1},
+    "seed": {"type": "integer", "minimum": 0},
+    "commit": {"type": "string", "minLength": 1},
+    "config_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "hardware": {"type": "string", "minLength": 1},
+    "timestamp_utc": {"type": "string", "format": "date-time"},
+    "status": {"enum": ["PASS", "FAIL", "BLOCKED"]}
+  }
+}

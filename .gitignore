@@ -1,3 +1,33 @@
-```
-# Documentation and specification files are source files, no need to ignore
-```
+# Python environments and caches
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Native build outputs
+target/
+*.so
+*.dylib
+*.dll
+*.pyd
+*.whl
+*.egg-info/
+build/
+dist/
+
+# Generated evaluation artifacts
+artifacts/
+
+# Local editor and OS files
+.vscode/
+.idea/
+.DS_Store
+
+# Local secrets and environment overrides
+.env
+.env.*
+!.env.example

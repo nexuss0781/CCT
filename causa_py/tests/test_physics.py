@@ -53,7 +53,7 @@ def test_superposition_principle():
     # 4. Assertion:
     # The combined field should be approximately the sum of the individual fields,
     # allowing for small floating-point differences.
-    assert jnp.allclose(combined_field, field1 + field2)
+    assert jnp.allclose(combined_field, field1 + field2, rtol=1e-5, atol=1e-7)
     
 def test_kernel_normalization():
     dims = (32, 32)

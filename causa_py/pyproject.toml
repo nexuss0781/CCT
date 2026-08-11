@@ -1,27 +1,40 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=68,<81", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "causa_py"
+name = "cct-ase"
 version = "0.1.0"
 authors = [
-  { name="Genesis Architect", email="architect@cct.dev" },
+  { name = "CCT-ASE Contributors" },
 ]
-description = "Python interface and JAX backend for the Causa Protosystem."
-requires-python = ">=3.9"
+description = "Chrono-Causal Adaptive Spectral Engine research prototype."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = { text = "MIT" }
 classifiers = [
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "jax[gpu]", # For GPU/TPU accelerated numerical computation
-    "numpy",
-    "optax", # Optimizer library for JAX
-    "matplotlib",
-    "plotly",
+    "jax[cpu]>=0.11,<0.12",
+    "numpy>=2.0,<3.0",
+    "optax>=0.2,<0.3",
 ]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8,<10",
+    "pytest-cov>=5,<7",
+    "jsonschema>=4,<5",
+    "maturin>=1.7,<2.0",
+]
+
+[tool.setuptools]
+package-dir = {"" = ".."}
+packages = ["causa_py"]
 
 [tool.maturin]
 manifest-path = "../causa_core/Cargo.toml"
