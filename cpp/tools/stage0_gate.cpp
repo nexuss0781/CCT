@@ -33,7 +33,7 @@ std::string run_git(const char* command) {
     while (fgets(buffer, sizeof(buffer), pipe) != nullptr) value += buffer;
     pclose(pipe);
     while (!value.empty() && (value.back() == '\n' || value.back() == '\r')) value.pop_back();
-    return value.empty() ? "unknown" : value;
+    return value;
 }
 
 Check run(const std::string& name, const std::function<std::string()>& function) {
@@ -124,7 +124,8 @@ int main(int argc, char** argv) {
     }
     checks_json << "\n]\n";
     write_file(output / "checks.json", checks_json.str());
-    const auto commit = run_git("git rev-parse HEAD 2>/dev/null");
+    const auto commit_value = run_git("git rev-parse HEAD 2>/dev/null");
+    const auto commit = commit_value.empty() ? std::string("unknown") : commit_value;
     const auto dirty = run_git("git status --porcelain 2>/dev/null");
     std::ostringstream gate;
     gate << "{\n  \"stage\": 0,\n  \"status\": \"" << (passed ? "PASS" : "FAIL") << "\",\n"
