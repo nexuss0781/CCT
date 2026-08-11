@@ -9,6 +9,7 @@ htmlcov/
 .ruff_cache/
 
 # Native build outputs
+build-cpp/
 target/
 *.so
 *.dylib
@@ -31,3 +32,7 @@ artifacts/
 .env
 .env.*
 !.env.example
+
+# Legacy language tooling artifacts
+*.egg-info/
+.pytest_cache/

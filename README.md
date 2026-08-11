@@ -1,278 +1,113 @@
-# Chrono-Causal Tapestry (CCT)
+# CCT-ASE Native C++ Research Prototype
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
-[![Rust 1.70+](https://img.shields.io/badge/rust-1.70+-orange.svg)](https://www.rust-lang.org/)
-[![JAX](https://img.shields.io/badge/JAX-v0.4+-green.svg)](https://github.com/google/jax)
+The **Chrono-Causal Tapestry — Adaptive Spectral Engine (CCT-ASE)** is a research prototype for testing causal event fields and efficient spectral dynamics. The repository currently provides a reproducible **native C++20 numerical substrate**; it does not claim to be a language model or superintelligence system. The implemented Stage 0 and Stage 1 gates establish numerical correctness and measurement discipline before any sequence-learning capability is added.
 
-## Next-Generation AI Architecture Grounded in Mathematical First Principles
+> **Current status:** Stage 0 and Stage 1 are implemented in native C++ and pass their mandatory gates. Stage 2 has not been implemented.
 
-The **Chrono-Causal Tapestry (CCT)** is a revolutionary AI architecture that transcends statistical pattern matching by building intelligence on rigorous mathematical foundations: **causal manifolds**, **spectral propagation**, **geometric semantics**, **resonant modes**, and **topological memory**.
+## Implemented scope
 
-Unlike transformer-based models with O(n²) complexity, CCT achieves **O(n log n)** scaling through spectral methods while providing theoretical guarantees on stability, interpretability, and generalization.
+The active runtime is C++20 with CMake and FFTW3. The native library provides event/manifold storage, periodic spectral Laplacians, an independent finite-difference reference Laplacian, leapfrog and RK4 integration, periodic/Dirichlet/Neumann boundaries, CFL rejection, bounded local potentials, analytic one-step gradients, configuration serialization, and deterministic benchmark executables.
 
----
+The implementation is deliberately split into a clear reference path and an optimized spectral path. The two paths are compared on identical inputs so that FFTW acceleration cannot conceal discretization errors. The native gate also checks manufactured solutions, temporal convergence, energy drift, boundary residuals, gradient agreement, serialization, and measured scaling.
 
-## 🌟 Key Innovations
+| Stage | Status | Native entry points |
+|---|---|---|
+| Stage 0 — Reproducible baseline | **PASS** | `cct_stage0_gate`, `Stages/00_Reproducible_Baseline.md` |
+| Stage 1 — Differentiable numerical engine | **PASS** | `cct_native`, `cct_tests`, `cct_stage1_gate`, `Stages/01_Numerical_Engine.md` |
+| Stage 2 — Efficient sequence core | Not started | Requires explicit approval |
+| Stages 3–7 | Specification only | Not started |
 
-| Feature | Traditional AI | CCT |
-|---------|---------------|-----|
-| **Complexity** | O(n²) attention | O(n log n) spectral |
-| **Foundation** | Statistical correlation | Causal first principles |
-| **Memory** | Fixed context window | Topological persistence |
-| **Interpretability** | Black box | Geometric/topological structure |
-| **Reasoning** | Memorized patterns | Mode coupling dynamics |
-| **Scaling** | Brute force | Mathematical guarantees |
+## Requirements
 
----
-
-## 🏗️ Architecture Overview
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Application Layer                        │
-│         (Task Heads, APIs, User Interfaces)                 │
-├─────────────────────────────────────────────────────────────┤
-│              Phase 7: Advanced Capabilities                 │
-│     (Multi-Manifold, Emergent Phenomena, Research)          │
-├─────────────────────────────────────────────────────────────┤
-│           Phase 6: Production Integration                   │
-│    (Distributed Training, Optimization, Monitoring)         │
-├─────────────────────────────────────────────────────────────┤
-│        Phase 5: Topological Memory Bank                     │
-│   (Persistent Homology, Betti Numbers, Morse Complex)       │
-├─────────────────────────────────────────────────────────────┤
-│           Phase 4: Resonance Engine                         │
-│    (Eigenmode Decomposition, Spectral Attention)            │
-├─────────────────────────────────────────────────────────────┤
-│        Phase 3: Semantic Geometry                           │
-│    (Fiber Bundles, Ricci Flow, Parallel Transport)          │
-├─────────────────────────────────────────────────────────────┤
-│          Phase 2: Spectral Solver                           │
-│     (FFT Propagation, PDE Solving, Learnable Kernels)       │
-├─────────────────────────────────────────────────────────────┤
-│         Phase 1: Manifold Substrate                         │
-│      (Sparse Octree, Event Storage, Causal Queries)         │
-└─────────────────────────────────────────────────────────────┘
-```
-
----
-
-## 📐 Mathematical Pillars
-
-### 1. Causal Manifold Theory
-Events embedded in pseudo-Riemannian manifolds with Lorentzian metric structure. Causal ordering defined by light cones, not sequential indices.
-
-### 2. Spectral Causal Propagation
-Information propagates via wave equations solved in Fourier space:
-```
-□φ(x,t) + V(x)φ(x,t) = J(x,t)  →  φ̂(ω,k) = Ĵ(ω,k) / (ω² - c²|k|² - V̂(k))
-```
-
-### 3. Geometric Semantic Embeddings
-Meaning as sections of fiber bundles. Curvature encodes semantic relationships; parallel transport handles context.
-
-### 4. Resonant Mode Decomposition
-Fields decomposed into Laplace-Beltrami eigenmodes. Reasoning emerges from mode coupling dynamics.
-
-### 5. Topological Memory Persistence
-Long-term memory encoded in homology groups. Retrieval via persistence diagram similarity.
-
----
-
-## 🚀 Quick Start
-
-### Prerequisites
-
-- Python 3.9+
-- Rust 1.70+
-- CUDA 11.8+ (for GPU acceleration)
-- 16GB+ RAM recommended
-
-### Installation
+A declared CPU build requires a C++20 compiler, CMake 3.20 or newer, `pkg-config`, and FFTW3 development headers and libraries. On Ubuntu, the dependencies can be installed with:
 
 ```bash
-# Clone repository
-git clone https://github.com/your-org/causa.git
-cd causa
-
-# Install Rust core (required for Python bindings)
-cd causa_core && maturin develop && cd ..
-
-# Install Python package
-pip install -e causa_py/
-
-# Install dependencies
-pip install jax jaxlib numpy scipy
+sudo apt-get update
+sudo apt-get install -y g++ cmake pkg-config libfftw3-dev
 ```
 
-### Basic Usage
+The repository contains no active Python runtime, Python test suite, Python packaging path, or Python gate script. The older Rust crate remains in the repository as historical substrate material, but the active Stage 0/1 implementation and validation path is native C++.
 
-```python
-from causa_py import Manifold, Event
-from causa_py.physics import resolve_system, create_propagation_kernel
-import jax.numpy as jnp
+## Build and validate
 
-# Create causal manifold
-manifold = Manifold(dimensions=[128, 128])
-
-# Place events with semantic content
-event = Event(
-    semantic_vector=[0.5] * 512,
-    temporal_tensor=[64, 64],
-    causal_potential_vector=[1.0, 0.5, 0.2]
-)
-manifold.place_event(event)
-
-# Resolve causal field propagation
-source_field = create_source_field(manifold)
-kernel = create_propagation_kernel(manifold.dimensions, {'decay_rate': 0.1})
-causal_field = resolve_system(source_field, kernel)
-
-print(f"Causal field shape: {causal_field.shape}")
-```
-
----
-
-## 📚 Documentation
-
-### Specification Documents
-
-Detailed technical specifications for each development phase:
-
-| Phase | Document | Status |
-|-------|----------|--------|
-| **Architecture** | [Architecture.md](Architecture.md) | ✅ Complete |
-| **Phase 1** | [SPEC/Phase-1.md](SPEC/Phase-1.md) | ✅ Complete |
-| **Phase 2** | [SPEC/Phase-2.md](SPEC/Phase-2.md) | ✅ Complete |
-| **Phase 3** | [SPEC/Phase-3.md](SPEC/Phase-3.md) | ✅ Complete |
-| **Phase 4** | [SPEC/Phase-4.md](SPEC/Phase-4.md) | ✅ Complete |
-| **Phase 5** | [SPEC/Phase-5.md](SPEC/Phase-5.md) | ✅ Complete |
-| **Phase 6** | [SPEC/Phase-6.md](SPEC/Phase-6.md) | ✅ Complete |
-| **Phase 7** | [SPEC/Phase-7.md](SPEC/Phase-7.md) | ✅ Complete |
-
-### Core Concepts
-
-- **[Architecture.md](Architecture.md)**: Comprehensive overview of CCT principles, mathematical foundations, and system design
-- **[SPEC/Phase-1.md](SPEC/Phase-1.md)**: Manifold data structures, event representation, complexity guarantees
-- **[SPEC/Phase-2.md](SPEC/Phase-2.md)**: Spectral solvers, FFT propagation, time-stepping schemes
-- **[SPEC/Phase-3.md](SPEC/Phase-3.md)**: Fiber bundle semantics, Ricci flow, parallel transport
-- **[SPEC/Phase-4.md](SPEC/Phase-4.md)**: Eigenmode decomposition, spectral attention, mode coupling
-- **[SPEC/Phase-5.md](SPEC/Phase-5.md)**: Persistent homology, topological memory, retrieval mechanisms
-
----
-
-## 🔬 Performance Characteristics
-
-| Operation | Complexity | Target Latency |
-|-----------|------------|----------------|
-| Event insertion | O(log n) | < 100ns |
-| Causal query | O(log n) | < 50ns |
-| FFT propagation | O(n log n) | < 1ms (512³) |
-| Spectral attention | O(m²d + nm) | 10× faster than standard @ n=4096 |
-| Mode decomposition | O(nm²) | < 1s (100 modes) |
-| Topological encoding | O(n³) exact, O(m³) approx | < 100ms (subsampled) |
-
----
-
-## 🧪 Benchmarks
-
-Coming soon. Planned benchmark suites:
-
-- **Long-range dependency**: Needle-in-haystack at 1M+ tokens
-- **Compositional reasoning**: CLUTRR, bAbI tasks
-- **Semantic similarity**: WordNet, SimLex-999
-- **Memory retrieval**: Synthetic topology benchmarks
-
----
-
-## 🛠️ Technology Stack
-
-| Component | Language/Framework | Purpose |
-|-----------|-------------------|---------|
-| **Core Runtime** | Rust | Memory-safe, zero-cost abstractions |
-| **Numerical Kernels** | JAX | Auto-diff, XLA compilation |
-| **High-Level Logic** | Python | Ecosystem, prototyping |
-| **GPU Acceleration** | CUDA/C++ | Custom sparse kernels |
-| **Distributed Training** | Ray/MPI | Horizontal scaling |
-
----
-
-## 🤝 Contributing
-
-We welcome contributions! Please read our contributing guidelines before submitting PRs.
-
-### Areas for Contribution
-
-- Core manifold optimizations
-- Spectral solver improvements
-- Benchmark implementations
-- Documentation enhancements
-- Tutorial creation
-
-### Development Setup
+The canonical commands are:
 
 ```bash
-# Clone and setup
-git clone https://github.com/your-org/causa.git
-cd causa
-
-# Run tests
-pytest causa_py/tests/
-
-# Run benchmarks
-pytest --benchmark-only causa_py/tests/
-
-# Format code
-black causa_py/ && cargo fmt
+make native-build
+make native-test
+make stage0-gate
+make stage1-test
+make stage1-gate
+make ci
 ```
 
----
+`make native-build` configures and compiles the C++ library and executables under `build-cpp/`. `make native-test` runs the CTest suite. The two gate commands create machine-readable artifacts under `artifacts/stage-0/cpp-gate/` and `artifacts/stage-1/cpp-gate/`. `make ci` executes the complete native pipeline and returns a nonzero status if any mandatory check fails.
 
-## 📄 License
+A clean build can also be invoked directly:
 
-MIT License - see [LICENSE](LICENSE) for details.
+```bash
+rm -rf build-cpp
+cmake -S cpp -B build-cpp -DCMAKE_BUILD_TYPE=Release
+cmake --build build-cpp --parallel 2
+ctest --test-dir build-cpp --output-on-failure
+```
 
----
+## Native API surface
 
-## 🙏 Acknowledgments
+The public headers are in `cpp/include/cct/`. The event substrate is defined in `cct/event.hpp`. The numerical engine is defined in `cct/field.hpp` and exposes the following conceptual contract:
 
-This project builds upon foundational work in:
+```cpp
+cct::FieldState state = solver.initialize(phi0, psi0);
+cct::FieldState next = solver.step(state, source, potential);
+cct::Trajectory trajectory = solver.rollout(state, source_sequence, potential);
+double loss = solver.operator_loss(prediction, target, mask);
+```
 
-- Differential geometry and general relativity
-- Algebraic topology and persistent homology
-- Spectral graph theory
-- Mathematical physics
-- Machine learning theory
+The field equation under test is:
 
----
+```text
+∂²φ/∂t² = c² Δφ − V(x)φ + J(x,t)
+```
 
-## 📬 Contact
+The spectral implementation applies Fourier multipliers on periodic regular grids. The reference implementation uses an independent finite-difference stencil. Analytic source and potential gradients for the leapfrog one-step loss are checked against centered finite differences; this is a native training contract, not a claim that a complete optimizer or language model exists.
 
-- **Website**: [coming soon]
-- **Discord**: [coming soon]
-- **Twitter**: [@causa_ai](https://twitter.com/causa_ai)
-- **Email**: team@causa.ai
+## Gate criteria
 
----
+The Stage 1 gate is intentionally stricter than a build smoke test. The current native report records the following mandatory checks:
 
-## 🗺️ Roadmap
+| Check | Required result |
+|---|---:|
+| FFT round-trip correctness | PASS |
+| Spectral/reference Laplacian agreement | PASS |
+| Spectral/reference rollout agreement | PASS |
+| Manufactured-solution accuracy | PASS |
+| RK4 convergence order | PASS |
+| Energy stability | PASS |
+| CFL rejection | PASS |
+| Analytic/finite-difference gradient agreement | PASS |
+| Dirichlet and Neumann residuals | PASS |
+| Configuration serialization | PASS |
+| Measured subquadratic scaling | PASS |
 
-| Quarter | Milestone |
-|---------|-----------|
-| Q1 2024 | Phase 1-2 complete (Manifold + Spectral) |
-| Q2 2024 | Phase 3-4 complete (Geometry + Resonance) |
-| Q3 2024 | Phase 5 complete (Topological Memory) |
-| Q4 2024 | Phase 6 complete (Production System) |
-| Q1 2025 | Phase 7 research begins |
+A Stage 1 `PASS` authorizes preparation of Stage 2 only. It does not authorize Stage 2 implementation without explicit user approval.
 
----
+## Repository map
 
-<div align="center">
+| Path | Purpose |
+|---|---|
+| `cpp/include/cct/` | Public native C++ headers |
+| `cpp/src/` | Event, field, FFT, and numerical-engine implementations |
+| `cpp/tests/cct_tests.cpp` | Native regression suite |
+| `cpp/tools/stage0_gate.cpp` | Stage 0 artifact-producing gate |
+| `cpp/tools/stage1_gate.cpp` | Stage 1 artifact-producing gate |
+| `Stages/` | Independent stage specifications and transition contracts |
+| `SPEC/` | Historical and forward-looking mathematical specifications |
+| `artifacts/` | Local generated gate reports; excluded from source control |
 
-**Building the next generation of AI on mathematical first principles.**
+## Research limitations
 
-*The Chrono-Causal Tapestry Project*
+The current implementation validates a numerical operator substrate only. It does not validate causal discovery, general reasoning, memory persistence, language competence, multimodal transfer, autonomous research, or superintelligence. Those claims require new data, matched baselines, ablations, safety controls, and independent evaluation in later approved stages.
 
-</div>
+## License
 
+MIT License. See the repository license file for the applicable terms.

@@ -4,17 +4,17 @@
 **Stage ID:** 0  
 **Predecessor:** None  
 **Successor:** Stage 1 — Numerical Engine  
-**Status:** Specification; implementation not started
+**Status:** Implemented in native C++; Stage 0 gate PASS
 
 ## Purpose
 
-Stage 0 converts the current CCT repository from a conceptual prototype into a reproducible research package. No architectural capability claim may be evaluated until a clean machine can install the project, import the native and Python layers, execute deterministic tests, and produce machine-readable benchmark artifacts.
+Stage 0 converts the current CCT repository from a conceptual prototype into a reproducible native C++ research package. No architectural capability claim may be evaluated until a clean machine can configure and build the project, execute deterministic C++ tests, and produce machine-readable benchmark artifacts.
 
 This stage does not add intelligence. It establishes the measurement system that prevents later improvements from being confused with environment changes, undefined behavior, data leakage, or accidental regressions.
 
 ## Scope and non-goals
 
-The stage includes repository layout, pinned toolchains, packaging, native-extension loading, deterministic configuration, CI, baseline tests, benchmark schemas, artifact retention, and a minimal baseline report. It does not implement the spectral solver, selective recurrence, memory system, language training, tool use, or autonomous execution.
+The stage includes repository layout, a declared C++20/CMake/FFTW toolchain, deterministic configuration, CI, native baseline tests, benchmark schemas, artifact retention, and a minimal baseline report. It does not implement the spectral solver, selective recurrence, memory system, language training, tool use, or autonomous execution.
 
 The stage must preserve the public behavior that is intentionally retained from the current prototype while making incomplete or aspirational APIs explicit. Placeholder behavior must either be implemented, marked as unsupported with a structured error, or removed from the public surface.
 
@@ -23,13 +23,13 @@ The stage must preserve the public behavior that is intentionally retained from 
 | Area | Required implementation | Acceptance artifact |
 |---|---|---|
 | Repository structure | Add `src/`, `tests/`, `benchmarks/`, `configs/`, `scripts/`, `docs/`, and `artifacts/` conventions without duplicating package roots | Directory contract checked in CI |
-| Rust toolchain | Add `rust-toolchain.toml`, lock dependencies, configure release and test profiles, and expose one canonical crate name | `cargo metadata --locked` succeeds |
-| Python toolchain | Add a pinned supported-version matrix, lockfile or constraints file, and editable-install path | Clean virtual-environment installation log |
-| Native extension | Align PyO3 module name, shared-library name, import path, and wheel metadata; remove dynamic import ambiguity | `python -c "import causa_py"` succeeds in a clean environment |
+| C++ toolchain | Declare C++20, CMake, compiler warnings, FFTW3 dependency, and release/test profiles | Clean CMake configure and build succeeds |
+| Native library | Build one `cct_native` library exposing Event, Manifold, spectral, finite-difference, and solver APIs | Native link and executable smoke tests succeed |
+| Python removal | Remove active Python runtime, Python tests, Python packaging, and Python gate scripts | Repository contains no active `.py` implementation files |
 | Configuration | Define a versioned `CCTConfig` or equivalent schema for device, dtype, seed, dimensions, benchmark budget, and logging | Config round-trip test |
-| Determinism | Seed Python, NumPy, JAX, Rust-side generators, and benchmark data generation; record versions and hardware | Repeated-run equality report |
+| Determinism | Use deterministic native numerical paths and record compiler, FFTW, hardware, and configuration metadata | Repeated-run equality report |
 | Test runner | Provide one command for unit, integration, property, numerical-smoke, and benchmark-schema checks | CI command exits zero on a clean checkout |
-| Continuous integration | Test at least one CPU Python job and one native Rust job; GPU job may be optional initially but must be declared | CI status and stored logs |
+| Continuous integration | Test a clean CPU C++ build, CTest suite, Stage 0 gate, and Stage 1 gate | CI status and stored logs |
 | Benchmark schema | Store metric name, value, unit, seed, commit, config hash, hardware, timestamp, and pass/fail status as JSON | JSON schema validation |
 | Documentation | Add build, test, benchmark, and troubleshooting instructions | Documentation smoke test |
 | Security hygiene | Remove secrets, network-dependent test assumptions, generated binaries, and unreviewed executable downloads from the repository | Secret scan and clean-tree check |
@@ -39,17 +39,17 @@ The stage must preserve the public behavior that is intentionally retained from 
 The project must expose the following canonical commands or their exact documented equivalents:
 
 ```text
-make install
-make test
-make lint
-make typecheck
-make benchmark-smoke
-make report
+make native-build
+make native-test
+make stage0-gate
+make stage1-test
+make stage1-gate
+make ci
 ```
 
-`make install` must install from the repository into an isolated environment. `make test` must not silently skip tests because optional dependencies are missing; it must report capability-specific skips with a machine-readable reason. `make benchmark-smoke` must run only bounded tests suitable for CI and must never require a GPU. `make report` must combine test results and benchmark metadata into a versioned report without changing source files.
+`make native-build` must configure and compile the C++20 project from a clean build directory. `make native-test` must execute the CTest suite without silently skipping mandatory checks. `make stage0-gate` and `make stage1-gate` must emit bounded, machine-readable artifacts and nonzero status on failure. `make ci` must run the complete native pipeline without Python or GPU requirements.
 
-The native substrate must expose a single supported Python import path. If the extension is unavailable, importing the package must raise a clear installation error rather than silently loading a different module or a stale shared object.
+The native substrate must expose one supported C++ library and executable surface. CMake must fail clearly when FFTW3 or the declared compiler is unavailable rather than silently selecting a stale binary.
 
 Every benchmark must receive an explicit seed and configuration. The benchmark runner must refuse to compare results from different model configurations unless the report marks the comparison as non-equivalent.
 
@@ -57,7 +57,7 @@ Every benchmark must receive an explicit seed and configuration. The benchmark r
 
 ### Build and import tests
 
-The build harness must test a clean checkout with no pre-existing build directory. It must verify that the Rust library compiles with locked dependencies, the Python package installs, the native extension imports, and the public `Event` and `Manifold` symbols resolve from the documented namespace.
+The build harness must test a clean checkout with no pre-existing build directory. It must verify CMake configuration, C++ compilation with warnings treated as errors, FFTW linkage, the native Event/Manifold API, and the public solver executables.
 
 ### API smoke tests
 
@@ -94,8 +94,8 @@ Stage 0 passes only if all mandatory criteria below are satisfied.
 
 | Criterion | Pass condition | Failure condition |
 |---|---|---|
-| Clean installation | A fresh environment installs and imports the package on the declared CPU target | Manual path, stale build artifact, or undocumented dependency is required |
-| Native build | Locked Rust build succeeds with no compiler errors or unresolved module-name mismatch | Build is unpinned, non-reproducible, or import path is ambiguous |
+| Clean native build | A fresh build directory configures and compiles the C++ project on the declared CPU target | Manual path, stale build artifact, or undocumented dependency is required |
+| Native numerical build | C++20 library and FFTW-linked executables compile with no warnings under `-Werror` | Build is non-reproducible or numerical library linkage is ambiguous |
 | Required tests | All mandatory unit and integration tests pass | Any mandatory test fails or is silently skipped |
 | Error behavior | Invalid inputs return structured errors and do not mutate state | Panic, process crash, silent coercion, or state mutation occurs |
 | Determinism | Repeated smoke runs match the declared tolerance and record deviations | Seed is ignored or metadata is missing |
@@ -107,7 +107,7 @@ A `BLOCKED` result is allowed only for a declared optional platform job, never f
 
 ## Transition to Stage 1
 
-Stage 1 may begin only when the Stage 0 report contains a signed or otherwise reviewable gate record with `status = PASS`. The transition package must include the clean-install log, test report, benchmark-schema validation report, CI links or exported logs, environment manifest, and a list of known limitations.
+Stage 1 may begin only when the native Stage 0 report contains a reviewable gate record with `status = PASS`. The transition package must include the clean CMake build log, CTest report, benchmark-schema validation report, CI links or exported logs, environment manifest, and a list of known limitations.
 
 If Stage 0 fails, implementation stops at the failing boundary. The team must classify the failure as packaging, native build, API contract, nondeterminism, test weakness, or infrastructure. The failed test is added to regression coverage before the stage is retried.
 
