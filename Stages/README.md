@@ -9,7 +9,7 @@ This directory contains the independent implementation and evaluation specificat
 | 0 | [Reproducible Baseline](00_Reproducible_Baseline.md) | Clean build, deterministic tests, CI, benchmark schema | Authorizes numerical work |
 | 1 | [Differentiable Numerical Engine](01_Numerical_Engine.md) | Correct and differentiable field/operator substrate | Authorizes sequence core |
 | 2 | [Efficient Sequence Core](02_Sequence_Core.md) | Stable selective recurrent model with streaming equivalence | Authorizes causal event learning |
-| 3 | [Causal Event Learning](03_Causal_Event_Learning.md) | Event identity, DAG structure, intervention and counterfactual tests | Authorizes persistent memory |
+| 3 | [Causal Event Learning](03_Causal_Event_Learning.md) and [Expanded Gate Contract](03_Expanded_Gate_Contract.md) | Native event identity, DAG structure, leakage audit, intervention, counterfactual, robustness, and abstention tests | PASS complete; Stage 4 requires explicit approval |
 | 4 | [Persistent Verifiable Memory](04_Persistent_Verifiable_Memory.md) | Recoverable, provenance-aware, policy-controlled memory | Authorizes language/code scaling |
 | 5 | [Language and Code Scaling](05_Language_Code_Scaling.md) | Matched quality–compute–memory evaluation on realistic data | Authorizes bounded deliberation |
 | 6 | [Deliberation and Verification](06_Deliberation_Verification.md) | Bounded planning, independent verification, and offline tools | Authorizes multimodal research |
