@@ -12,11 +12,11 @@ Stage 1 implements a correct, differentiable numerical substrate for learned fie
 
 The output of this stage is not a language model. It is a reference-quality operator library that can later serve as an inductive-bias branch inside CCT-ASE. Numerical correctness is a hard prerequisite: a model cannot be credited with reasoning if its core propagation is unstable, aliased, or incorrectly differentiated.
 
-The implementation is located in `causa_py/numerical_engine.py`, with regression coverage in `tests/test_stage1_numerical_engine.py` and the independent gate runner in `scripts/stage1_harness.py`. The final gate is recorded in `artifacts/stage-1/gate/` and must be regenerated whenever the implementation or thresholds change.
+The implementation is located in `cpp/include/cct/field.hpp` and `cpp/src/field.cpp`, with native regression coverage in `cpp/tests/cct_tests.cpp` and the independent gate runner in `cpp/tools/stage1_gate.cpp`. The final C++ gate is recorded in `artifacts/stage-1/cpp-gate/` and must be regenerated whenever the implementation or thresholds change.
 
 ## Scope and non-goals
 
-The stage includes a periodic spectral solver, a reference finite-difference solver, stable time integrators, boundary-condition interfaces, learnable potential parameterizations, automatic differentiation, mixed-precision checks, and numerical benchmark reporting. It does not implement the recurrent sequence model, causal event learning, long-term memory, language training, or tool use.
+The stage includes a periodic spectral solver, a reference finite-difference solver, stable time integrators, boundary-condition interfaces, bounded learnable potential parameterizations, analytic native gradients, precision-policy checks, and numerical benchmark reporting. It does not implement the recurrent sequence model, causal event learning, long-term memory, language training, or tool use.
 
 The initial implementation should use a mathematically explicit scalar or vector field with a defined spatial grid and time coordinate. The system must distinguish a physical simulation mode from a learned operator mode; neither may silently substitute for the other.
 
@@ -37,16 +37,16 @@ State = (φ_t, ψ_t, t, solver_config, diagnostics)
 ψ_t = ∂φ/∂t
 ```
 
-The operator API must expose:
+The native operator API must expose equivalent C++ methods:
 
-```python
-state = solver.initialize(phi0, psi0, params)
-state_next = solver.step(state, source, params)
-trajectory = solver.rollout(state, source_sequence, params)
-loss = solver.operator_loss(prediction, target, mask)
+```cpp
+FieldState state = solver.initialize(phi0, psi0);
+FieldState state_next = solver.step(state, source, potential);
+Trajectory trajectory = solver.rollout(state, source_sequence, potential);
+double loss = solver.operator_loss(prediction, target, mask);
 ```
 
-All functions used in training must be pure with respect to model state. Cached frequency grids and static solver metadata may be stored outside the differentiable state, but any learned parameter that affects output must be an explicit function argument.
+All functions used in training must be pure with respect to solver state. Static solver metadata may be stored in immutable configuration, but every learned source or potential parameter that affects output must be an explicit vector argument. The native implementation exposes analytic one-step gradients and verifies them against centered finite differences.
 
 ## Required implementation
 
@@ -54,18 +54,18 @@ All functions used in training must be pure with respect to model state. Cached 
 |---|---|---|
 | Frequency grid | Build correctly indexed spatial frequencies with documented normalization | Forward and inverse transform recover a random field within tolerance |
 | Spectral Laplacian | Apply `-||k||²` multiplier with spacing and dtype handled explicitly | Matches reference stencil on low-frequency periodic fields within expected discretization error |
-| Propagator | Implement source-to-field propagation with explicit time and spatial axes | Output shapes, causality convention, and dtype are invariant under JIT |
-| Time integration | Implement leapfrog first; add RK4 and an implicit or semi-implicit option only after reference tests pass | Order of accuracy matches the declared scheme |
+| Propagator | Implement source-to-field propagation with explicit time and spatial axes | Output sizes, causality convention, and double-precision state layout are invariant under repeated native calls |
+| Time integration | Implement leapfrog first and RK4 after reference tests pass | Order of accuracy matches the declared scheme |
 | Boundary conditions | Implement periodic first, then Dirichlet and Neumann through a reference path; treat absorbing layers as optional | Boundary residual is measured, not assumed |
 | Learnable potential | Support bounded spectral coefficients and local potential functions | Parameters receive finite, nonzero gradients on a controlled loss |
 | Stability checks | Compute CFL-like limits, finite-value checks, norm/energy diagnostics, and step rejection | Invalid configuration returns structured failure |
-| Differentiation | Use automatic differentiation first; add custom VJP only when profiling proves necessary | AD and custom-VJP gradients agree |
-| Mixed precision | Support FP32 reference; test BF16/FP16 only where stable | Reduced precision reports error and overflow behavior |
+| Differentiation | Implement analytic one-step derivatives for source and potential parameters and compare against centered finite differences | Analytic and finite-difference gradients agree |
+| Precision | Use deterministic IEEE double precision for the C++ reference; reject unsupported reduced-precision requests explicitly | No silent precision downgrade or overflow |
 | Serialization | Save solver configuration and learned parameters with schema version | Load/save round trip preserves output within tolerance |
 
 ## Reference implementation requirements
 
-The reference solver must be slow but clear. It should use explicit array operations and avoid custom kernels. The optimized solver may use JIT compilation, fused FFT operations, or custom kernels, but every optimized result must be compared against the reference on the same input and configuration.
+The reference solver must be slow but clear. It uses explicit C++ array operations and an independent finite-difference stencil. The optimized solver uses FFTW spectral operations, and every optimized result is compared against the reference on identical inputs and configuration. Native compilation replaces the former JIT requirement.
 
 The reference implementation must include at least these manufactured solutions:
 
@@ -99,13 +99,13 @@ For every learnable parameter group, compare automatic gradients against centere
 
 For each boundary condition, measure the appropriate residual directly. Periodic boundaries must match across opposite faces. Dirichlet boundaries must meet the declared value. Neumann boundaries must meet the declared normal derivative within tolerance. Absorbing layers must be evaluated using reflection energy rather than visual inspection.
 
-### JIT and batching tests
+### Native compilation and shape tests
 
-Verify that eager and JIT outputs match, static and dynamic shapes behave as documented, batched fields do not mix batch and spatial axes, and gradients remain finite after compilation. The harness must test a second shape after compilation to detect accidental shape capture.
+Verify that clean and incremental CMake builds produce identical test behavior, repeated calls are deterministic, one- and two-dimensional shapes follow documented flattening, and a second shape after the first FFT plan does not reuse stale shape metadata. Batched execution is represented by explicit independent trajectories rather than a hidden global batch axis.
 
 ## Performance harness
 
-The performance harness must measure forward propagation, one step, rollout, backward pass, compilation time, steady-state time, peak memory, and achieved throughput. Compilation time must be separated from execution time. Each benchmark must include warm-up iterations and confidence intervals or a robust spread statistic.
+The performance harness must measure native build time separately from steady-state one-step and rollout time, FFT plan overhead, analytic-gradient evaluation, and achieved throughput. Warm-up iterations are separated from timed iterations, and each benchmark records grid size, method, compiler, FFTW version, and hardware.
 
 The stage must report scaling over grid sizes and rollout lengths. It must not claim O(n log n) merely because FFT is used; it must show the fitted scaling range, constants, memory behavior, and hardware. Any dense tensor or hidden pairwise operation must be visible in the profile.
 
@@ -118,9 +118,9 @@ The stage must report scaling over grid sizes and rollout lengths. It must not c
 | Convergence | Empirical order is consistent with the declared spatial and temporal scheme over at least three asymptotic resolutions | Refinement fails to reduce error or order is materially below specification |
 | Stability | No NaN/Inf and no unexplained norm blow-up in the stress suite; invalid CFL settings are rejected | Runtime silently proceeds with unstable settings |
 | Energy behavior | Source-free undamped runs satisfy the declared drift bound; damped runs satisfy the declared monotonic/bounded condition | Energy drift is unbounded or diagnostic is absent |
-| Gradient correctness | Automatic and finite-difference gradients agree within the declared tolerance on all learnable groups | Any trainable group has missing, NaN, or materially incorrect gradients |
+| Gradient correctness | Analytic native and centered finite-difference gradients agree within the declared tolerance on all learnable groups | Any trainable group has missing, NaN, or materially incorrect gradients |
 | Boundary correctness | Boundary residuals meet per-condition tolerances | Boundary code is a no-op or is not tested directly |
-| Precision behavior | FP32 reference is stable; lower precision either passes declared tolerance or is explicitly rejected for that operator | Overflow or silent accuracy collapse occurs |
+| Precision behavior | Native double-precision reference is stable; lower precision is explicitly rejected unless separately implemented and gated | Overflow or silent accuracy collapse occurs |
 | Performance integrity | Benchmark report separates compile/run time and shows no hidden quadratic hot path | Complexity claim is unsupported by measurements |
 
 The default starting targets are the Phase 2 targets: roughly 10^-3 numerical error on declared analytic tests, convergence consistent with the selected scheme, energy drift below 0.01% over the declared horizon, and gradient discrepancy near 10^-5 on small checks [[2](#references)]. These are gate targets, not universal laws; any revision must include evidence and reviewer approval.
@@ -135,7 +135,7 @@ If the stage fails, the failing numerical property becomes a regression test. Th
 
 The exit report must include the exact equation/discretization, solver configuration, grid and time-step sweeps, error tables, convergence plots or data, energy traces, gradient comparisons, precision results, hardware profile, and unresolved limitations. It must state which claims apply only to periodic regular grids and which apply to irregular or learned operators.
 
-**Transition decision:** `PASS` authorizes Stage 2. `FAIL` requires numerical remediation. `BLOCKED` is allowed only for an optional optimization path; the FP32 reference and test harness must pass before transition.
+**Transition decision:** `PASS` authorizes Stage 2. `FAIL` requires numerical remediation. `BLOCKED` is allowed only for an optional optimization path; the native double-precision reference and test harness must pass before transition.
 
 ## References
 

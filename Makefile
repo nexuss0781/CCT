@@ -1,49 +1,29 @@
-SHELL := /bin/bash
+BUILD_DIR ?= build-cpp
+CMAKE ?= cmake
 
-VENV ?= .venv
-PYTHON := $(VENV)/bin/python
-UV ?= uv
-MATURIN := $(VENV)/bin/maturin
+.PHONY: configure native-build native-test stage0-smoke stage0-gate stage1-test stage1-gate ci clean
 
-.PHONY: venv install install-native test test-stage1 lint typecheck benchmark-smoke report stage1-gate ci ci-stage1 clean
+configure:
+	$(CMAKE) -S cpp -B $(BUILD_DIR) -DCMAKE_BUILD_TYPE=Release
 
-venv:
-	$(UV) venv --clear --python 3.12 $(VENV)
+native-build: configure
+	$(CMAKE) --build $(BUILD_DIR) --parallel 2
 
-install: venv
-	$(UV) pip install --python $(PYTHON) -e 'causa_py[dev]'
-	$(MAKE) install-native
+native-test: native-build
+	ctest --test-dir $(BUILD_DIR) --output-on-failure
 
-install-native:
-	$(MATURIN) develop --release --manifest-path causa_core/Cargo.toml
+stage0-smoke: native-build
+	./$(BUILD_DIR)/cct_stage0_gate --output artifacts/stage-0/cpp-gate
 
-test:
-	$(PYTHON) -m pytest -q
+stage0-gate: stage0-smoke
 
-test-stage1:
-	$(PYTHON) -m pytest -q tests/test_stage1_numerical_engine.py tests/test_stage0_baseline.py causa_py/tests
+stage1-test: native-build
+	./$(BUILD_DIR)/cct_tests
 
-lint:
-	$(PYTHON) -m compileall -q causa_py scripts
-	cargo fmt --manifest-path causa_core/Cargo.toml --all -- --check
+stage1-gate: native-build
+	./$(BUILD_DIR)/cct_stage1_gate --output artifacts/stage-1/cpp-gate
 
-
-typecheck:
-	$(PYTHON) -m compileall -q causa_py scripts
-
-benchmark-smoke:
-	$(PYTHON) scripts/stage0_harness.py --mode smoke --output artifacts/stage-0/smoke
-
-report:
-	$(PYTHON) scripts/stage0_harness.py --mode gate --output artifacts/stage-0/gate
-
-stage1-gate:
-	$(PYTHON) scripts/stage1_harness.py --output artifacts/stage-1/gate
-
-ci: install lint test benchmark-smoke report
-
-ci-stage1: install lint test-stage1 stage1-gate
+ci: native-build native-test stage0-gate stage1-test stage1-gate
 
 clean:
-	rm -rf $(VENV) .pytest_cache artifacts/stage-0 artifacts/stage-1
-	cargo clean --manifest-path causa_core/Cargo.toml
+	rm -rf $(BUILD_DIR) artifacts/stage-0 artifacts/stage-1

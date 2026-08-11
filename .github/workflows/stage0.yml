@@ -1,4 +1,4 @@
-name: CCT-ASE Stage 0
+name: CCT-ASE Native Stage 0
 
 on:
   push:
@@ -12,35 +12,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install system toolchain
+      - name: Install native toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y cargo rustc rustfmt
+          sudo apt-get install -y g++ cmake pkg-config libfftw3-dev
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          version: "0.8.15"
-          enable-cache: true
+      - name: Build native project
+        run: make native-build
 
-      - name: Install and build
-        run: make install
-
-      - name: Lint and compile checks
-        run: make lint
-
-      - name: Test suite
-        run: make test
-
-      - name: Smoke harness
-        run: make benchmark-smoke
-
-      - name: Stage 0 gate
-        run: make report
+      - name: Native Stage 0 gate
+        run: make stage0-gate
 
       - name: Upload Stage 0 artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: stage0-artifacts
+          name: native-stage0-artifacts
           path: artifacts/stage-0/
