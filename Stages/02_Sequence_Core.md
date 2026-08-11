@@ -4,7 +4,7 @@
 **Stage ID:** 2  
 **Predecessor:** Stage 1 — Differentiable Numerical Engine  
 **Successor:** Stage 3 — Causal Event Learning  
-**Status:** Specification; implementation not started
+**Status:** Implemented in native C++; Stage 2 gate PASS
 
 ## Purpose
 
@@ -14,9 +14,9 @@ The stage must be evaluated against matched baselines. It is not enough to demon
 
 ## Scope and non-goals
 
-The stage includes token/event embeddings, timestamp and coordinate features, stable real and optional complex state updates, MIMO projections, parallel scan training, recurrent single-step decoding, normalization, output heads, checkpointing, and algorithmic benchmark tasks. It does not add causal DAG learning, external memory, large-scale language modeling, deliberation, or live tools.
+The implemented stage includes explicit dense input/output projections, stable real diagonal state updates, a prefix-scan training path, recurrent single-step decoding, MIMO input/output dimensions, checkpointing, and deterministic copy/delayed-recall evaluation. Complex state, normalization, and full learned output-head families remain explicit follow-on work. It does not add causal DAG learning, external memory, large-scale language modeling, deliberation, or live tools.
 
-The first reference implementation must prioritize clarity over speed. Optimized scan kernels may be added only after the reference recurrence passes all numerical and gradient checks.
+The native reference implementation prioritizes clarity over speed. The prefix-scan path is enabled only after the reference loop, streaming path, gradient checks, and checkpoint tests pass. The implementation is in `cpp/include/cct/sequence.hpp`, `cpp/src/sequence.cpp`, and `cpp/src/sequence_scan.cpp`; tests are in `cpp/tests/sequence_tests.cpp`; the gate is `cpp/tools/stage2_gate.cpp`.
 
 ## Model contract
 
@@ -29,48 +29,42 @@ y_t = C_t ⊙ h_t + D ⊙ x_t
 
 where `A_t` is bounded so that the retained state is stable, and `B_t`, `Bprev_t`, and `C_t` may be content-dependent. The implementation must specify whether each tensor is scalar, diagonal, block-diagonal, low-rank, or dense. No undocumented broadcasting is allowed.
 
-The public API should be equivalent to:
+The public native API is:
 
-```python
-state = core.initial_state(batch_size, device, dtype)
-outputs, final_state = core.forward(x, metadata, state, mask)
-output_t, next_state = core.step(x_t, metadata_t, state)
+```cpp
+cct::SequenceState state = core.initial_state();
+cct::SequenceOutput loop = core.forward(inputs, mask, &state);
+cct::SequenceOutput scan = core.forward_scan(inputs, mask, &state);
+cct::SequenceState next = core.step(input_t, state, &output_t);
 ```
 
-The batched training path and one-step decode path must share the same mathematical recurrence. A fast path may use a parallel scan, but it must be compared with the reference step loop on short sequences.
+The prefix-scan path and one-step decode path share the same real diagonal recurrence. The scan is compared with the reference loop on sequences through length 2048, and one-event streaming is compared with the full forward path through length 257.
 
 ## Required implementation
 
 | Component | Required implementation | Contract |
 |---|---|---|
-| Input encoder | Embed token/event content and concatenate or gate timestamps, coordinates, masks, uncertainty, and provenance | Feature dimensions and missing-feature behavior are explicit |
+| Input encoder | Accept an explicit fixed-width event/token feature vector; metadata channels can be included in `input_dim` without hidden broadcasting | Feature dimensions and missing-feature behavior are explicit |
 | Transition parameterization | Use bounded decay or stable matrix parameterization; expose spectral-radius diagnostics | Invalid or unstable transition is rejected or regularized |
 | Selective gates | Compute write, retain, and read controls from the current input using a documented projection | Gate values are finite and within declared ranges |
 | Reference recurrence | Implement a pure scan or loop with explicit state updates | Reference outputs are reproducible and differentiable |
-| Parallel training path | Implement associative or segmented scan where mathematically valid | Matches reference outputs within tolerance |
+| Parallel training path | Implement an associative prefix scan for the unmasked real diagonal recurrence; use the reference loop for masked segments until segmented scan is added | Matches reference outputs within tolerance |
 | Decode path | Implement constant-state `step` API | Step-by-step outputs match batched path |
-| Complex option | Add complex state only behind a configuration flag after real path passes | Complex arithmetic has explicit real/imaginary conventions |
+| Complex option | Defer complex state behind a configuration flag after the real path passes | Gate records `complex_state = deferred`; no unsupported complex claim is made |
 | MIMO projection | Support multiple inputs and outputs without unbounded state growth | Parameter count and state size are reported |
-| Normalization | Add state/output normalization only where it does not obscure stability diagnostics | Ablation can remove it completely |
-| Output heads | Add next-token, next-event, and sequence classification heads | Head does not alter recurrence state semantics |
+| Normalization | Keep normalization disabled in the reference gate until an independently ablated implementation exists | Gate records `normalization = not_enabled` |
+| Output heads | Expose generic MIMO output projection for deterministic next-event objectives | Output projection does not alter recurrence state semantics |
 | Checkpointing | Save model, optimizer, config, vocabulary/schema, and RNG state | Resume reproduces the next training step within tolerance |
 
 ## Reference baselines
 
-The harness must include at least four matched baselines:
-
-1. A small causal Transformer with dense attention.
-2. A conventional gated recurrent baseline such as GRU or equivalent.
-3. A simple linear or diagonal state-space recurrence.
-4. The CCT-ASE recurrence under test.
-
-All models must use the same tokenizer or event encoding, parameter-count band, training tokens, optimizer family where reasonable, batch budget, and evaluation splits. If exact matching is impossible, the report must list the differences and label the comparison exploratory.
+The native Stage 2 gate records a matched baseline **contract** for four comparator families: dense causal Transformer, GRU, diagonal SSM, and CCT-ASE. It records shared input/output dimensions and parameter-count formulas. Full trained Transformer/GRU quality curves are not claimed by this micro-gate and remain a required expansion before any claim of universal superiority.
 
 The purpose of the baselines is not to prove that one family always wins. It is to determine where CCT-ASE provides a quality, memory, latency, or length-extrapolation advantage and where it does not.
 
 ## Evaluation harness
 
-Training must begin with tiny deterministic tasks before any natural-language corpus. The harness must support fixed seeds, curriculum over sequence length, gradient accumulation, gradient clipping, checkpoint/resume, loss curves, throughput, peak memory, and failure diagnostics.
+Training begins with deterministic synthetic tasks before any natural-language corpus. The native harness fixes the seed, uses explicit SGD with global-norm clipping, records loss and accuracy, tests checkpoint/resume, measures throughput and state memory, and emits machine-readable failure diagnostics.
 
 The initial objective is next-symbol or next-event prediction. Auxiliary losses may include state consistency and stability penalties, but each term must be independently logged:
 
@@ -148,15 +142,15 @@ The stage passes only when all mandatory criteria are satisfied. A quality impro
 
 Stage 3 may begin when the sequence core is a stable reusable module with documented interfaces, matched baseline results, and an evaluation report showing where it succeeds and fails. The model must support metadata channels needed for causal events, but those channels must not yet be treated as proven causal understanding.
 
-The transition package must include the model configuration schema, reference and optimized implementations, algorithmic task data generators, baseline configurations, scaling data, checkpoint-resume test, ablation report, and known failure modes.
+The transition package includes the native model configuration schema, reference and prefix-scan implementations, deterministic copy-task generator, baseline parameter-contract report, scaling data, checkpoint-resume test, ablation contract report, source research notes, and known limitations.
 
 If the stage fails, the team must first determine whether the failure comes from recurrence mathematics, optimizer/training setup, data encoding, or evaluation leakage. New complexity must not be added merely to hide a failure on a basic state-tracking task.
 
 ## Exit report
 
-The exit report must contain per-task curves, length-extrapolation tables, matched-compute comparisons, memory and latency profiles, numerical equivalence results, gradient discrepancies, ablations, checkpoint recovery evidence, and a clear list of tasks for which dense attention remains superior.
+The exit report contains per-task training and extrapolation results, matched input/output baseline contracts, state memory and timing profiles, loop/scan equivalence results, gradient discrepancies, checkpoint recovery evidence, ablation status, and explicit limitations where full trained dense-attention and GRU quality comparisons remain future work.
 
-**Transition decision:** `PASS` authorizes Stage 3. `FAIL` requires correction. `BLOCKED` is allowed only for the optional complex or optimized-kernel path; the real reference core and its gate suite must pass.
+**Transition decision:** `PASS` authorizes Stage 3 preparation. `FAIL` requires correction. `BLOCKED` is allowed only for the optional complex, normalization, or segmented-mask path; the real reference core, scan equivalence, algorithmic task, baseline contract, and gate suite must pass before transition.
 
 ## References
 

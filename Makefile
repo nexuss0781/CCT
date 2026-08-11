@@ -1,7 +1,7 @@
 BUILD_DIR ?= build-cpp
 CMAKE ?= cmake
 
-.PHONY: configure native-build native-test stage0-smoke stage0-gate stage1-test stage1-gate ci clean
+.PHONY: configure native-build native-test stage0-smoke stage0-gate stage1-test stage1-gate stage2-test stage2-gate ci-stage2 ci clean
 
 configure:
 	$(CMAKE) -S cpp -B $(BUILD_DIR) -DCMAKE_BUILD_TYPE=Release
@@ -23,7 +23,15 @@ stage1-test: native-build
 stage1-gate: native-build
 	./$(BUILD_DIR)/cct_stage1_gate --output artifacts/stage-1/cpp-gate
 
+stage2-test: native-build
+	./$(BUILD_DIR)/cct_sequence_tests
+
+stage2-gate: native-build
+	./$(BUILD_DIR)/cct_stage2_gate --output artifacts/stage-2/cpp-gate
+
+ci-stage2: native-build native-test stage0-gate stage1-test stage1-gate stage2-test stage2-gate
+
 ci: native-build native-test stage0-gate stage1-test stage1-gate
 
 clean:
-	rm -rf $(BUILD_DIR) artifacts/stage-0 artifacts/stage-1
+	rm -rf $(BUILD_DIR) artifacts/stage-0 artifacts/stage-1 artifacts/stage-2
