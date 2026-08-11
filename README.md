@@ -1,21 +1,21 @@
 # CCT-ASE Native C++ Research Prototype
 
-The **Chrono-Causal Tapestry — Adaptive Spectral Engine (CCT-ASE)** is a research prototype for testing causal event fields and efficient spectral dynamics. The repository currently provides a reproducible **native C++20 numerical substrate**; it does not claim to be a language model or superintelligence system. The implemented Stage 0 and Stage 1 gates establish numerical correctness and measurement discipline before any sequence-learning capability is added.
+The **Chrono-Causal Tapestry — Adaptive Spectral Engine (CCT-ASE)** is a research prototype for testing causal event fields and efficient spectral dynamics. The repository currently provides a reproducible **native C++20 numerical and sequence substrate**; it does not claim to be a language model or superintelligence system. The implemented Stage 0, Stage 1, and Stage 2 gates establish reproducibility, numerical correctness, recurrent trainability, and efficiency measurement.
 
-> **Current status:** Stage 0 and Stage 1 are implemented in native C++ and pass their mandatory gates. Stage 2 has not been implemented.
+> **Current status:** Stages 0, 1, and 2 are implemented in native C++ and pass their mandatory gates. Stage 3 has not been implemented.
 
 ## Implemented scope
 
-The active runtime is C++20 with CMake and FFTW3. The native library provides event/manifold storage, periodic spectral Laplacians, an independent finite-difference reference Laplacian, leapfrog and RK4 integration, periodic/Dirichlet/Neumann boundaries, CFL rejection, bounded local potentials, analytic one-step gradients, configuration serialization, and deterministic benchmark executables.
+The active runtime is C++20 with CMake and FFTW3. The native library provides event/manifold storage, periodic spectral Laplacians, an independent finite-difference reference Laplacian, leapfrog and RK4 integration, periodic/Dirichlet/Neumann boundaries, CFL rejection, bounded local potentials, analytic one-step gradients, a selective recurrent sequence core, prefix-scan execution, checkpointing, algorithmic copy training, and deterministic benchmark executables.
 
-The implementation is deliberately split into a clear reference path and an optimized spectral path. The two paths are compared on identical inputs so that FFTW acceleration cannot conceal discretization errors. The native gate also checks manufactured solutions, temporal convergence, energy drift, boundary residuals, gradient agreement, serialization, and measured scaling.
+The implementation is deliberately split into clear reference paths and optimized paths. The spectral and finite-difference solvers are compared on identical inputs, and the sequence loop and prefix scan are compared on identical inputs. Gates check manufactured solutions, temporal convergence, energy drift, boundary residuals, recurrent path equivalence, gradient agreement, checkpoint recovery, algorithmic recall, and measured scaling.
 
 | Stage | Status | Native entry points |
 |---|---|---|
 | Stage 0 — Reproducible baseline | **PASS** | `cct_stage0_gate`, `Stages/00_Reproducible_Baseline.md` |
 | Stage 1 — Differentiable numerical engine | **PASS** | `cct_native`, `cct_tests`, `cct_stage1_gate`, `Stages/01_Numerical_Engine.md` |
-| Stage 2 — Efficient sequence core | Not started | Requires explicit approval |
-| Stages 3–7 | Specification only | Not started |
+| Stage 2 — Efficient sequence core | **PASS** | `cct_sequence_tests`, `cct_stage2_gate`, `Stages/02_Sequence_Core.md` |
+| Stages 3–7 | Specification only | Stage 3 requires explicit approval |
 
 ## Requirements
 
@@ -26,7 +26,7 @@ sudo apt-get update
 sudo apt-get install -y g++ cmake pkg-config libfftw3-dev
 ```
 
-The repository contains no active Python runtime, Python test suite, Python packaging path, or Python gate script. The older Rust crate remains in the repository as historical substrate material, but the active Stage 0/1 implementation and validation path is native C++.
+The repository contains no active Python runtime, Python test suite, Python packaging path, or Python gate script. The older Rust crate remains in the repository as historical substrate material, but the active Stage 0/1/2 implementation and validation path is native C++.
 
 ## Build and validate
 
@@ -38,10 +38,12 @@ make native-test
 make stage0-gate
 make stage1-test
 make stage1-gate
-make ci
+make stage2-test
+make stage2-gate
+make ci-stage2
 ```
 
-`make native-build` configures and compiles the C++ library and executables under `build-cpp/`. `make native-test` runs the CTest suite. The two gate commands create machine-readable artifacts under `artifacts/stage-0/cpp-gate/` and `artifacts/stage-1/cpp-gate/`. `make ci` executes the complete native pipeline and returns a nonzero status if any mandatory check fails.
+`make native-build` configures and compiles the C++ library and executables under `build-cpp/`. `make native-test` runs the CTest suite. The gate commands create machine-readable artifacts under `artifacts/stage-0/cpp-gate/`, `artifacts/stage-1/cpp-gate/`, and `artifacts/stage-2/cpp-gate/`. `make ci-stage2` executes the complete native Stage 2 pipeline and returns a nonzero status if any mandatory check fails.
 
 A clean build can also be invoked directly:
 
@@ -73,7 +75,7 @@ The spectral implementation applies Fourier multipliers on periodic regular grid
 
 ## Gate criteria
 
-The Stage 1 gate is intentionally stricter than a build smoke test. The current native report records the following mandatory checks:
+The Stage 1 and Stage 2 gates are intentionally stricter than build smoke tests. Stage 2 records the following mandatory checks:
 
 | Check | Required result |
 |---|---:|
@@ -88,8 +90,16 @@ The Stage 1 gate is intentionally stricter than a build smoke test. The current 
 | Dirichlet and Neumann residuals | PASS |
 | Configuration serialization | PASS |
 | Measured subquadratic scaling | PASS |
+| Reference/prefix-scan equivalence | PASS |
+| Streaming and chunked equivalence | PASS |
+| Sequence gradient finite differences | PASS |
+| Long-horizon state stability | PASS |
+| Copy and delayed-recall training | PASS |
+| Checkpoint recovery | PASS |
+| Matched baseline contract | PASS |
+| Linear scaling and constant decode state memory | PASS |
 
-A Stage 1 `PASS` authorizes preparation of Stage 2 only. It does not authorize Stage 2 implementation without explicit user approval.
+A Stage 2 `PASS` authorizes Stage 3 preparation only. It does not authorize Stage 3 implementation without explicit user approval.
 
 ## Repository map
 
@@ -97,16 +107,19 @@ A Stage 1 `PASS` authorizes preparation of Stage 2 only. It does not authorize S
 |---|---|
 | `cpp/include/cct/` | Public native C++ headers |
 | `cpp/src/` | Event, field, FFT, and numerical-engine implementations |
-| `cpp/tests/cct_tests.cpp` | Native regression suite |
+| `cpp/tests/cct_tests.cpp` | Stage 0/1 native regression suite |
+| `cpp/tests/sequence_tests.cpp` | Stage 2 sequence regression suite |
 | `cpp/tools/stage0_gate.cpp` | Stage 0 artifact-producing gate |
 | `cpp/tools/stage1_gate.cpp` | Stage 1 artifact-producing gate |
+| `cpp/tools/stage2_gate.cpp` | Stage 2 artifact-producing gate |
+| `RESEARCH_STAGE2.md` | Primary state-space design references |
 | `Stages/` | Independent stage specifications and transition contracts |
 | `SPEC/` | Historical and forward-looking mathematical specifications |
 | `artifacts/` | Local generated gate reports; excluded from source control |
 
 ## Research limitations
 
-The current implementation validates a numerical operator substrate only. It does not validate causal discovery, general reasoning, memory persistence, language competence, multimodal transfer, autonomous research, or superintelligence. Those claims require new data, matched baselines, ablations, safety controls, and independent evaluation in later approved stages.
+The current implementation validates a numerical operator substrate and a deterministic selective recurrent core on synthetic algorithmic tasks. It does not validate causal discovery, general reasoning, memory persistence, language competence, multimodal transfer, autonomous research, or superintelligence. Those claims require full trained baseline comparisons, real data, ablations, safety controls, and independent evaluation in later approved stages.
 
 ## License
 

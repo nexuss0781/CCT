@@ -1,0 +1,39 @@
+name: CCT-ASE Native Stage 2
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "cpp/**"
+      - "Stages/02_Sequence_Core.md"
+      - "Makefile"
+      - ".github/workflows/stage2.yml"
+
+jobs:
+  stage2:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install native toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++ cmake pkg-config libfftw3-dev
+
+      - name: Build native project
+        run: make native-build
+
+      - name: Run all native tests
+        run: ctest --test-dir build-cpp --output-on-failure
+
+      - name: Run Stage 2 gate
+        run: make stage2-gate
+
+      - name: Upload Stage 2 artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-stage2-artifacts
+          path: artifacts/stage-2/

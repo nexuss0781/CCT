@@ -1,0 +1,215 @@
+#include "cct/sequence.hpp"
+
+#include <algorithm>
+#include <cmath>
+#include <filesystem>
+#include <iostream>
+#include <random>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+namespace {
+
+using cct::SelectiveSequenceCore;
+using cct::SequenceConfig;
+using cct::SequenceError;
+using cct::SequenceState;
+
+void require(bool condition, const std::string& message) {
+    if (!condition) throw std::runtime_error(message);
+}
+
+double max_difference(const std::vector<double>& left, const std::vector<double>& right) {
+    require(left.size() == right.size(), "vector size mismatch");
+    double result = 0.0;
+    for (std::size_t index = 0; index < left.size(); ++index) result = std::max(result, std::abs(left[index] - right[index]));
+    return result;
+}
+
+double max_output_difference(const std::vector<std::vector<double>>& left,
+                             const std::vector<std::vector<double>>& right) {
+    require(left.size() == right.size(), "sequence length mismatch");
+    double result = 0.0;
+    for (std::size_t time = 0; time < left.size(); ++time) result = std::max(result, max_difference(left[time], right[time]));
+    return result;
+}
+
+std::vector<std::vector<double>> inputs(std::size_t length, std::size_t dimension) {
+    std::vector<std::vector<double>> result(length, std::vector<double>(dimension, 0.0));
+    for (std::size_t time = 0; time < length; ++time) {
+        for (std::size_t feature = 0; feature < dimension; ++feature) {
+            result[time][feature] = std::sin(0.17 * static_cast<double>((time + 1) * (feature + 2))) +
+                                    0.1 * std::cos(0.07 * static_cast<double>(time + feature));
+        }
+    }
+    return result;
+}
+
+std::vector<std::vector<double>> targets(const std::vector<std::vector<double>>& sequence) {
+    std::vector<std::vector<double>> result(sequence.size(), std::vector<double>(1, 0.0));
+    for (std::size_t time = 0; time < sequence.size(); ++time) result[time][0] = std::tanh(sequence[time][0]);
+    return result;
+}
+
+SequenceConfig config() {
+    return SequenceConfig{3, 12, 2, 1e-5, 17};
+}
+
+void test_reference_scan_equivalence() {
+    SelectiveSequenceCore core(config());
+    const auto sequence = inputs(64, 3);
+    const auto loop = core.forward(sequence);
+    const auto scan = core.forward_scan(sequence);
+    require(max_output_difference(loop.outputs, scan.outputs) < 1e-12, "reference and scan outputs differ");
+    require(max_difference(loop.final_state.hidden, scan.final_state.hidden) < 1e-12, "reference and scan state differs");
+    require(loop.final_state.previous_input == scan.final_state.previous_input, "previous-input state differs");
+}
+
+void test_streaming_equivalence() {
+    SelectiveSequenceCore core(config());
+    const auto sequence = inputs(37, 3);
+    const auto full = core.forward(sequence);
+    auto state = core.initial_state();
+    std::vector<std::vector<double>> streaming;
+    for (const auto& input : sequence) {
+        std::vector<double> output;
+        state = core.step(input, state, &output);
+        streaming.push_back(std::move(output));
+    }
+    require(max_output_difference(full.outputs, streaming) < 1e-12, "streaming output differs from batched output");
+    require(max_difference(full.final_state.hidden, state.hidden) < 1e-12, "streaming state differs from batched state");
+}
+
+void test_chunked_equivalence() {
+    SelectiveSequenceCore core(config());
+    const auto sequence = inputs(41, 3);
+    const auto full = core.forward(sequence);
+    auto state = core.initial_state();
+    std::vector<std::vector<double>> chunked;
+    for (std::size_t start = 0; start < sequence.size(); start += 7) {
+        const auto end = std::min(sequence.size(), start + 7);
+        std::vector<std::vector<double>> chunk(sequence.begin() + static_cast<std::ptrdiff_t>(start),
+                                               sequence.begin() + static_cast<std::ptrdiff_t>(end));
+        const auto result = core.forward(chunk, {}, &state);
+        chunked.insert(chunked.end(), result.outputs.begin(), result.outputs.end());
+        state = result.final_state;
+    }
+    require(max_output_difference(full.outputs, chunked) < 1e-12, "chunked output differs from full output");
+    require(max_difference(full.final_state.hidden, state.hidden) < 1e-12, "chunked state differs from full state");
+}
+
+void test_mask_semantics() {
+    SelectiveSequenceCore core(config());
+    const auto sequence = inputs(12, 3);
+    std::vector<std::uint8_t> mask(sequence.size(), 1);
+    mask[4] = 0;
+    const auto masked = core.forward(sequence, mask);
+    auto state = core.initial_state();
+    for (std::size_t time = 0; time < sequence.size(); ++time) {
+        if (mask[time] != 0) state = core.step(sequence[time], state);
+    }
+    require(max_difference(masked.final_state.hidden, state.hidden) < 1e-12, "masked state semantics differ");
+}
+
+void test_gradient_finite_difference() {
+    SequenceConfig small{2, 5, 1, 1e-5, 3};
+    SelectiveSequenceCore core(small);
+    const auto sequence = inputs(6, 2);
+    const auto target = targets(sequence);
+    const auto analytic = core.loss_and_gradients(sequence, target);
+    const auto original = core.parameter_vector();
+    const auto epsilon = 1e-6;
+    std::vector<double> analytic_selected{
+        analytic.d_input_projection[0],
+        analytic.d_previous_projection[3],
+        analytic.d_output_bias.front(),
+        analytic.d_output_projection.front(),
+    };
+    const std::vector<std::size_t> selected{0, small.hidden_dim * small.input_dim + 3, original.size() - 1, 4 * small.input_dim + 4 * small.hidden_dim + small.output_dim + 2 * small.hidden_dim + 1};
+    for (std::size_t index = 0; index < selected.size(); ++index) {
+        const auto parameter = selected[index];
+        require(parameter < original.size(), "selected parameter out of range");
+        auto plus = original;
+        auto minus = original;
+        plus[parameter] += epsilon;
+        minus[parameter] -= epsilon;
+        core.set_parameter_vector(plus);
+        const auto plus_loss = core.loss_only(sequence, target);
+        core.set_parameter_vector(minus);
+        const auto minus_loss = core.loss_only(sequence, target);
+        const auto finite_difference = (plus_loss - minus_loss) / (2.0 * epsilon);
+        core.set_parameter_vector(original);
+        const auto error = std::abs(finite_difference - analytic_selected[index]);
+        require(error < 2e-5, "analytic gradient disagrees with finite difference");
+    }
+}
+
+void test_checkpoint_recovery() {
+    SelectiveSequenceCore core(config());
+    const auto sequence = inputs(19, 3);
+    const auto before = core.forward(sequence);
+    const auto path = std::filesystem::temp_directory_path() / "cct_sequence_test.chk";
+    core.save_checkpoint(path.string(), 23);
+    std::uint64_t optimizer_step = 0;
+    auto restored = SelectiveSequenceCore::load_checkpoint(path.string(), &optimizer_step);
+    const auto after = restored.forward(sequence);
+    require(optimizer_step == 23, "optimizer step was not restored");
+    require(max_output_difference(before.outputs, after.outputs) < 1e-15, "checkpoint outputs differ");
+    require(restored.parameter_count() == core.parameter_count(), "checkpoint parameter count differs");
+    std::filesystem::remove(path);
+}
+
+void test_stability_and_updates() {
+    SequenceConfig stability_config{3, 12, 1, 1e-5, 17};
+    SelectiveSequenceCore core(stability_config);
+    const auto sequence = inputs(512, 3);
+    const auto result = core.forward(sequence);
+    require(core.transition_radius_bound() < 4.0, "transition bound is unexplained or unstable");
+    require(core.state_norm(result.final_state) < 100.0, "long-horizon state exploded");
+    const auto target = targets(sequence);
+    const auto before = core.loss_only(sequence, target);
+    const auto gradients = core.loss_and_gradients(sequence, target);
+    core.apply_sgd(gradients, 0.01, 5.0);
+    const auto after = core.loss_only(sequence, target);
+    require(std::isfinite(before) && std::isfinite(after), "loss became non-finite");
+    require(after <= before + 1e-9, "one clipped SGD step increased the deterministic loss");
+}
+
+void test_invalid_inputs() {
+    SelectiveSequenceCore core(config());
+    bool rejected = false;
+    try { (void)core.step({1.0}, core.initial_state()); } catch (const SequenceError&) { rejected = true; }
+    require(rejected, "wrong input dimension was accepted");
+    rejected = false;
+    try { (void)core.forward(inputs(4, 3), {1, 1}); } catch (const SequenceError&) { rejected = true; }
+    require(rejected, "wrong mask length was accepted");
+}
+
+}  // namespace
+
+int main() {
+    const std::vector<std::pair<std::string, void (*)()>> tests{
+        {"reference_scan_equivalence", test_reference_scan_equivalence},
+        {"streaming_equivalence", test_streaming_equivalence},
+        {"chunked_equivalence", test_chunked_equivalence},
+        {"mask_semantics", test_mask_semantics},
+        {"gradient_finite_difference", test_gradient_finite_difference},
+        {"checkpoint_recovery", test_checkpoint_recovery},
+        {"stability_and_updates", test_stability_and_updates},
+        {"invalid_input_safety", test_invalid_inputs},
+    };
+    std::size_t passed = 0;
+    for (const auto& [name, test] : tests) {
+        try {
+            test();
+            ++passed;
+            std::cout << "PASS " << name << '\n';
+        } catch (const std::exception& error) {
+            std::cerr << "FAIL " << name << ": " << error.what() << '\n';
+            return 1;
+        }
+    }
+    std::cout << "SUMMARY " << passed << "/" << tests.size() << " passed\n";
+    return 0;
+}
