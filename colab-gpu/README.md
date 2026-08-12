@@ -11,7 +11,11 @@ cd CCT
 bash run.sh
 ```
 
-The wrapper delegates to `colab-gpu/run.sh`. The script fails closed if `nvcc`, `nvidia-smi`, `curl`, `bzip2`, `gzip`, `g++`, or `sha256sum` is unavailable, or if no CUDA device is visible.
+The wrapper delegates to `colab-gpu/run.sh`. The script always requires `curl`, `bzip2`, `gzip`, `g++`, and `sha256sum`, and always compiles the native CPU trainer. When `nvcc` and a working NVIDIA device are available it selects CUDA; otherwise it falls back automatically to CPU. Set `CPU=1` to force CPU execution, including on a GPU runtime:
+
+```bash
+CPU=1 bash run.sh
+```
 
 ## What the command downloads
 
@@ -23,9 +27,9 @@ Wikimedia original text is generally available under GFDL and CC BY-SA 4.0 subje
 
 ## Native execution stages
 
-The workflow first compiles `colab-gpu/native/prepare.cpp` and `validate.cpp` with `g++ -std=c++20 -Wall -Wextra -Wpedantic -Werror`. It then compiles `colab-gpu/native/cuda_train.cu` with `nvcc -std=c++20 -O3 -Wall -Wextra -Wpedantic` and deliberately does not pass host `-Werror` through NVCC: Colab’s CUDA system headers emit compiler-extension diagnostics that are outside this project’s source and otherwise abort compilation. Native host utilities remain warnings-as-errors; CUDA compilation remains warnings-visible and is followed by runtime/device and metric checks. The CUDA trainer uses a bounded CCT-family recurrent token model with byte-fallback vocabulary IDs, GPU forward/backpropagation, clipped Adam-style updates, validation/test scoring, and atomic checkpoint replacement. It records GPU name, compute capability, token counts, losses, perplexity, accuracy, dataset identity, tokenizer identity, and checkpoint paths.
+The workflow first compiles `prepare.cpp`, `validate.cpp`, and the standard-library-only `cpu_train.cpp` with `g++ -std=c++20 -Wall -Wextra -Wpedantic -Werror`. When CUDA is selected, it also compiles `cuda_train.cu` with `nvcc -std=c++20 -O3 -Wall -Wextra -Wpedantic` and deliberately does not pass host `-Werror` through NVCC: Colab’s CUDA system headers emit compiler-extension diagnostics that are outside this project’s source and otherwise abort compilation. Native host utilities remain warnings-as-errors; CUDA compilation remains warnings-visible and is followed by runtime/device and metric checks. Both trainers use the same bounded CCT-family recurrent token model, byte-fallback vocabulary IDs, clipped Adam-style updates, validation/test scoring, and atomic checkpoint replacement. The CPU trainer is slower but preserves the stream, CLI, checkpoint, resume-base, and JSON metrics contracts. CUDA metrics additionally record GPU name and compute capability.
 
-The first stage trains on the Wikimedia token stream and writes `checkpoints/cct_base_cuda.bin`. The second stage loads the base weights, resets optimizer moments for the new SFT data identity, trains on OASST1 assistant messages, and writes `checkpoints/cct_oasst_sft_cuda.bin`. Each stage evaluates validation and test streams. Checkpoints contain the model configuration, optimizer state, step, corpus identity, tokenizer identity, and parameter arrays. Ordinary interruption resume requires exact dataset/configuration identity; base-to-SFT transfer explicitly permits the new SFT dataset identity while requiring the tokenizer and model configuration to match.
+The first stage trains on the Wikimedia token stream and writes a backend-specific base checkpoint. The second stage loads the base weights, resets optimizer moments for the new SFT data identity, trains on OASST1 assistant messages, and writes a backend-specific SFT checkpoint. Each stage evaluates validation and test streams. Checkpoints contain the model configuration, optimizer state, step, corpus identity, tokenizer identity, and parameter arrays. Ordinary interruption resume requires exact dataset/configuration identity; base-to-SFT transfer explicitly permits the new SFT dataset identity while requiring the tokenizer and model configuration to match. The CUDA trainer and CPU trainer use the same checkpoint binary layout for same-platform native interoperability.
 
 ## Resource and run controls
 
@@ -66,7 +70,7 @@ Each run creates a timestamped directory under `colab-gpu/artifacts/`. It contai
 
 ## Acceptance checks
 
-A valid run must show `status: PASS` for both native CUDA metric records, positive finite validation/test metrics, nonzero train/validation/test token counts, checkpoint files for both stages, matching tokenizer identity, and no `cuda_train error` output. An interrupted run may be resumed with the exact same command arguments plus `--resume` if the user invokes the native trainer directly; the wrapper itself starts a fresh stage only when the expected checkpoint is absent. Corrupt or mismatched checkpoints are rejected rather than silently reused.
+A valid run must show `status: PASS` for both native metric records, positive finite validation/test metrics, nonzero train/validation/test token counts, checkpoint files for both stages, matching tokenizer identity, and no trainer error output. An interrupted run may be resumed with the exact same command arguments plus `--resume` if the user invokes the native trainer directly; the wrapper itself starts a fresh stage only when the expected checkpoint is absent. Corrupt or mismatched checkpoints are rejected rather than silently reused. Older logs that fail with `unknown argument --resume-base` came from a stale checkout; refresh to the current repository before rerunning. CUDA toolkit GCC-extension warnings are non-fatal and are not evidence of a training failure.
 
 ## Claim boundary
 

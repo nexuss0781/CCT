@@ -17,9 +17,8 @@ WIKI_PREFIX="${DATA_DIR}/wiki"
 OASST_PREFIX="${DATA_DIR}/oasst"
 PREPARE_BIN="${NATIVE_DIR}/prepare"
 VALIDATE_BIN="${NATIVE_DIR}/validate"
-TRAIN_BIN="${NATIVE_DIR}/cuda_train"
-BASE_CHECKPOINT="${CHECKPOINT_DIR}/cct_base_cuda.bin"
-SFT_CHECKPOINT="${CHECKPOINT_DIR}/cct_oasst_sft_cuda.bin"
+CPU_TRAIN_BIN="${NATIVE_DIR}/cpu_train"
+CUDA_TRAIN_BIN="${NATIVE_DIR}/cuda_train"
 
 MAX_WIKI_BYTES="${MAX_WIKI_BYTES:-0}"
 MAX_OASST_BYTES="${MAX_OASST_BYTES:-0}"
@@ -34,6 +33,7 @@ HIDDEN_DIM="${HIDDEN_DIM:-32}"
 EMBEDDING_DIM="${EMBEDDING_DIM:-32}"
 CHECKPOINT_EVERY="${CHECKPOINT_EVERY:-100}"
 SMOKE="${SMOKE:-0}"
+CPU="${CPU:-0}"
 if [[ "${SMOKE}" == "1" ]]; then
   MAX_TRAIN_TOKENS=1048576
   MAX_VALIDATION_TOKENS=131072
@@ -49,9 +49,28 @@ need sha256sum
 need g++
 need bzip2
 need gzip
-need nvcc
-need nvidia-smi
-nvidia-smi >/dev/null 2>&1 || fatal "no visible NVIDIA GPU; switch the Colab runtime to GPU before running"
+if [[ "${CPU}" != "0" && "${CPU}" != "1" ]]; then
+  fatal "CPU must be 0 or 1"
+fi
+
+BACKEND="native-c++20-cpu"
+TRAIN_BIN="${CPU_TRAIN_BIN}"
+BASE_CHECKPOINT="${CHECKPOINT_DIR}/cct_base_cpu.bin"
+SFT_CHECKPOINT="${CHECKPOINT_DIR}/cct_oasst_sft_cpu.bin"
+GPU_REQUIRED=false
+
+if [[ "${CPU}" == "1" ]]; then
+  log "CPU=1: forcing native C++20 CPU execution"
+elif command -v nvcc >/dev/null 2>&1 && command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi >/dev/null 2>&1; then
+  BACKEND="native-c++20-cuda"
+  TRAIN_BIN="${CUDA_TRAIN_BIN}"
+  BASE_CHECKPOINT="${CHECKPOINT_DIR}/cct_base_cuda.bin"
+  SFT_CHECKPOINT="${CHECKPOINT_DIR}/cct_oasst_sft_cuda.bin"
+  GPU_REQUIRED=true
+  log "CUDA detected: using native CUDA execution"
+else
+  log "CUDA unavailable: falling back to native C++20 CPU execution"
+fi
 
 if [[ "${MAX_WIKI_BYTES}" != "0" ]]; then
   log "MAX_WIKI_BYTES is set but the native downloader will not truncate compressed archives; unset it or use a complete shard"
@@ -63,8 +82,12 @@ fi
 log "compiling native C++20 dataset preparer"
 g++ -std=c++20 -O3 -Wall -Wextra -Wpedantic -Werror "${NATIVE_DIR}/prepare.cpp" -o "${PREPARE_BIN}"
 g++ -std=c++20 -O3 -Wall -Wextra -Wpedantic -Werror "${NATIVE_DIR}/validate.cpp" -o "${VALIDATE_BIN}"
-log "compiling native C++20/CUDA CCT trainer"
-nvcc -std=c++20 -O3 --use_fast_math -lineinfo -Xcompiler=-Wall,-Wextra,-Wpedantic "${NATIVE_DIR}/cuda_train.cu" -o "${TRAIN_BIN}"
+log "compiling native C++20 CPU trainer"
+g++ -std=c++20 -O3 -Wall -Wextra -Wpedantic -Werror "${NATIVE_DIR}/cpu_train.cpp" -o "${CPU_TRAIN_BIN}"
+if [[ "${GPU_REQUIRED}" == "true" ]]; then
+  log "compiling native C++20/CUDA trainer"
+  nvcc -std=c++20 -O3 --use_fast_math -lineinfo -Xcompiler=-Wall,-Wextra,-Wpedantic "${NATIVE_DIR}/cuda_train.cu" -o "${CUDA_TRAIN_BIN}"
+fi
 
 fetch() {
   local url="$1" output="$2"
@@ -83,7 +106,7 @@ sha256sum "${WIKI_ARCHIVE}" | tee "${ARTIFACT_DIR}/wiki_archive.sha256"
 sha256sum "${OASST_ARCHIVE}" | tee "${ARTIFACT_DIR}/oasst_archive.sha256"
 
 if [[ "${SMOKE}" == "1" ]]; then
-  log "SMOKE=1: regenerating bounded token streams before GPU training"
+  log "SMOKE=1: regenerating bounded token streams before ${BACKEND} training"
   rm -f "${WIKI_PREFIX}.train.bin" "${WIKI_PREFIX}.validation.bin" "${WIKI_PREFIX}.test.bin" "${WIKI_PREFIX}.manifest.json"
   rm -f "${OASST_PREFIX}.train.bin" "${OASST_PREFIX}.validation.bin" "${OASST_PREFIX}.test.bin" "${OASST_PREFIX}.manifest.json"
 fi
@@ -119,8 +142,8 @@ fi
 
 cat > "${ARTIFACT_DIR}/run_config.json" <<EOF
 {
-  "backend":"native-c++20-cuda",
-  "gpu_required":true,
+  "backend":"${BACKEND}",
+  "gpu_required":${GPU_REQUIRED},
   "wiki_url":"${WIKI_URL}",
   "oasst_url":"${OASST_URL}",
   "max_train_tokens":${MAX_TRAIN_TOKENS},
@@ -138,36 +161,40 @@ cat > "${ARTIFACT_DIR}/run_config.json" <<EOF
 EOF
 
 train_stage() {
-  local stage="$1" train_path="$2" validation_path="$3" test_path="$4" checkpoint="$5" steps="$6" resume_flag="${7:-}"
+  local stage="$1" train_path="$2" validation_path="$3" test_path="$4" checkpoint="$5" steps="$6" resume_mode="${7:-}"
+  local -a resume_args=()
   if [[ -s "${checkpoint}" ]]; then
-    resume_flag="--resume ${checkpoint}"
+    resume_args=(--resume "${checkpoint}")
     log "resuming ${stage} from an identity-checked checkpoint"
+  elif [[ "${resume_mode}" == "base" ]]; then
+    resume_args=(--resume-base "${BASE_CHECKPOINT}")
+    log "initializing ${stage} from the pretraining checkpoint"
   fi
-  log "starting ${stage} native CUDA training"
+  log "starting ${stage} ${BACKEND} training"
   local log_path="${ARTIFACT_DIR}/${stage}.log"
   "${TRAIN_BIN}" --train "${train_path}" --validation "${validation_path}" --test "${test_path}" \
     --checkpoint "${checkpoint}" --steps "${steps}" --batch "${BATCH_SIZE}" --context "${CONTEXT_LENGTH}" \
-    --hidden "${HIDDEN_DIM}" --embedding "${EMBEDDING_DIM}" --max-train-tokens "${MAX_TRAIN_TOKENS}" \
-    --max-validation-tokens "${MAX_VALIDATION_TOKENS}" --max-test-tokens "${MAX_TEST_TOKENS}" \
-    ${resume_flag} 2>&1 | tee "${log_path}"
+    --hidden "${HIDDEN_DIM}" --embedding "${EMBEDDING_DIM}" --checkpoint-every "${CHECKPOINT_EVERY}" \
+    --max-train-tokens "${MAX_TRAIN_TOKENS}" --max-validation-tokens "${MAX_VALIDATION_TOKENS}" \
+    --max-test-tokens "${MAX_TEST_TOKENS}" "${resume_args[@]}" 2>&1 | tee "${log_path}"
   tail -n 1 "${log_path}" > "${ARTIFACT_DIR}/${stage}_metrics.json"
   grep -q '"status":"PASS"' "${ARTIFACT_DIR}/${stage}_metrics.json" || fatal "${stage} did not produce a PASS metrics record"
 }
 
 train_stage "pretrain_wiki" "${WIKI_PREFIX}.train.bin" "${WIKI_PREFIX}.validation.bin" "${WIKI_PREFIX}.test.bin" "${BASE_CHECKPOINT}" "${PRETRAIN_STEPS}"
-train_stage "sft_oasst" "${OASST_PREFIX}.train.bin" "${OASST_PREFIX}.validation.bin" "${OASST_PREFIX}.test.bin" "${SFT_CHECKPOINT}" "${SFT_STEPS}" "--resume-base ${BASE_CHECKPOINT}"
+train_stage "sft_oasst" "${OASST_PREFIX}.train.bin" "${OASST_PREFIX}.validation.bin" "${OASST_PREFIX}.test.bin" "${SFT_CHECKPOINT}" "${SFT_STEPS}" "base"
 
 cat > "${ARTIFACT_DIR}/release_record.json" <<EOF
 {
   "status":"PASS",
-  "backend":"native-c++20-cuda",
+  "backend":"${BACKEND}",
   "pretraining_checkpoint":"${BASE_CHECKPOINT}",
   "sft_checkpoint":"${SFT_CHECKPOINT}",
   "pretraining_metrics":"${ARTIFACT_DIR}/pretrain_wiki_metrics.json",
   "sft_metrics":"${ARTIFACT_DIR}/sft_oasst_metrics.json",
   "training_authorized":false,
   "human_review_required":true,
-  "claim_boundary":"bounded Colab GPU pilot; not broad language competence or production release"
+  "claim_boundary":"bounded Colab native pilot; not broad language competence or production release"
 }
 EOF
 log "completed; inspect ${ARTIFACT_DIR}/release_record.json and both metrics files"
