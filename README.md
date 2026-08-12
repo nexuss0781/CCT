@@ -1,12 +1,12 @@
 # CCT-ASE Native C++ Research Prototype
 
-The **Chrono-Causal Tapestry — Adaptive Spectral Engine (CCT-ASE)** is a research prototype for testing causal event fields and efficient spectral dynamics. The repository currently provides a reproducible **native C++20 numerical, sequence, causal-event, persistent-memory, and small-scale language/code substrate**; it does not claim to be a general language model or superintelligence system. The implemented Stage 0 through Stage 5 gates establish reproducibility, numerical correctness, recurrent trainability, efficiency measurement, leakage-controlled graph conditioning, intervention prediction, counterfactual evaluation, persistent checksummed memory, exact retrieval, provenance, deletion, conflict handling, poisoning resistance, checkpoint replay, bounded token learning, code-safety checks, and memory attribution on declared fixtures.
+The **Chrono-Causal Tapestry — Adaptive Spectral Engine (CCT-ASE)** is a research prototype for testing causal event fields and efficient spectral dynamics. The repository currently provides a reproducible **native C++20 numerical, sequence, causal-event, persistent-memory, small-scale language/code, and bounded deliberation substrate**; it does not claim to be a general language model or superintelligence system. The implemented Stage 0 through Stage 6 gates establish reproducibility, numerical correctness, recurrent trainability, efficiency measurement, leakage-controlled graph conditioning, intervention prediction, counterfactual evaluation, persistent checksummed memory, exact retrieval, provenance, deletion, conflict handling, poisoning resistance, checkpoint replay, bounded token learning, code-safety checks, independent verification, evidence abstention, deny-by-default offline tools, interruption/replay, and trace logging on declared fixtures.
 
-> **Current status:** Stages 0 through 5 are implemented in native C++ and pass their mandatory gates. Stage 6 has not been implemented and requires explicit approval.
+> **Current status:** Stages 0 through 6 are implemented in native C++ and pass their mandatory gates. Stage 7 has not been implemented and requires explicit approval.
 
 ## Implemented scope
 
-The active runtime is C++20 with CMake and FFTW3. The native library provides event/manifold storage, periodic spectral Laplacians, an independent finite-difference reference Laplacian, leapfrog and RK4 integration, periodic/Dirichlet/Neumann boundaries, CFL rejection, bounded local potentials, analytic one-step gradients, a real/complex selective recurrent sequence core, segmented prefix-scan execution, optional RMS normalization, checkpointing, trained dense-attention/GRU/diagonal-SSM comparators, deterministic algorithmic benchmark executables, versioned causal event storage, DAG queries, leakage-safe graph-conditioned recurrence, synthetic structural-equation generation, intervention/counterfactual prediction, robustness, abstention, checksummed append-only memory logs, exact metadata/vector retrieval, versioning, citations, retention/deletion, conflict sets, recovery, byte-fallback vocabulary, manifest-addressed fixtures, checkpoint-resumable token models, matched dense-attention/GRU/diagonal-SSM/CCT comparators, frozen-memory attribution, long-context diagnostics, and static code-safety checks.
+The active runtime is C++20 with CMake and FFTW3. The native library provides event/manifold storage, periodic spectral Laplacians, an independent finite-difference reference Laplacian, leapfrog and RK4 integration, periodic/Dirichlet/Neumann boundaries, CFL rejection, bounded local potentials, analytic one-step gradients, a real/complex selective recurrent sequence core, segmented prefix-scan execution, optional RMS normalization, checkpointing, trained dense-attention/GRU/diagonal-SSM comparators, deterministic algorithmic benchmark executables, versioned causal event storage, DAG queries, leakage-safe graph-conditioned recurrence, synthetic structural-equation generation, intervention/counterfactual prediction, robustness, abstention, checksummed append-only memory logs, exact metadata/vector retrieval, versioning, citations, retention/deletion, conflict sets, recovery, byte-fallback vocabulary, manifest-addressed fixtures, checkpoint-resumable token models, matched dense-attention/GRU/diagonal-SSM/CCT comparators, frozen-memory attribution, long-context diagnostics, static code-safety checks, bounded typed planning, independent arithmetic/graph/evidence verifiers, deny-by-default offline tool policy, interruption/resume, deterministic replay, and incident logging.
 
 The implementation is deliberately split into clear reference paths and optimized paths. The spectral and finite-difference solvers are compared on identical inputs, and the sequence loop and prefix scan are compared on identical inputs, including complex state and segmented masks. Gates check manufactured solutions, temporal convergence, energy drift, boundary residuals, recurrent path equivalence, gradient agreement, checkpoint recovery, copy/parity/associative/overwrite learning, trained matched baselines, ablations, and measured scaling.
 
@@ -18,7 +18,8 @@ The implementation is deliberately split into clear reference paths and optimize
 | Stage 3 — Causal event learning | **PASS** | `cct_causal_tests`, `cct_stage3_gate`, `Stages/03_Causal_Event_Learning.md` |
 | Stage 4 — Persistent verifiable memory | **PASS** | `cct_memory_tests`, `cct_stage4_gate`, `Stages/04_Persistent_Verifiable_Memory.md` |
 | Stage 5 — Language and code scaling | **PASS** | `cct_scaling_tests`, `cct_stage5_gate`, `Stages/05_Language_Code_Scaling.md` |
-| Stages 6–7 | Specification only | Stage 6 requires explicit approval |
+| Stage 6 — Deliberation and verification | **PASS** | `cct_deliberation_tests`, `cct_stage6_gate`, `Stages/06_Deliberation_Verification.md` |
+| Stage 7 | Specification only | Stage 7 requires explicit approval |
 
 ## Requirements
 
@@ -49,10 +50,12 @@ make stage4-test
 make stage4-gate
 make stage5-test
 make stage5-gate
-make ci-stage5
+make stage6-test
+make stage6-gate
+make ci-stage6
 ```
 
-`make native-build` configures and compiles the C++ library and executables under `build-cpp/`. `make native-test` runs the CTest suite. The gate commands create machine-readable artifacts under `artifacts/stage-0/cpp-gate/`, `artifacts/stage-1/cpp-gate/`, `artifacts/stage-2/cpp-gate/`, `artifacts/stage-3/cpp-gate/`, and `artifacts/stage-4/cpp-gate/`. `make ci-stage4` executes the complete native Stage 4 pipeline, including all prior gates, and returns a nonzero status if any mandatory check fails. `make ci-stage5` extends this to the manifest-audited language/code scaling suite and Stage 5 gate.
+`make native-build` configures and compiles the C++ library and executables under `build-cpp/`. `make native-test` runs the CTest suite. The gate commands create machine-readable artifacts under `artifacts/stage-0/cpp-gate/`, `artifacts/stage-1/cpp-gate/`, `artifacts/stage-2/cpp-gate/`, `artifacts/stage-3/cpp-gate/`, and `artifacts/stage-4/cpp-gate/`. `make ci-stage4` executes the complete native Stage 4 pipeline, including all prior gates, and returns a nonzero status if any mandatory check fails. `make ci-stage5` extends this to the manifest-audited language/code scaling suite and Stage 5 gate. `make ci-stage6` adds the bounded deliberation, independent-verifier, offline policy, replay, interruption, and incident harness.
 
 A clean build can also be invoked directly:
 
@@ -143,6 +146,11 @@ The strengthened Stage 2 gate requires **12 mandatory checks** plus limitation-c
 | `cpp/tools/stage5_gate.cpp` | Stage 5 artifact-producing gate |
 | `data/stage-5/manifests/stage5_manifest.txt` | Immutable Stage 5 provenance and SHA-256 manifest |
 | `Stages/05_Expanded_Gate_Contract.md` | Stage 5 thresholds, controls, and artifact contract |
+| `cpp/include/cct/deliberation.hpp` | Stage 6 bounded workspace, planner, verifier, tool, evidence, and trace API |
+| `cpp/src/deliberation.cpp` | Native deliberation engine, independent verifiers, policy, replay, and serialization |
+| `cpp/tests/deliberation_tests.cpp` | Stage 6 deliberation and safety regression suite |
+| `cpp/tools/stage6_gate.cpp` | Stage 6 artifact-producing gate |
+| `Stages/06_Expanded_Gate_Contract.md` | Stage 6 thresholds, controls, and artifact contract |
 | `cpp/tools/stage0_gate.cpp` | Stage 0 artifact-producing gate |
 | `cpp/tools/stage1_gate.cpp` | Stage 1 artifact-producing gate |
 | `cpp/tools/stage2_gate.cpp` | Stage 2 artifact-producing gate |
@@ -153,7 +161,7 @@ The strengthened Stage 2 gate requires **12 mandatory checks** plus limitation-c
 
 ## Research limitations
 
-The current implementation validates a numerical operator substrate, a deterministic real/complex selective recurrent core, a native causal-event learner, a local persistent verifiable memory subsystem, and a small native language/code scaling benchmark on controlled synthetic and provenance-tracked fixtures. Stage 5 uses a compact byte-fallback objective and five small matched models; it does not validate broad language competence, unrestricted code generation, real-world repository engineering, distributed scaling, general causal discovery, autonomous research, or superintelligence. Those claims require larger real-data studies, stronger baselines, sandboxed evaluation, safety controls, and independent evaluation in later approved stages.
+The current implementation validates a numerical operator substrate, a deterministic real/complex selective recurrent core, a native causal-event learner, a local persistent verifiable memory subsystem, a small native language/code scaling benchmark, and a bounded deliberation/verification harness on controlled synthetic and provenance-tracked fixtures. Stage 6 is offline-only and statically checks code rather than executing it. It does not validate broad language competence, open-ended reasoning, unrestricted code generation, real-world repository engineering, distributed scaling, general causal discovery, autonomous agency, or superintelligence. Those claims require larger real-data studies, stronger baselines, independent safety review, and later approved stages.
 
 ## License
 

@@ -4,7 +4,7 @@
 **Stage ID:** 6  
 **Predecessor:** Stage 5 — Language and Code Scaling  
 **Successor:** Stage 7 — Multimodal and Open-Ended Research  
-**Status:** Specification; implementation not started
+**Status:** Implemented in native C++20; Stage 6 gate validation in progress; Stage 7 approval required
 
 ## Purpose
 
@@ -16,7 +16,7 @@ Deliberation must remain observable, budgeted, interruptible, and policy-constra
 
 The stage includes a planner, hypothesis workspace, verifier interface, bounded iterative loop, program/simulation sandbox, tool policy layer for offline tools, trace logging, uncertainty and abstention, and evaluation on planning and verification tasks. It does not add unrestricted internet access, real-world transactions, autonomous replication, or online weight updates.
 
-The first implementation should use deterministic toy environments, theorem-like tasks, code execution with no network, and simulated tools. Any external tool integration requires a separate security review.
+The implemented baseline uses deterministic toy arithmetic, graph, planning, code-safety, evidence, and simulated-tool tasks. Code is statically inspected rather than executed, and all tools are offline, allow-listed, deny-by-default, and policy-audited. No external tool integration is enabled.
 
 ## Deliberation contract
 
@@ -86,7 +86,7 @@ VerifierResult {
 
 ## Safety and control contract
 
-The system must operate in an offline sandbox during this stage. Tool schemas must validate arguments before execution. Time, memory, output size, process count, filesystem access, and network access must be controlled. All tool calls must be logged before and after execution.
+The implemented system operates in an offline-only native harness. Tool schemas validate arguments before execution; static code checks do not execute generated code. The gate records policy blocks, pre/post tool records, interruption checkpoints, and incident status. Network, host execution, credentials, and unrestricted filesystem access are not enabled. All tool calls must be logged before and after execution.
 
 The policy layer must support deny-by-default behavior, explicit approval states, cancellation, and failure containment. A policy-blocked action must not be retried through a different tool name or hidden channel.
 
@@ -149,7 +149,7 @@ Any sandbox escape, secret exposure, unlogged external action, policy bypass, or
 
 ## Transition to Stage 7
 
-Stage 7 may begin only after deliberation improves verified performance under budget and the offline safety harness passes. The transition package must include planner/workspace schemas, verifier implementations, sandbox configuration, threat-model results, replay tests, budget curves, ablations, and incident logs.
+Stage 7 may begin only after the named native C++ Stage 6 checkpoint improves verified performance under budget, the offline safety harness passes, replay and interruption agree, and explicit user approval is received. The transition package must include planner/workspace schemas, verifier implementations, sandbox configuration, threat-model results, replay tests, budget curves, ablations, and incident logs.
 
 The checkpoint used for Stage 7 must be frozen, and all multimodal or environment interfaces must initially remain simulated or offline. The system must not be granted broad external agency as a consequence of passing this stage.
 
