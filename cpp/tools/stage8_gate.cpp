@@ -256,7 +256,7 @@ std::string application_readiness_check(std::vector<FixtureOutcome>* outcomes_ou
 
 std::string claim_boundary_check() {
     const auto readme = read_file("README.md");
-    require(readme.find("Stages 10–17 are **specifications only**") != std::string::npos,
+    require(readme.find("Stages 11–17 remain **specifications only**") != std::string::npos,
             "README does not clearly separate remaining production specifications from implemented foundations");
     const std::vector<std::string> files{
         "Stages/09_Governed_Data_Corpus.md", "Stages/10_Tokenizer_Representation.md", "Stages/11_Trainable_Native_NLP_Core.md",
@@ -264,12 +264,12 @@ std::string claim_boundary_check() {
         "Stages/15_Verified_Retrieval_Knowledge.md", "Stages/16_Production_Inference_Operations.md", "Stages/17_Controlled_Pilot_Production_Release.md"};
     for (const auto& file : files) {
         const auto text = read_file(file);
-        const bool is_stage9 = file == "Stages/09_Governed_Data_Corpus.md";
+        const bool is_implemented = file == "Stages/09_Governed_Data_Corpus.md" || file == "Stages/10_Tokenizer_Representation.md";
         const bool labeled_specification = text.find("**Status:** Specification") != std::string::npos;
         const bool labeled_implemented = text.find("**Status:** Implemented and gated") != std::string::npos;
-        require((is_stage9 && labeled_implemented) || (!is_stage9 && labeled_specification), file + " has an invalid implementation status label");
+        require((is_implemented && labeled_implemented) || (!is_implemented && labeled_specification), file + " has an invalid implementation status label");
     }
-    return "{\"production_stages_implemented\":false,\"claim_boundary\":\"explicit\"}";
+    return "{\"production_stages_implemented\":false,\"implemented_foundations\":2,\"claim_boundary\":\"explicit\"}";
 }
 
 std::string reproducibility_check() {
