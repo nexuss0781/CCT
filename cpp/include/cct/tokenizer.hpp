@@ -81,6 +81,9 @@ struct EncodedDocument {
     std::string source_bytes;
     std::string tokenizer_version;
     std::vector<Token> tokens;
+    bool training_allowed = false;
+    bool evaluation_allowed = false;
+    bool evaluator_only = false;
 };
 
 struct ThroughputMeasurement {
