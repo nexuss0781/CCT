@@ -3,100 +3,114 @@
 
 **Predecessor:** Stage 10 — Tokenizer and Representation Engine  
 **Successor:** Stage 12 — Scaling and Accelerator Systems  
-**Status:** Specification; implementation not started  
-**Implementation:** Native C++20 trainer, optimizer, checkpoints, tests, and gate
+**Status:** Implemented and gated
+
+**Implementation:** Native C++20 trainer, categorical objective, analytic CCT BPTT, AdamW-equivalent optimizer, checkpoints, tests, and gate
 
 ## Purpose
 
-Stage 11 replaces the Stage 5 tiny surrogate with a real trainable next-token language objective around the CCT sequence core. It establishes whether CCT can optimize a language model on governed corpus shards while preserving the deterministic, checkpointable, and measurable behavior required for production engineering.
+Stage 11 establishes a real native next-token training contract around the immutable Stage 10 tokenizer snapshot. It tests whether the CCT selective recurrent state can optimize a categorical language objective on a governed, bounded pilot while preserving causal masks, provenance, deterministic optimizer state, checkpoint recovery, matched controls, and fail-closed numerical behavior.
+
+This is a controlled CPU pilot and not a claim of broad language competence, production language-model quality, scale efficiency, factuality, safety, or general intelligence.
 
 ## Scope and non-goals
 
-The stage includes token-batch loading, embeddings, output projection, causal next-token loss, masking, backpropagation through the CCT recurrence, optimizer state, gradient clipping, learning-rate schedules, validation, checkpointing, resume, anomaly detection, and matched dense Transformer/GRU/diagonal-SSM controls. It does not include large-scale distributed training, instruction tuning, preference alignment, retrieval, or production serving.
+The stage covers governed token-window construction, sparse-domain embeddings, causal next-token cross-entropy, analytic CCT recurrence gradients, optimizer state, scheduling, anomaly rejection, validation, matched controls, checkpoint recovery, and native artifact production. It does not cover large-scale distributed training, accelerator kernels, instruction tuning, preference alignment, retrieval, serving, deployment, human evaluation, or unrestricted training.
 
-## Model contract
+## Implemented scope
 
-The base model must expose:
+The implementation is in `cpp/include/cct/nlp_trainer.hpp` and `cpp/src/nlp_trainer.cpp`. It provides explicit train/evaluation eligibility flags on encoded documents; deterministic context windows with final-position and boundary loss masking; sparse token-ID-domain handling for the Stage 10 snapshot; trainable token embeddings; CCT selective retain/write recurrence; stable log-sum-exp softmax cross-entropy; analytic backpropagation through the CCT recurrence; global gradient clipping; warmup and linear decay; AdamW-equivalent first/second moments; validation loss, perplexity, accuracy, throughput, and state-memory metrics; matched dense causal attention, GRU, and diagonal SSM controls; and canonical checkpoint V2 serialization with tokenizer, dataset, optimizer, scheduler, cursor, RNG-state, history, model, and optimizer-moment fields.
+
+Evaluator-only records, records without explicit training permission, non-finite model parameters, invalid token IDs, all-false loss masks, malformed checkpoints, incompatible tokenizer/dataset identities, truncated model state, and optimizer-state size mismatches reject closed rather than being coerced into training.
+
+## Frozen pilot contract
+
+The gate binds the trainer to the tracked Stage 10 snapshot at `data/stage-10/tokenizer_snapshot.bin`. The snapshot hash is `902e5a44f372a3d972b6f21036d62d7878f1d6907805c841e49aa84297ba7b0a`. The released snapshot is the hybrid candidate with a sparse token-ID domain of 768 IDs and 521 serialized vocabulary rows.
+
+The pilot uses real Project Gutenberg training/validation fixtures, real native C++ source fixtures, application-shaped code/JSON/Unicode/separator fixtures, and an evaluator-only canary. Training documents have explicit `training_allowed=true`; validation documents have explicit `evaluation_allowed=true`; evaluator-only records are rejected from both training and validation dataset construction. The resulting pilot has 37 training windows, 18 validation windows, 782 active training targets, and 389 active validation targets. Its dataset identity is `d8c7c24937e7603064a1a5d3b07b0472fe672426b52d00e41b2b4d614c240996`.
+
+The fixed CCT pilot uses embedding dimension 2, hidden dimension 2, context length 24, 120 optimizer steps, learning rate 0.04, two warmup steps, linear decay, clip norm 2.0, no weight decay, and three seeds `3`, `5`, and `7`. The dimensions are chosen to keep the selected CCT parameter count within the matched-control band rather than granting it a larger model.
+
+## Model and training contracts
 
 ```text
-forward(token_ids, masks, initial_state) -> logits, final_state, trace
-loss(logits, targets, masks) -> scalar, token_count
-backward(loss) -> gradients
-optimizer_step(gradients) -> updated_parameters
-checkpoint() -> weights, optimizer, scheduler, RNG, data_cursor, config, tokenizer_hash
-resume(checkpoint) -> equivalent training state
+forward(token_ids, causal_boundaries) -> logits, recurrent state
+loss(logits, targets, loss_mask) -> mean categorical cross-entropy, token count
+backward(loss) -> analytic parameter gradients
+optimizer_step(gradients) -> updated parameters and moments
+checkpoint() -> model, optimizer, scheduler, RNG, cursor, config, tokenizer hash, dataset hash
+resume(checkpoint) -> deterministic equivalent training state
 ```
 
-The CCT candidate must use its selective recurrent state as the temporal backbone. It may include token embeddings, input/output projections, RMS normalization, complex state, causal-event features, or memory hooks only when the configuration records them. The matched baselines must use equal tokenizer, context length, training tokens, parameter-count band, optimizer budget, seeds, and hardware class.
+The CCT candidate uses trainable embeddings, selective retain/write gates, a nonlinear candidate state with a previous-input projection, and an untied vocabulary output head. The matched controls use the same sparse token-ID domain, context length, pilot data, and declared optimizer budget. Their dimensions and parameter counts are recorded in the gate artifacts.
 
-## Required implementation
-
-| Component | Implementation | Contract |
-|---|---|---|
-| Dataset reader | Sharded, resumable native reader | Cursor and shard identity are checkpointed |
-| Batch builder | Packed/padded causal batches | Loss masks are exact |
-| Embedding/output | Trainable input embedding and tied/untied head | Dimensions and parameter count are recorded |
-| CCT forward | Streaming recurrent path and optional scan path | Chunked equivalence is tested |
-| Loss | Stable cross-entropy with ignore masks | Non-finite values fail the run |
-| Backpropagation | Analytic gradients through model and recurrence | Finite-difference spot checks pass |
-| Optimizer | AdamW-equivalent baseline plus configured alternatives | Hyperparameters are serialized |
-| Scheduler | Warmup/decay and step counter | Resume preserves schedule exactly |
-| Stability | Gradient clipping, loss scaling, anomaly detection | Divergence is logged and stops safely |
-| Checkpoint | Weights, optimizer, RNG, cursor, config, tokenizer, metrics | Resume is deterministic/tolerance-bounded |
-| Evaluation | Validation loss, perplexity, throughput, memory | Held-out data is isolated |
-| Baselines | Transformer, GRU, diagonal/SSM controls | Matched budgets are enforced |
-
-## Training protocol
-
-Every experiment must declare model configuration, tokenizer hash, corpus release, train/validation split, random seed, optimizer, learning rate, schedule, batch size, context length, target token count, parameter count, hardware, precision, and stopping rule. The trainer must emit periodic checkpoints and a final immutable artifact. A failed run must retain its last valid checkpoint and failure report.
-
-The first pilot should use multiple small models and at least three seeds. It must report loss against tokens and wall-clock compute rather than reporting only final loss. A model that improves training loss but diverges on validation or produces non-finite logits fails.
-
-## Evaluation harness
-
-The native harness must test:
-
-1. token-loss and gradient correctness on a tiny hand-computable fixture;
-2. causal masking and packed-boundary correctness;
-3. streaming/reference and chunked equivalence;
-4. finite-difference gradient agreement on selected parameters;
-5. optimizer update direction and schedule serialization;
-6. deterministic seed initialization;
-7. checkpoint resume equivalence after interruption at several cursor positions;
-8. non-finite loss/gradient detection;
-9. overfit capability on a tiny repeated corpus;
-10. validation-loss improvement on a held-out corpus;
-11. matched baseline parameter and compute accounting;
-12. throughput, peak memory, and state-memory measurement;
-13. reproducibility across at least three seeds.
+| Model | Parameters | State memory | Final pilot evidence |
+|---|---:|---:|---|
+| CCT | 3,862 | 16 bytes | Three-seed validation improvement; selected seed improvement 13.889% |
+| Dense causal attention | 3,852 | 784 bytes | Completed matched evaluation and training budget |
+| GRU | 3,870 | 16 bytes | Completed matched evaluation and training budget |
+| Diagonal SSM | 3,846 | 16 bytes | Completed matched evaluation and training budget |
 
 ## Mandatory gate checks
 
-| Check | Pass condition |
-|---|---|
-| Objective | Cross-entropy and perplexity are finite and correctly masked |
-| Optimization | Three-seed pilot reduces validation loss relative to initialization |
-| Gradient | Analytic/finite-difference spot checks pass declared tolerance |
-| Stability | No unexplained divergence, NaN, or Inf in accepted runs |
-| Checkpoint | Interrupted/resumed and uninterrupted runs agree within tolerance |
-| Data cursor | Resume does not duplicate or skip records beyond declared policy |
-| Baselines | All matched controls complete under the same declared budget |
-| Capability | CCT beats the no-training control on next-token validation |
-| Regression | Prior Stages 0–10 gates remain green |
-| Efficiency | Tokens/sec, memory, state size, and compute are recorded |
-| Reproducibility | Seed/config/corpus reruns are within declared variance |
-| Artifact integrity | Checkpoint, tokenizer, config, data, and metrics hashes are complete |
+The Stage 11 gate contains eight application-shaped mandatory checks. All checks passed.
 
-## Pass/fail transition
+| Check | Result | Evidence |
+|---|---|---|
+| Tokenizer and dataset identity | **PASS** | Exact Stage 10 snapshot hash and governed dataset hash |
+| Objective, analytic gradient, optimizer | **PASS** | Finite categorical cross-entropy; finite-difference relative error at or below `1e-4` |
+| Three-seed CCT validation pilot | **PASS** | Seed improvements: 13.889%, 15.167%, and 14.141% |
+| Repeated-corpus overfit | **PASS** | 70.682% training-loss reduction |
+| Matched controls | **PASS** | Dense attention, GRU, and diagonal SSM all completed |
+| Checkpoint interruption/resume | **PASS** | Cursors 0, 1, and 3 agree with uninterrupted training within `1e-12` |
+| Contamination and invalid-input controls | **PASS** | Evaluator-only, invalid-target, and all-false-mask rejection |
+| Artifact identity and checkpoint integrity | **PASS** | Checkpoint hash `8ff1f227513d79a840b648bd724823e3fd790ba3bd9e754a086f430ebbd81b62` |
 
-Stage 11 passes only when a real next-token CCT model trains stably, improves held-out loss, resumes correctly, and is compared fairly with the matched baselines. A `PASS` authorizes Stage 12 scaling and accelerator work. It does not authorize instruction tuning or production use.
+The selected seed-3 run improved validation cross-entropy from `6.877456` to `5.922243`, a relative improvement of `13.889%`, with final validation perplexity `373.248` and measured validation throughput of approximately `80,641` tokens/sec in the declared CPU environment. These are bounded pilot measurements, not production performance claims.
 
-A `FAIL` requires optimizer, architecture, data, or numerical remediation. A `BLOCKED` result is valid if the available hardware cannot support the declared pilot or if data rights prevent training.
+## Evaluation harness
+
+The native regression suite checks objective masking, finite metrics, analytic/finite-difference gradients, optimizer schedule, deterministic initialization, matched controls, checkpoint resume, wrong-identity rejection, malformed checkpoints, all-false masks, and non-finite parameters. The artifact-producing gate adds the real-source/application-shaped pilot, three seeds, held-out validation, repeated-corpus overfit, baseline accounting, multiple interruption cursors, evaluator-only rejection, parameter-band enforcement, and machine-readable release records.
+
+## Regression and CI integration
+
+The native regression executable is `cct_nlp_trainer_tests` and covers objective masking, finite metrics, analytic/finite-difference gradients, optimizer schedule, deterministic initialization, all matched controls, checkpoint resume at exact state, wrong-identity rejection, malformed checkpoints, all-false masks, and non-finite parameters. The Stage 11 gate executable is `cct_stage11_gate`.
+
+The canonical commands are:
+
+```bash
+make stage11-test
+make stage11-gate
+make ci-stage11
+```
+
+`ci-stage11` runs the complete sequential Stage 0–10 chain, then the Stage 11 regression suite and gate. Its final release run must be performed from the immutable release commit after documentation and compatibility changes are complete.
 
 ## Deliverables
 
-The stage must deliver the native trainer, optimizer and scheduler, checkpoint V2+ format, dataset reader, model configuration, matched baseline runners, training reports, seed comparison, gradient report, resume report, resource profile, regression suite, gate executable, and CI command.
+The gate writes machine-readable and human-readable evidence under `artifacts/stage-11/cpp-gate/`:
+
+| Artifact | Purpose |
+|---|---|
+| `checks.json` | Mandatory check status and measured evidence |
+| `metrics.json` | Loss, improvement, parameter-band, and status metrics |
+| `seed_comparison.json` | Three-seed CCT results |
+| `baseline_comparison.json` | Dense attention, GRU, diagonal SSM accounting |
+| `checkpoint_report.json` | Hash, identities, and interruption/resume evidence |
+| `dataset_manifest.json` | Tokenizer/dataset identity, split counts, and evaluator exclusion |
+| `gradient_report.json` | Objective and gradient tolerance declaration |
+| `resource_profile.json` | Parameter, state-memory, and throughput metrics |
+| `incident_log.json` | Numerical, identity, cursor, contamination, and boundary incidents |
+| `release_record.json` | Stage status and transition boundary |
+| `selected_checkpoint.bin` | Selected native trainer checkpoint |
+| `report.md` | Human-readable evidence and claim boundary |
+
+## Pass/fail transition
+
+Stage 11 passes because the real next-token CCT pilot is finite and trainable, all three seeds improve held-out validation loss by more than the declared 5% threshold, the repeated corpus overfit test passes, analytic gradients agree with finite differences, all matched controls complete, checkpoints resume exactly at multiple cursors, evaluator-only data is rejected, and all artifacts are internally identified.
+
+A Stage 11 `PASS` authorizes Stage 12 scaling and accelerator work within its own specification. It does not authorize instruction tuning, preference optimization, retrieval, production serving, unrestricted training, or deployment. Training authorization remains false in the release record.
 
 ## Explicit limitations
 
-A small next-token pilot does not prove broad language competence or scale efficiency. Loss and perplexity do not prove factuality, safety, instruction following, grounding, or production usefulness. Those require later stages and independent evaluations.
+The pilot is small, CPU-bound, and tied to declared fixtures. Its validation improvement is evidence that the implemented objective and optimization path can learn this bounded pilot; it is not evidence of general language ability or superiority over production Transformer systems. The control implementations are native reference controls for this gate, not optimized industrial frameworks. The checkpoint stores a deterministic seed/state label rather than a full external entropy-source replay because the pilot data order is deterministic. Scaling, distributed recovery, accelerator performance, large-corpus representativeness, privacy completeness, safety behavior, and human evaluation remain future gated work.

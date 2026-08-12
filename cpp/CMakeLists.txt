@@ -24,6 +24,7 @@ add_library(cct_native STATIC
     src/production.cpp
     src/corpus.cpp
     src/tokenizer.cpp
+    src/nlp_trainer.cpp
 )
 target_include_directories(cct_native PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(cct_native PUBLIC PkgConfig::FFTW3)
@@ -98,6 +99,12 @@ target_compile_options(cct_tokenizer_tests PRIVATE -Wall -Wextra -Wpedantic -Wer
 add_executable(cct_stage10_gate tools/stage10_gate.cpp)
 target_link_libraries(cct_stage10_gate PRIVATE cct_native)
 target_compile_options(cct_stage10_gate PRIVATE -Wall -Wextra -Wpedantic -Werror)
+add_executable(cct_nlp_trainer_tests tests/nlp_trainer_tests.cpp)
+target_link_libraries(cct_nlp_trainer_tests PRIVATE cct_native)
+target_compile_options(cct_nlp_trainer_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+add_executable(cct_stage11_gate tools/stage11_gate.cpp)
+target_link_libraries(cct_stage11_gate PRIVATE cct_native)
+target_compile_options(cct_stage11_gate PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
 include(CTest)
 enable_testing()
@@ -126,3 +133,7 @@ set_tests_properties(cct_stage8_gate PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE
 add_test(NAME cct_tokenizer_tests COMMAND cct_tokenizer_tests)
 add_test(NAME cct_stage10_gate COMMAND cct_stage10_gate --output ${CMAKE_SOURCE_DIR}/../artifacts/stage-10/cpp-gate)
 set_tests_properties(cct_stage10_gate PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/..)
+add_test(NAME cct_nlp_trainer_tests COMMAND cct_nlp_trainer_tests)
+set_tests_properties(cct_nlp_trainer_tests PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/..)
+add_test(NAME cct_stage11_gate COMMAND cct_stage11_gate --output ${CMAKE_SOURCE_DIR}/../artifacts/stage-11/cpp-gate)
+set_tests_properties(cct_stage11_gate PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/..)

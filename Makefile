@@ -1,7 +1,7 @@
 BUILD_DIR ?= build-cpp
 CMAKE ?= cmake
 
-.PHONY: configure native-build native-test stage0-smoke stage0-gate stage1-test stage1-gate stage2-test stage2-gate stage3-test stage3-gate stage4-test stage4-gate stage5-test stage5-gate stage6-test stage6-gate stage7-test stage7-gate stage8-test stage8-gate stage9-test stage9-gate stage10-test stage10-gate ci-stage2 ci-stage3 ci-stage4 ci-stage5 ci-stage6 ci-stage7 ci-stage8 ci-stage9 ci-stage10 ci clean
+.PHONY: configure native-build native-test stage0-smoke stage0-gate stage1-test stage1-gate stage2-test stage2-gate stage3-test stage3-gate stage4-test stage4-gate stage5-test stage5-gate stage6-test stage6-gate stage7-test stage7-gate stage8-test stage8-gate stage9-test stage9-gate stage10-test stage10-gate stage11-test stage11-gate ci-stage2 ci-stage3 ci-stage4 ci-stage5 ci-stage6 ci-stage7 ci-stage8 ci-stage9 ci-stage10 ci-stage11 ci clean
 
 configure:
 	$(CMAKE) -S cpp -B $(BUILD_DIR) -DCMAKE_BUILD_TYPE=Release
@@ -62,6 +62,10 @@ stage10-test: native-build
 	./$(BUILD_DIR)/cct_tokenizer_tests
 stage10-gate: native-build
 	./$(BUILD_DIR)/cct_stage10_gate --output artifacts/stage-10/cpp-gate
+stage11-test: native-build
+	./$(BUILD_DIR)/cct_nlp_trainer_tests
+stage11-gate: native-build
+	./$(BUILD_DIR)/cct_stage11_gate --output artifacts/stage-11/cpp-gate
 ci-stage2: native-build native-test stage0-gate stage1-test stage1-gate stage2-test stage2-gate
 
 ci-stage3: ci-stage2 stage3-test stage3-gate
@@ -72,7 +76,8 @@ ci-stage7: ci-stage6 stage7-test stage7-gate
 ci-stage8: ci-stage7 stage8-test stage8-gate
 ci-stage9: ci-stage8 stage9-test stage9-gate
 ci-stage10: ci-stage9 stage10-test stage10-gate
+ci-stage11: ci-stage10 stage11-test stage11-gate
 ci: native-build native-test stage0-gate stage1-test stage1-gate
 
 clean:
-	rm -rf $(BUILD_DIR) artifacts/stage-0 artifacts/stage-1 artifacts/stage-2 artifacts/stage-3 artifacts/stage-4 artifacts/stage-5 artifacts/stage-6 artifacts/stage-7 artifacts/stage-8 artifacts/stage-9 artifacts/stage-10
+	rm -rf $(BUILD_DIR) artifacts/stage-0 artifacts/stage-1 artifacts/stage-2 artifacts/stage-3 artifacts/stage-4 artifacts/stage-5 artifacts/stage-6 artifacts/stage-7 artifacts/stage-8 artifacts/stage-9 artifacts/stage-10 artifacts/stage-11
