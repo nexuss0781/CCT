@@ -20,6 +20,16 @@ The implementation is deliberately split into clear reference paths and optimize
 | Stage 5 — Language and code scaling | **PASS** | `cct_scaling_tests`, `cct_stage5_gate`, `Stages/05_Language_Code_Scaling.md` |
 | Stage 6 — Deliberation and verification | **PASS** | `cct_deliberation_tests`, `cct_stage6_gate`, `Stages/06_Deliberation_Verification.md` |
 | Stage 7 — Multimodal and controlled research | **PASS** | `cct_multimodal_tests`, `cct_stage7_gate`, `Stages/07_Multimodal_Open_Ended.md` |
+| Stage 8 — Production NLP foundation | **SPECIFICATION** | `Stages/08_Production_NLP_Roadmap.md` |
+| Stage 9 — Governed data and corpus | **SPECIFICATION** | `Stages/09_Governed_Data_Corpus.md` |
+| Stage 10 — Tokenizer and representation | **SPECIFICATION** | `Stages/10_Tokenizer_Representation.md` |
+| Stage 11 — Trainable native NLP core | **SPECIFICATION** | `Stages/11_Trainable_Native_NLP_Core.md` |
+| Stage 12 — Scaling and accelerator systems | **SPECIFICATION** | `Stages/12_Scaling_Accelerator_Systems.md` |
+| Stage 13 — Supervised fine-tuning and adapters | **SPECIFICATION** | `Stages/13_Supervised_Fine_Tuning_Adapters.md` |
+| Stage 14 — Preference tuning and alignment | **SPECIFICATION** | `Stages/14_Preference_Tuning_Alignment.md` |
+| Stage 15 — Verified retrieval and knowledge | **SPECIFICATION** | `Stages/15_Verified_Retrieval_Knowledge.md` |
+| Stage 16 — Production inference and operations | **SPECIFICATION** | `Stages/16_Production_Inference_Operations.md` |
+| Stage 17 — Controlled pilot and production release | **SPECIFICATION** | `Stages/17_Controlled_Pilot_Production_Release.md` |
 
 ## Requirements
 
@@ -158,6 +168,16 @@ The strengthened Stage 2 gate requires **12 mandatory checks** plus limitation-c
 | `cpp/tests/multimodal_tests.cpp` | Stage 7 multimodal and controlled-environment regression suite |
 | `cpp/tools/stage7_gate.cpp` | Stage 7 terminal artifact-producing gate |
 | `Stages/07_Expanded_Gate_Contract.md` | Stage 7 thresholds, controls, and terminal artifact contract |
+| `Stages/08_Production_NLP_Roadmap.md` | Master production sequence, dependencies, and universal gate protocol |
+| `Stages/09_Governed_Data_Corpus.md` | Data rights, privacy, deduplication, contamination, and corpus release gate |
+| `Stages/10_Tokenizer_Representation.md` | Tokenizer, byte fallback, offsets, packed batches, and representation gate |
+| `Stages/11_Trainable_Native_NLP_Core.md` | Next-token trainer, optimizer, checkpoints, and matched-baseline gate |
+| `Stages/12_Scaling_Accelerator_Systems.md` | Scaling studies, accelerator path, distributed recovery, and architecture gate |
+| `Stages/13_Supervised_Fine_Tuning_Adapters.md` | SFT, full tuning, adapters, structured outputs, and retention gate |
+| `Stages/14_Preference_Tuning_Alignment.md` | Preference optimization, safety alignment, and human-review gate |
+| `Stages/15_Verified_Retrieval_Knowledge.md` | Retrieval, citations, freshness, conflicts, deletion, and grounding gate |
+| `Stages/16_Production_Inference_Operations.md` | Native serving, SLOs, security, observability, canaries, and rollback gate |
+| `Stages/17_Controlled_Pilot_Production_Release.md` | Shadow, pilot, oversight, incident response, rollback, and bounded release gate |
 | `cpp/tools/stage0_gate.cpp` | Stage 0 artifact-producing gate |
 | `cpp/tools/stage1_gate.cpp` | Stage 1 artifact-producing gate |
 | `cpp/tools/stage2_gate.cpp` | Stage 2 artifact-producing gate |
@@ -168,7 +188,7 @@ The strengthened Stage 2 gate requires **12 mandatory checks** plus limitation-c
 
 ## Research limitations
 
-The current implementation validates a numerical operator substrate, a deterministic real/complex selective recurrent core, a native causal-event learner, a local persistent verifiable memory subsystem, a small native language/code scaling benchmark, a bounded deliberation/verification harness, and a controlled multimodal event/simulation harness on declared offline fixtures. Stage 7 supports seven typed modalities, explicit provenance, temporal/spatial alignment, mask-aware fusion, typed cross-modal retrieval, deterministic grid replay, transfer metadata, and audit/safety records. It does not validate broad language competence, general multimodal understanding, open-ended reasoning, unrestricted code generation, real-world perception or robotics, repository-level engineering, distributed scaling, autonomous agency, external deployment, or superintelligence. Further work requires research review and a new specification for any external integration or broader autonomy.
+The current implementation validates a numerical operator substrate, a deterministic real/complex selective recurrent core, a native causal-event learner, a local persistent verifiable memory subsystem, a small native language/code scaling benchmark, a bounded deliberation/verification harness, and a controlled multimodal event/simulation harness on declared offline fixtures. Stages 8–17 are **specifications only**: they define the production NLP implementation and release path but are not evidence that those production capabilities have been built. Stage 7 supports seven typed modalities, explicit provenance, temporal/spatial alignment, mask-aware fusion, typed cross-modal retrieval, deterministic grid replay, transfer metadata, and audit/safety records. The project does not yet validate broad language competence, general multimodal understanding, open-ended reasoning, unrestricted code generation, real-world perception or robotics, repository-level engineering, distributed scaling, autonomous agency, external deployment, or superintelligence. Further work requires explicit production-stage approval and new evidence at every gate.
 
 ## License
 
