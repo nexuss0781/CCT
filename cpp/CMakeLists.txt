@@ -157,6 +157,9 @@ target_compile_options(cct_track1_tests PRIVATE -Wall -Wextra -Wpedantic -Werror
 add_executable(cct_track1_gate tools/track1_gate.cpp)
 target_link_libraries(cct_track1_gate PRIVATE cct_native)
 target_compile_options(cct_track1_gate PRIVATE -Wall -Wextra -Wpedantic -Werror)
+add_executable(cct_track1_train tools/track1_train.cpp)
+target_link_libraries(cct_track1_train PRIVATE cct_native)
+target_compile_options(cct_track1_train PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
 include(CTest)
 enable_testing()
