@@ -6,6 +6,7 @@
 **Predecessor:** Stage 7 — Multimodal and Controlled Research  
 **Scope:** Stages 8–17  
 **Implementation constraint:** Native C++20 for project core, trainers, gates, and serving control plane; accelerator bindings may use audited native CUDA/HIP/vendor libraries after explicit review
+**Status:** Stage 8 governance foundation implemented and gated; Stages 9–17 remain specification-only
 
 ## Purpose
 
@@ -91,7 +92,7 @@ The stage must deliver this master index, the ten independent successor specific
 
 ## Explicit limitations
 
-This master stage is a planning and governance artifact. It does not implement a trainer, tokenizer, dataset, service, or production model. Its successful review cannot be used as evidence that later production stages are complete.
+This master stage implements only the production planning, governance, registry, policy, application-fixture, and readiness foundation. It does not implement a trainer, tokenizer, governed corpus, production model, serving system, or deployment. Its `PASS` cannot be used as evidence that Stages 9–17 are complete.
 
 ## Universal baseline policy
 
