@@ -34,6 +34,11 @@ HIDDEN_DIM="${HIDDEN_DIM:-32}"
 EMBEDDING_DIM="${EMBEDDING_DIM:-32}"
 CHECKPOINT_EVERY="${CHECKPOINT_EVERY:-100}"
 SMOKE="${SMOKE:-0}"
+if [[ "${SMOKE}" == "1" ]]; then
+  MAX_TRAIN_TOKENS=1048576
+  MAX_VALIDATION_TOKENS=131072
+  MAX_TEST_TOKENS=131072
+fi
 
 log() { printf '[cct-colab] %s\n' "$*"; }
 fatal() { printf '[cct-colab] ERROR: %s\n' "$*" >&2; exit 2; }
@@ -77,15 +82,20 @@ fetch "${OASST_URL}" "${OASST_ARCHIVE}"
 sha256sum "${WIKI_ARCHIVE}" | tee "${ARTIFACT_DIR}/wiki_archive.sha256"
 sha256sum "${OASST_ARCHIVE}" | tee "${ARTIFACT_DIR}/oasst_archive.sha256"
 
+if [[ "${SMOKE}" == "1" ]]; then
+  log "SMOKE=1: regenerating bounded token streams before GPU training"
+  rm -f "${WIKI_PREFIX}.train.bin" "${WIKI_PREFIX}.validation.bin" "${WIKI_PREFIX}.test.bin" "${WIKI_PREFIX}.manifest.json"
+  rm -f "${OASST_PREFIX}.train.bin" "${OASST_PREFIX}.validation.bin" "${OASST_PREFIX}.test.bin" "${OASST_PREFIX}.manifest.json"
+fi
 if [[ ! -s "${WIKI_PREFIX}.train.bin" || ! -s "${WIKI_PREFIX}.validation.bin" || ! -s "${WIKI_PREFIX}.test.bin" ]]; then
   log "preparing Wikimedia byte-token streams; this may take substantial disk and time"
   rm -f "${WIKI_PREFIX}.train.bin" "${WIKI_PREFIX}.validation.bin" "${WIKI_PREFIX}.test.bin" "${WIKI_PREFIX}.manifest.json"
-  bzip2 -dc "${WIKI_ARCHIVE}" | "${PREPARE_BIN}" wiki "${WIKI_PREFIX}"
+  bzip2 -dc "${WIKI_ARCHIVE}" | "${PREPARE_BIN}" wiki "${WIKI_PREFIX}" "${MAX_TRAIN_TOKENS}" "${MAX_VALIDATION_TOKENS}" "${MAX_TEST_TOKENS}"
 fi
 if [[ ! -s "${OASST_PREFIX}.train.bin" || ! -s "${OASST_PREFIX}.validation.bin" || ! -s "${OASST_PREFIX}.test.bin" ]]; then
   log "preparing OASST1 English assistant-message streams"
   rm -f "${OASST_PREFIX}.train.bin" "${OASST_PREFIX}.validation.bin" "${OASST_PREFIX}.test.bin" "${OASST_PREFIX}.manifest.json"
-  gzip -dc "${OASST_ARCHIVE}" | "${PREPARE_BIN}" oasst "${OASST_PREFIX}"
+  gzip -dc "${OASST_ARCHIVE}" | "${PREPARE_BIN}" oasst "${OASST_PREFIX}" "${MAX_TRAIN_TOKENS}" "${MAX_VALIDATION_TOKENS}" "${MAX_TEST_TOKENS}"
 fi
 "${VALIDATE_BIN}" "${WIKI_PREFIX}.train.bin" "${WIKI_PREFIX}.validation.bin" "${WIKI_PREFIX}.test.bin" | tee "${ARTIFACT_DIR}/wiki_stream_validation.txt"
 "${VALIDATE_BIN}" "${OASST_PREFIX}.train.bin" "${OASST_PREFIX}.validation.bin" "${OASST_PREFIX}.test.bin" | tee "${ARTIFACT_DIR}/oasst_stream_validation.txt"
@@ -98,9 +108,6 @@ manifest_tokens() {
   grep -o "\\\"${split}\\\":{[^}]*}" "${manifest}" | grep -o '\"tokens\":[0-9]*' | cut -d: -f2
 }
 if [[ "${SMOKE}" == "1" ]]; then
-  MAX_TRAIN_TOKENS=1048576
-  MAX_VALIDATION_TOKENS=131072
-  MAX_TEST_TOKENS=131072
   WIKI_TRAIN_TOKENS="$(manifest_tokens "${WIKI_PREFIX}.manifest.json" train)"
   OASST_TRAIN_TOKENS="$(manifest_tokens "${OASST_PREFIX}.manifest.json" train)"
   PRETRAIN_STEPS=$(( ( (WIKI_TRAIN_TOKENS - 1) / CONTEXT_LENGTH + BATCH_SIZE - 1 ) / BATCH_SIZE ))
