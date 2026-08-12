@@ -52,6 +52,14 @@ MAX_TRAIN_TOKENS=64000000 PRETRAIN_STEPS=5000 SFT_STEPS=2500 bash run.sh
 
 The full current Wikimedia shard can be used by setting larger limits, but disk, host RAM, download time, and GPU time must be checked first. A single Colab session is not a substitute for distributed pretraining infrastructure.
 
+For the first end-to-end GPU check, use the bounded one-pass profile:
+
+```bash
+SMOKE=1 bash run.sh
+```
+
+`SMOKE=1` caps each split and computes the optimizer-step count from the generated training-stream token count so the pretraining and SFT stages each make one pass over their prepared training split. It is a pipeline smoke test, not a quality evaluation.
+
 ## Output artifacts
 
 Each run creates a timestamped directory under `colab-gpu/artifacts/`. It contains the source manifest, archive SHA-256 records, prepared split manifests, run configuration, per-step logs, pretraining metrics, SFT metrics, and a release record. A successful run is not automatically a production authorization. The release record deliberately sets `training_authorized` to `false` and states that independent evaluation and human review remain required.

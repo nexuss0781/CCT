@@ -148,7 +148,7 @@ __global__ void train_kernel(const std::uint32_t* sequences, const std::size_t c
     float dh_next[kMaxHidden] = {0.0F};
     float errors[kVocab];
     for (int time = context - 1; time >= 0; --time) {
-        float maximum = -CUDART_INF_F;
+        float maximum = -3.402823466e+38F;
         for (int label = 0; label < kVocab; ++label) {
             float logit = parameters[output_bias_offset + label];
             for (int unit = 0; unit < hidden; ++unit) logit += parameters[output_offset + label * hidden + unit] * states[time][unit];
@@ -220,7 +220,7 @@ __global__ void score_kernel(const std::uint32_t* sequences, const std::size_t c
             next_state[unit] = tanhf(value);
         }
         for (int unit = 0; unit < hidden; ++unit) state[unit] = next_state[unit];
-        float maximum = -CUDART_INF_F;
+        float maximum = -3.402823466e+38F;
         float logits[kVocab];
         for (int label = 0; label < kVocab; ++label) {
             logits[label] = parameters[output_bias_offset + label];

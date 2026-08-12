@@ -33,6 +33,7 @@ CONTEXT_LENGTH="${CONTEXT_LENGTH:-64}"
 HIDDEN_DIM="${HIDDEN_DIM:-32}"
 EMBEDDING_DIM="${EMBEDDING_DIM:-32}"
 CHECKPOINT_EVERY="${CHECKPOINT_EVERY:-100}"
+SMOKE="${SMOKE:-0}"
 
 log() { printf '[cct-colab] %s\n' "$*"; }
 fatal() { printf '[cct-colab] ERROR: %s\n' "$*" >&2; exit 2; }
@@ -91,6 +92,23 @@ fi
 cp "${ROOT_DIR}/data/sources.json" "${ARTIFACT_DIR}/sources.json"
 cp "${WIKI_PREFIX}.manifest.json" "${ARTIFACT_DIR}/wiki_manifest.json"
 cp "${OASST_PREFIX}.manifest.json" "${ARTIFACT_DIR}/oasst_manifest.json"
+
+manifest_tokens() {
+  local manifest="$1" split="$2"
+  grep -o "\\\"${split}\\\":{[^}]*}" "${manifest}" | grep -o '\"tokens\":[0-9]*' | cut -d: -f2
+}
+if [[ "${SMOKE}" == "1" ]]; then
+  MAX_TRAIN_TOKENS=1048576
+  MAX_VALIDATION_TOKENS=131072
+  MAX_TEST_TOKENS=131072
+  WIKI_TRAIN_TOKENS="$(manifest_tokens "${WIKI_PREFIX}.manifest.json" train)"
+  OASST_TRAIN_TOKENS="$(manifest_tokens "${OASST_PREFIX}.manifest.json" train)"
+  PRETRAIN_STEPS=$(( ( (WIKI_TRAIN_TOKENS - 1) / CONTEXT_LENGTH + BATCH_SIZE - 1 ) / BATCH_SIZE ))
+  SFT_STEPS=$(( ( (OASST_TRAIN_TOKENS - 1) / CONTEXT_LENGTH + BATCH_SIZE - 1 ) / BATCH_SIZE ))
+  (( PRETRAIN_STEPS < 1 )) && PRETRAIN_STEPS=1
+  (( SFT_STEPS < 1 )) && SFT_STEPS=1
+  log "SMOKE=1: one training pass per prepared split; pretrain_steps=${PRETRAIN_STEPS}, sft_steps=${SFT_STEPS}"
+fi
 
 cat > "${ARTIFACT_DIR}/run_config.json" <<EOF
 {
