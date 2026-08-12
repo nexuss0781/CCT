@@ -3,7 +3,8 @@
 
 **Predecessor:** Stage 15 — Verified Retrieval and Knowledge Plane  
 **Successor:** Stage 17 — Controlled Pilot and Production Release  
-**Status:** Specification; implementation not started  
+**Status:** Implemented; PASS — Stage 17 requires explicit approval
+
 **Implementation:** Native C++20 runtime, service control plane, operations harness, and gate
 
 ## Purpose
@@ -157,6 +158,12 @@ A `FAIL` requires service, security, performance, or rollback remediation. A `BL
 ## Deliverables
 
 The stage must deliver native serving runtime, API schemas, scheduler, streaming path, state/cache manager, auth/policy integration, observability schema, deployment configuration, load/fault harness, canary/rollback automation, service model card, native tests, gate executable, and CI command.
+
+## Implemented gate scope
+
+The native implementation provides a versioned request/response binding, authentication and tenant/role authorization, deny-by-default external-action and tool policy, dynamic batching with deadline admission, streaming cancellation and backpressure, tenant/user-isolated recurrent state, versioned response caching, state quotas and TTL eviction, CCT/hybrid/Transformer-control routing, Stage 15 retrieval and grounded-answer verification, structured latency and throughput metrics, p50/p95/p99 SLO reporting, circuit breaking, fault injection, redacted audit traces, canary shadow comparison, failed-promotion blocking, and prior-release rollback.
+
+The Stage 16 unit executable and formal gate are wired into `ci-stage16`, which chains all prior Stage 0–15 checks before the Stage 16 tests and 15-check operations gate. The release record keeps public launch and external actions unauthorized, and Stage 17 requires explicit approval.
 
 ## Explicit limitations
 

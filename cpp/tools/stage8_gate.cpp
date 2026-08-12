@@ -256,7 +256,7 @@ std::string application_readiness_check(std::vector<FixtureOutcome>* outcomes_ou
 
 std::string claim_boundary_check() {
     const auto readme = read_file("README.md");
-    require(readme.find("Stages 16–17 remain **specifications only**") != std::string::npos,
+    require(readme.find("Stage 17 remains **specification-only**") != std::string::npos,
             "README does not clearly separate remaining production specifications from implemented foundations");
     const std::vector<std::string> files{
         "Stages/09_Governed_Data_Corpus.md", "Stages/10_Tokenizer_Representation.md", "Stages/11_Trainable_Native_NLP_Core.md",
@@ -267,13 +267,13 @@ std::string claim_boundary_check() {
         const bool is_implemented = file == "Stages/09_Governed_Data_Corpus.md" || file == "Stages/10_Tokenizer_Representation.md" ||
                                      file == "Stages/11_Trainable_Native_NLP_Core.md" || file == "Stages/12_Scaling_Accelerator_Systems.md" ||
                                      file == "Stages/13_Supervised_Fine_Tuning_Adapters.md" || file == "Stages/14_Preference_Tuning_Alignment.md" ||
-                                     file == "Stages/15_Verified_Retrieval_Knowledge.md";
+                                     file == "Stages/15_Verified_Retrieval_Knowledge.md" || file == "Stages/16_Production_Inference_Operations.md";
         const bool labeled_specification = text.find("**Status:** Specification") != std::string::npos;
         const bool labeled_implemented = text.find("**Status:** Implemented and gated") != std::string::npos ||
                                          text.find("**Status:** Implemented; PASS") != std::string::npos;
         require((is_implemented && labeled_implemented) || (!is_implemented && labeled_specification), file + " has an invalid implementation status label");
     }
-    return "{\"production_stages_implemented\":false,\"implemented_foundations\":7,\"remaining_production_specifications\":\"16-17\",\"claim_boundary\":\"explicit\"}";
+    return "{\"production_stages_implemented\":false,\"implemented_foundations\":8,\"remaining_production_specifications\":\"17\",\"claim_boundary\":\"explicit\"}";
 }
 
 std::string reproducibility_check() {
