@@ -14,6 +14,16 @@ This directory contains the independent implementation and evaluation specificat
 | 5 | [Language and Code Scaling](05_Language_Code_Scaling.md) and [Expanded Gate Contract](05_Expanded_Gate_Contract.md) | Native small-scale language/code micro-run, matched baselines, provenance, checkpoint replay, memory attribution, long-context, and code-safety checks | Stage 5 gate in progress; Stage 6 requires explicit approval |
 | 6 | [Deliberation and Verification](06_Deliberation_Verification.md) and [Expanded Gate Contract](06_Expanded_Gate_Contract.md) | Native bounded planning, independent verifiers, evidence abstention, deny-by-default offline tools, replay, interruption, and incident logging | Stage 6 gate in progress; Stage 7 requires explicit approval |
 | 7 | [Multimodal and Open-Ended Research](07_Multimodal_Open_Ended.md) and [Expanded Gate Contract](07_Expanded_Gate_Contract.md) | Native typed multimodal events, seven adapters, alignment, mask-aware fusion, typed memory, deterministic simulation, transfer, audit, and safety controls | Terminal gate in progress; PASS authorizes controlled continuation only |
+| 8 | [Production NLP Roadmap](08_Production_NLP_Roadmap.md) | Master production sequence, dependencies, universal artifacts, baselines, and approval protocol | Requires explicit approval before production program |
+| 9 | [Governed Data and Corpus](09_Governed_Data_Corpus.md) | Licensed, privacy-reviewed, deduplicated, contamination-controlled, manifest-addressed corpus | Requires Stage 8 PASS |
+| 10 | [Tokenizer and Representation](10_Tokenizer_Representation.md) | Versioned tokenizer, byte fallback, offsets, packed batches, and loss masks | Requires Stage 9 PASS |
+| 11 | [Trainable Native NLP Core](11_Trainable_Native_NLP_Core.md) | Real next-token trainer, optimizer, checkpoint recovery, and matched baselines | Requires Stage 10 PASS |
+| 12 | [Scaling and Accelerator Systems](12_Scaling_Accelerator_Systems.md) | Scaling curves, accelerator path, distributed recovery, and architecture selection | Requires Stage 11 PASS |
+| 13 | [Supervised Fine-Tuning and Adapters](13_Supervised_Fine_Tuning_Adapters.md) | SFT, full tuning, parameter-efficient adapters, structured outputs, and retention | Requires Stage 12 PASS |
+| 14 | [Preference Tuning and Alignment](14_Preference_Tuning_Alignment.md) | Preference data, DPO/RLHF alternatives, verifier-weighted alignment, and human review | Requires Stage 13 PASS |
+| 15 | [Verified Retrieval and Knowledge](15_Verified_Retrieval_Knowledge.md) | Typed retrieval, citations, freshness, conflicts, deletion, and grounded generation | Requires Stage 14 PASS |
+| 16 | [Production Inference and Operations](16_Production_Inference_Operations.md) | Native serving API, batching, state/cache, observability, SLOs, canaries, and rollback | Requires Stage 15 PASS |
+| 17 | [Controlled Pilot and Production Release](17_Controlled_Pilot_Production_Release.md) | Shadow, limited pilot, human oversight, incident response, rollback, and bounded release | Terminal release gate; no automatic Stage 18 |
 
 ## Global gate protocol
 
@@ -60,10 +70,10 @@ All claims must be supported by a baseline and an ablation. In particular, the p
 The approved order is strictly sequential:
 
 ```text
-Stage 0 → Stage 1 → Stage 2 → Stage 3 → Stage 4 → Stage 5 → Stage 6 → Stage 7
+Stage 0 → Stage 1 → Stage 2 → Stage 3 → Stage 4 → Stage 5 → Stage 6 → Stage 7 → Stage 8 → Stage 9 → Stage 10 → Stage 11 → Stage 12 → Stage 13 → Stage 14 → Stage 15 → Stage 16 → Stage 17
 ```
 
-Parallel engineering may be used for tooling and documentation, but no capability stage should be declared transitioned until its predecessor has a `PASS` gate. Stage 7 ends in a controlled research review rather than automatic deployment.
+Parallel engineering may be used for tooling and documentation, but no capability stage should be declared transitioned until its predecessor has a `PASS` gate. Stage 7 ends in a controlled research review rather than automatic deployment. The production segment begins only after explicit approval and remains strictly gated through Stage 17; Stage 17 has no automatic successor.
 
 ## References
 
