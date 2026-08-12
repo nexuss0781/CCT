@@ -31,6 +31,7 @@ add_library(cct_native STATIC
     src/knowledge.cpp
     src/inference.cpp
     src/release.cpp
+    src/track1.cpp
 )
 target_include_directories(cct_native PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(cct_native PUBLIC PkgConfig::FFTW3)
@@ -147,6 +148,15 @@ target_compile_options(cct_release_tests PRIVATE -Wall -Wextra -Wpedantic -Werro
 add_executable(cct_stage17_gate tools/stage17_gate.cpp)
 target_link_libraries(cct_stage17_gate PRIVATE cct_native)
 target_compile_options(cct_stage17_gate PRIVATE -Wall -Wextra -Wpedantic -Werror)
+add_executable(cct_track1_prepare tools/track1_prepare.cpp)
+target_link_libraries(cct_track1_prepare PRIVATE cct_native)
+target_compile_options(cct_track1_prepare PRIVATE -Wall -Wextra -Wpedantic -Werror)
+add_executable(cct_track1_tests tests/track1_tests.cpp)
+target_link_libraries(cct_track1_tests PRIVATE cct_native)
+target_compile_options(cct_track1_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+add_executable(cct_track1_gate tools/track1_gate.cpp)
+target_link_libraries(cct_track1_gate PRIVATE cct_native)
+target_compile_options(cct_track1_gate PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
 include(CTest)
 enable_testing()
@@ -203,3 +213,7 @@ add_test(NAME cct_release_tests COMMAND cct_release_tests)
 set_tests_properties(cct_release_tests PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/..)
 add_test(NAME cct_stage17_gate COMMAND cct_stage17_gate --output ${CMAKE_SOURCE_DIR}/../artifacts/stage-17/cpp-gate)
 set_tests_properties(cct_stage17_gate PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/..)
+add_test(NAME cct_track1_tests COMMAND cct_track1_tests)
+set_tests_properties(cct_track1_tests PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/..)
+add_test(NAME cct_track1_gate COMMAND cct_track1_gate --output ${CMAKE_SOURCE_DIR}/../artifacts/track1/cpp-gate)
+set_tests_properties(cct_track1_gate PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/..)

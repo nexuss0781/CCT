@@ -1,7 +1,7 @@
 BUILD_DIR ?= build-cpp
 CMAKE ?= cmake
 
-.PHONY: configure native-build native-test stage0-smoke stage0-gate stage1-test stage1-gate stage2-test stage2-gate stage3-test stage3-gate stage4-test stage4-gate stage5-test stage5-gate stage6-test stage6-gate stage7-test stage7-gate stage8-test stage8-gate stage9-test stage9-gate stage10-test stage10-gate stage11-test stage11-gate stage12-test stage12-gate stage13-test stage13-gate stage14-test stage14-gate stage15-test stage15-gate stage16-test stage16-gate stage17-test stage17-gate ci-stage2 ci-stage3 ci-stage4 ci-stage5 ci-stage6 ci-stage7 ci-stage8 ci-stage9 ci-stage10 ci-stage11 ci-stage12 ci-stage13 ci-stage14 ci-stage15 ci-stage16 ci-stage17 ci clean
+.PHONY: configure native-build native-test stage0-smoke stage0-gate stage1-test stage1-gate stage2-test stage2-gate stage3-test stage3-gate stage4-test stage4-gate stage5-test stage5-gate stage6-test stage6-gate stage7-test stage7-gate stage8-test stage8-gate stage9-test stage9-gate stage10-test stage10-gate stage11-test stage11-gate stage12-test stage12-gate stage13-test stage13-gate stage14-test stage14-gate stage15-test stage15-gate stage16-test stage16-gate stage17-test stage17-gate track1-test track1-gate ci-stage2 ci-stage3 ci-stage4 ci-stage5 ci-stage6 ci-stage7 ci-stage8 ci-stage9 ci-stage10 ci-stage11 ci-stage12 ci-stage13 ci-stage14 ci-stage15 ci-stage16 ci-stage17 ci-track1 ci clean
 
 configure:
 	$(CMAKE) -S cpp -B $(BUILD_DIR) -DCMAKE_BUILD_TYPE=Release
@@ -91,6 +91,12 @@ stage17-test: native-build
 stage17-gate: native-build
 	./$(BUILD_DIR)/cct_stage17_gate --output artifacts/stage-17/cpp-gate
 
+track1-test: native-build
+	./$(BUILD_DIR)/cct_track1_tests
+
+track1-gate: native-build
+	./$(BUILD_DIR)/cct_track1_gate --output artifacts/track1/cpp-gate
+
 ci-stage2: native-build native-test stage0-gate stage1-test stage1-gate stage2-test stage2-gate
 
 ci-stage3: ci-stage2 stage3-test stage3-gate
@@ -108,6 +114,7 @@ ci-stage14: ci-stage13 stage14-test stage14-gate
 ci-stage15: ci-stage14 stage15-test stage15-gate
 ci-stage16: ci-stage15 stage16-test stage16-gate
 ci-stage17: ci-stage16 stage17-test stage17-gate
+ci-track1: ci-stage17 track1-test track1-gate
 ci: native-build native-test stage0-gate stage1-test stage1-gate
 
 clean:
