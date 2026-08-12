@@ -1,6 +1,7 @@
 #include "cct/track1.hpp"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cctype>
 #include <cstdlib>
@@ -137,10 +138,23 @@ std::string parse_json_string(const std::string& text, std::size_t& position) {
         else if (escaped == 'r') value.push_back('\r');
         else if (escaped == 't') value.push_back('\t');
         else if (escaped == 'u') {
-            require(position + 4U <= text.size(), "truncated JSON unicode escape");
-            unsigned int codepoint = 0U;
-            for (std::size_t index = 0U; index < 4U; ++index) codepoint = (codepoint << 4U) | hex_digit(text[position++]);
-            append_codepoint(value, codepoint);
+            const auto parse_escape_code_unit = [&](std::size_t& cursor) {
+                require(cursor + 4U <= text.size(), "truncated JSON unicode escape");
+                unsigned int code_unit = 0U;
+                for (std::size_t index = 0U; index < 4U; ++index) code_unit = (code_unit << 4U) | hex_digit(text[cursor++]);
+                return code_unit;
+            };
+            const auto codepoint = parse_escape_code_unit(position);
+            if (codepoint >= 0xD800U && codepoint <= 0xDBFFU) {
+                require(position + 2U <= text.size() && text[position] == '\\' && text[position + 1U] == 'u', "missing JSON low surrogate");
+                position += 2U;
+                const auto low_surrogate = parse_escape_code_unit(position);
+                require(low_surrogate >= 0xDC00U && low_surrogate <= 0xDFFFU, "invalid JSON low surrogate");
+                append_codepoint(value, 0x10000U + ((codepoint - 0xD800U) << 10U) + (low_surrogate - 0xDC00U));
+            } else {
+                require(codepoint < 0xDC00U || codepoint > 0xDFFFU, "unexpected JSON low surrogate");
+                append_codepoint(value, codepoint);
+            }
         } else throw Track1Error("unsupported JSON escape");
     }
     throw Track1Error("unterminated JSON string");
@@ -269,6 +283,21 @@ std::string run_curl(const std::string& url, const std::filesystem::path& path, 
     return read_file(path);
 }
 
+std::string extract_archive_member(const std::filesystem::path& archive, const std::string& member, const std::filesystem::path& path) {
+    if (std::filesystem::exists(path) && std::filesystem::file_size(path) > 0U) return read_file(path);
+    require(std::filesystem::exists(archive) && std::filesystem::file_size(archive) > 0U, "WikiText archive cache is missing: " + archive.string());
+    require(!member.empty(), "WikiText archive member is missing");
+    std::filesystem::create_directories(path.parent_path());
+    const auto temporary = path.string() + ".tmp";
+    std::filesystem::remove(temporary);
+    const auto command = "unzip -p \"" + archive.string() + "\" \"" + member + "\" > \"" + temporary + "\"";
+    require(std::system(command.c_str()) == 0, "cannot extract WikiText archive member " + member);
+    require(std::filesystem::exists(temporary) && std::filesystem::file_size(temporary) > 0U,
+            "WikiText archive member is empty: " + member);
+    std::filesystem::rename(temporary, path);
+    return read_file(path);
+}
+
 std::string page_url(const Track1Source& source, const std::size_t offset, const std::size_t length) {
     return source.row_api_url + "&offset=" + std::to_string(offset) + "&length=" + std::to_string(length) + "&revision=" + source.revision;
 }
@@ -286,7 +315,7 @@ Track1Example parse_squad_example(const std::string& object, const Track1Source&
     if (example.answerable) {
         example.answer_start = utf8_byte_offset(example.context, example.source_answer_start);
         require(example.answer_start < example.context.size() && example.context.compare(example.answer_start, example.answer.size(), example.answer) == 0,
-                "SQuAD answer offset does not match context");
+                "SQuAD answer offset does not match context for id " + example.id + " at codepoint " + std::to_string(example.source_answer_start));
     } else {
         require(example.source_answer_start == 0U, "unanswerable SQuAD example has a non-empty answer offset");
     }
@@ -323,7 +352,8 @@ std::string manifest_body(const Track1Manifest& manifest) {
                << "\",\"row_api_url\":\"" << json_escape(source.row_api_url) << "\",\"total_rows\":" << source.total_rows
                << ",\"raw_digest\":\"" << source.raw_digest << "\",\"upstream_dataset_id\":\""
                << json_escape(source.upstream_dataset_id) << "\",\"acquisition_type\":\"" << json_escape(source.acquisition_type)
-               << "\",\"raw_file_url\":\"" << json_escape(source.raw_file_url) << "\"}";
+               << "\",\"raw_file_url\":\"" << json_escape(source.raw_file_url) << "\",\"archive_member\":\""
+               << json_escape(source.archive_member) << "\"}";
     }
     output << "]}";
     return output.str();
@@ -385,11 +415,22 @@ Track1Pipeline::Track1Pipeline(Track1Config config) : config_(std::move(config))
             "Track 1 size configuration is invalid");
     manifest_.selection_seed = config_.selection_seed;
     manifest_.sources = {
-        {"wikitext2_pretrain_train", "Salesforce/wikitext", "wikitext-2-raw-v1", "train", "b08601e04326c79dfdd32d625aee71d232d685c3", "CC BY-SA 3.0; GFDL metadata", "https://datasets-server.huggingface.co/rows?dataset=Salesforce%2Fwikitext&config=wikitext-2-raw-v1&split=train", 36718, {}, {}, "hf_rows", {}},
-        {"wikitext2_pretrain_validation", "Salesforce/wikitext", "wikitext-2-raw-v1", "validation", "b08601e04326c79dfdd32d625aee71d232d685c3", "CC BY-SA 3.0; GFDL metadata", "https://datasets-server.huggingface.co/rows?dataset=Salesforce%2Fwikitext&config=wikitext-2-raw-v1&split=validation", 3760, {}, {}, "hf_rows", {}},
-        {"wikitext2_pretrain_test", "Salesforce/wikitext", "wikitext-2-raw-v1", "test", "b08601e04326c79dfdd32d625aee71d232d685c3", "CC BY-SA 3.0; GFDL metadata", "https://datasets-server.huggingface.co/rows?dataset=Salesforce%2Fwikitext&config=wikitext-2-raw-v1&split=test", 4358, {}, {}, "hf_rows", {}},
-        {"squad2_sft_train_source", "GEM/squad_v2", "gem_data_split", "train", "67199807729e631955056c71c258b7acbee548a3", "CC BY-SA 4.0", "https://datasets-server.huggingface.co/rows?dataset=rajpurkar%2Fsquad_v2&config=squad_v2&split=train", 116397, {}, {}, "hf_gem_flat_file", {}},
-        {"squad2_final_test_source", "GEM/squad_v2", "gem_data_split", "validation", "67199807729e631955056c71c258b7acbee548a3", "CC BY-SA 4.0", "https://datasets-server.huggingface.co/rows?dataset=rajpurkar%2Fsquad_v2&config=squad_v2&split=validation", 11873, {}, {}, "hf_gem_flat_file", {}}};
+        {"wikitext2_pretrain_train", "Salesforce/wikitext", "wikitext-2-raw-v1", "train", "b08601e04326c79dfdd32d625aee71d232d685c3", "CC BY-SA 3.0; GFDL metadata", "https://datasets-server.huggingface.co/rows?dataset=Salesforce%2Fwikitext&config=wikitext-2-raw-v1&split=train", 36718, {}, {}, "hf_rows", {}, {}},
+        {"wikitext2_pretrain_validation", "Salesforce/wikitext", "wikitext-2-raw-v1", "validation", "b08601e04326c79dfdd32d625aee71d232d685c3", "CC BY-SA 3.0; GFDL metadata", "https://datasets-server.huggingface.co/rows?dataset=Salesforce%2Fwikitext&config=wikitext-2-raw-v1&split=validation", 3760, {}, {}, "hf_rows", {}, {}},
+        {"wikitext2_pretrain_test", "Salesforce/wikitext", "wikitext-2-raw-v1", "test", "b08601e04326c79dfdd32d625aee71d232d685c3", "CC BY-SA 3.0; GFDL metadata", "https://datasets-server.huggingface.co/rows?dataset=Salesforce%2Fwikitext&config=wikitext-2-raw-v1&split=test", 4358, {}, {}, "hf_rows", {}, {}},
+        {"squad2_sft_train_source", "GEM/squad_v2", "gem_data_split", "train", "67199807729e631955056c71c258b7acbee548a3", "CC BY-SA 4.0", "https://datasets-server.huggingface.co/rows?dataset=rajpurkar%2Fsquad_v2&config=squad_v2&split=train", 116397, {}, {}, "hf_gem_flat_file", {}, {}},
+        {"squad2_final_test_source", "GEM/squad_v2", "gem_data_split", "validation", "67199807729e631955056c71c258b7acbee548a3", "CC BY-SA 4.0", "https://datasets-server.huggingface.co/rows?dataset=rajpurkar%2Fsquad_v2&config=squad_v2&split=validation", 11873, {}, {}, "hf_gem_flat_file", {}, {}}};
+    const std::array<std::pair<std::string, std::string>, 3U> wikitext_members{{
+        {"wikitext2_pretrain_train", "wikitext-2-raw/wiki.train.raw"},
+        {"wikitext2_pretrain_validation", "wikitext-2-raw/wiki.valid.raw"},
+        {"wikitext2_pretrain_test", "wikitext-2-raw/wiki.test.raw"}}};
+    for (const auto& [source_id, archive_member] : wikitext_members) {
+        auto& source = const_cast<Track1Source&>(source_at(manifest_.sources, source_id));
+        source.upstream_dataset_id = "Salesforce/wikitext";
+        source.acquisition_type = "hf_zip_member";
+        source.raw_file_url = "https://huggingface.co/datasets/ggml-org/ci/resolve/927b3642933080f1b0e811e2f916e14c292992f9/wikitext-2-raw-v1.zip?download=true";
+        source.archive_member = archive_member;
+    }
     auto& squad_train = const_cast<Track1Source&>(source_at(manifest_.sources, "squad2_sft_train_source"));
     auto& squad_final = const_cast<Track1Source&>(source_at(manifest_.sources, "squad2_final_test_source"));
     squad_train.upstream_dataset_id = "rajpurkar/squad_v2";
@@ -411,26 +452,44 @@ void Track1Pipeline::prepare_wikitext() {
     for (const auto& [split, source_id] : split_paths) {
         auto& source = const_cast<Track1Source&>(source_at(manifest_.sources, source_id));
         const auto raw_path = std::filesystem::path(config_.output_root) / "raw" / source_path_component(source);
+        const auto archive_path = std::filesystem::path(config_.output_root) / "raw" / "wikitext-2-raw-v1.zip";
+        const bool use_archive = source.acquisition_type == "hf_zip_member" &&
+                                 (config_.acquire_remote || (std::filesystem::exists(archive_path) && std::filesystem::file_size(archive_path) > 0U));
         std::ostringstream prepared;
         std::string raw_digest_material;
         std::size_t tokens = 0U;
         std::size_t rows = 0U;
         const auto source_rows = config_.source_row_limit == 0U ? source.total_rows : std::min(source.total_rows, config_.source_row_limit);
-        for (std::size_t offset = 0U; offset < source_rows; offset += config_.page_length) {
-            const auto page = run_curl(page_url(source, offset, config_.page_length), raw_path.string() + "." + std::to_string(offset), config_.acquire_remote);
-            raw_digest_material += page;
+        const auto append_text = [&](const std::string& text) {
+            ++report_.source_rows;
+            const auto cap = split == Track1Split::PretrainTrain ? config_.pretrain_token_cap : std::numeric_limits<std::size_t>::max();
+            if (tokens >= cap) return;
+            const auto take = std::min(text.size(), cap - tokens);
+            prepared.write(text.data(), static_cast<std::streamsize>(take));
+            prepared.put('\n');
+            tokens += take;
+            ++rows;
+        };
+        if (use_archive) {
+            require(!source.raw_file_url.empty(), "WikiText archive URL is missing");
+            static_cast<void>(run_curl(source.raw_file_url, archive_path, config_.acquire_remote));
+            const auto text = extract_archive_member(archive_path, source.archive_member, raw_path.string() + ".txt");
+            raw_digest_material = text;
             ++report_.source_pages;
-            for (const auto& wrapper : row_objects(page)) {
-                const auto row = nested_object(wrapper, "row");
-                const auto text = field_string(row, "text");
-                ++report_.source_rows;
-                const auto cap = split == Track1Split::PretrainTrain ? config_.pretrain_token_cap : std::numeric_limits<std::size_t>::max();
-                if (tokens >= cap) continue;
-                const auto take = std::min(text.size(), cap - tokens);
-                prepared.write(text.data(), static_cast<std::streamsize>(take));
-                prepared.put('\n');
-                tokens += take;
-                ++rows;
+            std::istringstream lines(text);
+            std::string line;
+            std::size_t line_index = 0U;
+            while (line_index < source_rows && std::getline(lines, line)) {
+                append_text(line);
+                ++line_index;
+            }
+            require(line_index == source_rows, "WikiText archive member ended before its declared split size");
+        } else {
+            for (std::size_t offset = 0U; offset < source_rows; offset += config_.page_length) {
+                const auto page = run_curl(page_url(source, offset, config_.page_length), raw_path.string() + "." + std::to_string(offset), config_.acquire_remote);
+                raw_digest_material += page;
+                ++report_.source_pages;
+                for (const auto& wrapper : row_objects(page)) append_text(field_string(nested_object(wrapper, "row"), "text"));
             }
         }
         source.raw_digest = GovernedCorpus::content_sha256(raw_digest_material);
