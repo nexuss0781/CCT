@@ -3,8 +3,8 @@
 
 **Predecessor:** Stage 8 — Production Foundation and Governance  
 **Successor:** Stage 10 — Tokenizer and Representation Engine  
-**Status:** Specification; implementation not started  
-**Implementation:** Native C++20 pipeline and gates
+**Status:** Implemented and gated on declared real-source fixtures; Stage 10 requires explicit approval
+**Implementation:** Native C++20 pipeline, regression suite, and gate
 
 ## Purpose
 
@@ -98,13 +98,13 @@ The harness must include evaluator-only records that the training reader cannot 
 
 ## Pass/fail transition
 
-Stage 9 passes only if all mandatory checks are green and the corpus release record names the exact sources, licenses, privacy policy, transformation versions, hashes, shard counts, token estimates, and evaluation split ownership. A `PASS` authorizes Stage 10 tokenizer work against the released corpus. It does not authorize training on unreviewed data.
+Stage 9 passes only if all mandatory checks are green and the corpus release record names the exact real sources, declared rights, privacy policy, transformation versions, hashes, shard counts, token estimates, and evaluation split ownership. The native Stage 9 gate passes 8/8 mandatory checks on the declared real-source fixtures. A `PASS` authorizes Stage 10 tokenizer work against the released corpus contract. It does not authorize training on unreviewed data.
 
 A `FAIL` requires remediation. A `BLOCKED` result must identify the unresolved source or policy boundary. Blocked data must remain unavailable to downstream training targets.
 
 ## Deliverables
 
-The stage must deliver a native corpus tool, source and item manifest schemas, license review report, privacy report, deduplication report, contamination report, shard index, deletion test artifact, immutable corpus release record, native regression tests, gate executable, and CI command.
+The stage delivers a native corpus tool, source and item manifest schemas, license review report, privacy report, deduplication report, contamination report, shard index, deletion test artifact, immutable corpus release record, native regression tests, gate executable, and CI command. The implementation uses the real Project Gutenberg and repository-code fixtures recorded in `data/stage-9/manifests/stage9_manifest.txt`.
 
 ## Explicit limitations
 

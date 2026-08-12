@@ -21,7 +21,7 @@ The implementation is deliberately split into clear reference paths and optimize
 | Stage 6 — Deliberation and verification | **PASS** | `cct_deliberation_tests`, `cct_stage6_gate`, `Stages/06_Deliberation_Verification.md` |
 | Stage 7 — Multimodal and controlled research | **PASS** | `cct_multimodal_tests`, `cct_stage7_gate`, `Stages/07_Multimodal_Open_Ended.md` |
 | Stage 8 — Production NLP foundation and governance | **PASS — foundation only** | `cct_production_tests`, `cct_stage8_gate`, `Stages/08_Production_NLP_Roadmap.md` |
-| Stage 9 — Governed data and corpus | **SPECIFICATION** | `Stages/09_Governed_Data_Corpus.md` |
+| Stage 9 — Governed data and corpus | **PASS — real-source corpus foundation** | `cct_corpus_tests`, `cct_stage9_gate`, `Stages/09_Governed_Data_Corpus.md` |
 | Stage 10 — Tokenizer and representation | **SPECIFICATION** | `Stages/10_Tokenizer_Representation.md` |
 | Stage 11 — Trainable native NLP core | **SPECIFICATION** | `Stages/11_Trainable_Native_NLP_Core.md` |
 | Stage 12 — Scaling and accelerator systems | **SPECIFICATION** | `Stages/12_Scaling_Accelerator_Systems.md` |
@@ -169,7 +169,7 @@ The strengthened Stage 2 gate requires **12 mandatory checks** plus limitation-c
 | `cpp/tools/stage7_gate.cpp` | Stage 7 terminal artifact-producing gate |
 | `Stages/07_Expanded_Gate_Contract.md` | Stage 7 thresholds, controls, and terminal artifact contract |
 | `Stages/08_Production_NLP_Roadmap.md` | Master production sequence, dependencies, and universal gate protocol |
-| `Stages/09_Governed_Data_Corpus.md` | Data rights, privacy, deduplication, contamination, and corpus release gate |
+| `Stages/09_Governed_Data_Corpus.md` | Native real-source data rights, privacy, deduplication, contamination, deletion, and corpus release gate |
 | `Stages/10_Tokenizer_Representation.md` | Tokenizer, byte fallback, offsets, packed batches, and representation gate |
 | `Stages/11_Trainable_Native_NLP_Core.md` | Next-token trainer, optimizer, checkpoints, and matched-baseline gate |
 | `Stages/12_Scaling_Accelerator_Systems.md` | Scaling studies, accelerator path, distributed recovery, and architecture gate |
@@ -188,7 +188,7 @@ The strengthened Stage 2 gate requires **12 mandatory checks** plus limitation-c
 
 ## Research limitations
 
-The current implementation validates a numerical operator substrate, a deterministic real/complex selective recurrent core, a native causal-event learner, a local persistent verifiable memory subsystem, a small native language/code scaling benchmark, a bounded deliberation/verification harness, a controlled multimodal event/simulation harness, and a Stage 8 production-governance foundation on declared offline fixtures. Stages 9–17 are **specifications only**: they define the remaining production NLP implementation and release path but are not evidence that those capabilities have been built. Stage 8 does not implement a production language model, trainer, tokenizer, serving system, or deployment. The project does not yet validate broad language competence, general multimodal understanding, open-ended reasoning, unrestricted code generation, real-world perception or robotics, repository-level engineering, distributed scaling, autonomous agency, external deployment, or superintelligence. Further work requires explicit production-stage approval and new evidence at every gate.
+The current implementation validates a numerical operator substrate, a deterministic real/complex selective recurrent core, a native causal-event learner, a local persistent verifiable memory subsystem, a small native language/code scaling benchmark, a bounded deliberation/verification harness, a controlled multimodal event/simulation harness, a Stage 8 production-governance foundation, and a Stage 9 governed-corpus foundation on declared real source fixtures. Stages 10–17 are **specifications only**: they define the remaining production NLP implementation and release path but are not evidence that those capabilities have been built. Stage 8 does not implement a production language model, trainer, tokenizer, serving system, or deployment. Stage 9 does not prove corpus representativeness, universal rights resolution, data factuality, or language-model quality. The project does not yet validate broad language competence, general multimodal understanding, open-ended reasoning, unrestricted code generation, real-world perception or robotics, repository-level engineering, distributed scaling, autonomous agency, external deployment, or superintelligence. Further work requires explicit production-stage approval and new evidence at every gate.
 
 ## License
 
