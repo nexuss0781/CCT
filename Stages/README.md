@@ -22,7 +22,7 @@ This directory contains the independent implementation and evaluation specificat
 | 13 | [Supervised Fine-Tuning and Adapters](13_Supervised_Fine_Tuning_Adapters.md) and [Expanded Gate Contract](13_Expanded_Gate_Contract.md) | Native six-task SFT, full/adaptor comparison, structured outputs, citation/safety retention, permissions, and deletion lineage | **PASS — Stage 14 requires explicit approval** |
 | 14 | [Preference Tuning and Alignment](14_Preference_Tuning_Alignment.md) | Native governed preference data, DPO-like alignment, verifier-weighted reranking, adversarial controls, calibration, blind review, and regression evidence | **PASS — Stage 15 requires explicit approval** |
 | 15 | [Verified Retrieval and Knowledge](15_Verified_Retrieval_Knowledge.md) | Native typed retrieval, citations, freshness, conflicts, deletion, poisoning isolation, audit, and verified grounding | **PASS — Stage 16 requires explicit approval** |
-| 16 | [Production Inference and Operations](16_Production_Inference_Operations.md) | Native serving API, batching, state/cache, observability, SLOs, canaries, and rollback | Requires Stage 15 PASS |
+| 16 | [Production Inference and Operations](16_Production_Inference_Operations.md) | Native versioned serving, batching, state/cache isolation, observability, SLOs, fault controls, canaries, and rollback | **PASS — Stage 17 requires explicit approval** |
 | 17 | [Controlled Pilot and Production Release](17_Controlled_Pilot_Production_Release.md) | Shadow, limited pilot, human oversight, incident response, rollback, and bounded release | Terminal release gate; no automatic Stage 18 |
 
 ## Global gate protocol
