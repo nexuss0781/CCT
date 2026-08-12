@@ -33,6 +33,8 @@ SQuAD 2.0 gives the first track one consistent supervised task: consume a contex
 
 ## Acquisition route and pinned mirror provenance
 
+The native preparer retains `Salesforce/wikitext` as the declared WikiText source identity while acquiring the three fixed raw split members from the directly downloadable `wikitext-2-raw-v1.zip` archive in `ggml-org/ci`, pinned to revision `927b3642933080f1b0e811e2f916e14c292992f9`. The archive is cached once, extracted natively, checked against the expected 36,718/3,760/4,358 split sizes, and recorded through member-level SHA-256 digests in the manifest. This avoids large-scale pagination against the Hugging Face rows endpoint. [6]
+
 The native preparer retains `rajpurkar/squad_v2` as the declared upstream benchmark identity while acquiring SQuAD records from the directly downloadable `GEM/squad_v2` flat JSON files. The mirror is pinned to revision `67199807729e631955056c71c258b7acbee548a3`, is labeled CC BY-SA 4.0, and preserves the original SQuAD question IDs, contexts, answer text, and codepoint answer offsets. It exposes `gem_data_split/train.json` for governed SFT selection and `gem_data_split/validation.json` for the frozen final test. [5]
 
 This direct-file route replaces large-scale rows-endpoint pagination for SQuAD because it is a single cacheable artifact per split and eliminates the observed HTTP 429 failure mode. The manifest records the GEM dataset ID, immutable revision, direct URL, raw-file digest, acquisition type, and `rajpurkar/squad_v2` upstream identity. The parser converts the retained codepoint offsets to UTF-8 byte offsets and fails closed if an answer span does not exactly match its context.
@@ -60,3 +62,4 @@ The first track passes only if the native preparer produces deterministic manife
 [3]: https://huggingface.co/datasets/OpenAssistant/oasst1 "OpenAssistant OASST1 dataset card"
 [4]: https://huggingface.co/datasets/roneneldan/TinyStories "TinyStories dataset card, evaluated and deferred for this track"
 [5]: https://huggingface.co/datasets/GEM/squad_v2/tree/67199807729e631955056c71c258b7acbee548a3 "GEM SQuAD v2 pinned repository files and dataset card"
+[6]: https://huggingface.co/datasets/ggml-org/ci/tree/927b3642933080f1b0e811e2f916e14c292992f9 "Pinned WikiText raw archive mirror"

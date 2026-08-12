@@ -1,5 +1,6 @@
 #include "cct/track1.hpp"
 
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -26,7 +27,7 @@ void write(const std::filesystem::path& path, const std::string& content) {
 
 void create_fixture(const std::filesystem::path& root, const bool malformed = false) {
     const std::string wikitext = R"({"features":[{"name":"text"}],"rows":[{"row":{"text":"alpha beta gamma delta"}},{"row":{"text":"the causal engine learns from compact text"}},{"row":{"text":"spectral state updates are deterministic"}},{"row":{"text":"checkpoint replay preserves the stream"}}],"num_rows_total":4})";
-    const std::string squad_train = R"({"features":[{"name":"id"}],"rows":[{"row":{"id":"a1","title":"One","context":"Paris is the capital of France.","question":"What is the capital of France?","answers":{"text":["Paris"],"answer_start":[0]}}},{"row":{"id":"a2","title":"Two","context":"The engine uses a spectral state.","question":"What does the engine use?","answers":{"text":["a spectral state"],"answer_start":[16]}}},{"row":{"id":"a3","title":"Three","context":"A checkpoint stores model state.","question":"What stores model state?","answers":{"text":["A checkpoint"],"answer_start":[0]}}},{"row":{"id":"a4","title":"Four","context":"Validation measures held-out loss.","question":"What does validation measure?","answers":{"text":["held-out loss"],"answer_start":[20]}}},{"row":{"id":"u1","title":"Five","context":"The sky is blue.","question":"What is the engine version?","answers":{"text":[],"answer_start":[]}}},{"row":{"id":"u2","title":"Six","context":"The river is long.","question":"Who wrote the source?","answers":{"text":[],"answer_start":[]}}},{"row":{"id":"u3","title":"Seven","context":"The model passed the gate.","question":"What is the hidden password?","answers":{"text":[],"answer_start":[]}}},{"row":{"id":"u4","title":"Eight","context":"The test is deterministic.","question":"Where is the server?","answers":{"text":[],"answer_start":[]}}}],"num_rows_total":8})";
+    const std::string squad_train = R"({"features":[{"name":"id"}],"rows":[{"row":{"id":"a1","title":"One","context":"Paris is the capital of France.","question":"What is the capital of France?","answers":{"text":["Paris"],"answer_start":[0]}}},{"row":{"id":"a2","title":"Two","context":"A \ud83d\ude00 zh\u00e9 marker.","question":"What is the marker?","answers":{"text":["zh\u00e9"],"answer_start":[4]}}},{"row":{"id":"a3","title":"Three","context":"A checkpoint stores model state.","question":"What stores model state?","answers":{"text":["A checkpoint"],"answer_start":[0]}}},{"row":{"id":"a4","title":"Four","context":"Validation measures held-out loss.","question":"What does validation measure?","answers":{"text":["held-out loss"],"answer_start":[20]}}},{"row":{"id":"u1","title":"Five","context":"The sky is blue.","question":"What is the engine version?","answers":{"text":[],"answer_start":[]}}},{"row":{"id":"u2","title":"Six","context":"The river is long.","question":"Who wrote the source?","answers":{"text":[],"answer_start":[]}}},{"row":{"id":"u3","title":"Seven","context":"The model passed the gate.","question":"What is the hidden password?","answers":{"text":[],"answer_start":[]}}},{"row":{"id":"u4","title":"Eight","context":"The test is deterministic.","question":"Where is the server?","answers":{"text":[],"answer_start":[]}}}],"num_rows_total":8})";
     const auto final_json = malformed
         ? std::string(R"({"features":[{"name":"id"}],"rows":[{"row":{"id":"broken","title":"Broken","context":"not valid")")
         : std::string(R"({"features":[{"name":"id"}],"rows":[{"row":{"id":"t1","title":"FinalOne","context":"London is in England.","question":"Where is London?","answers":{"text":["in England"],"answer_start":[10]}}},{"row":{"id":"t2","title":"FinalTwo","context":"The final set is frozen.","question":"What is frozen?","answers":{"text":["The final set"],"answer_start":[0]}}},{"row":{"id":"t3","title":"FinalThree","context":"The answer is not present.","question":"What is the secret?","answers":{"text":[],"answer_start":[]}}},{"row":{"id":"t4","title":"FinalFour","context":"The pilot is bounded.","question":"What is the pilot?","answers":{"text":["bounded"],"answer_start":[13]}}}],"num_rows_total":4})");
@@ -39,15 +40,27 @@ void create_fixture(const std::filesystem::path& root, const bool malformed = fa
     for (const auto& [name, content] : files) write(root / "raw" / name, content);
 }
 
+void create_wikitext_archive(const std::filesystem::path& root) {
+    const auto staging = root / "zip-fixture" / "wikitext-2-raw";
+    write(staging / "wiki.train.raw", "alpha beta gamma delta\nthe causal engine learns from compact text\nspectral state updates are deterministic\ncheckpoint replay preserves the stream\n");
+    write(staging / "wiki.valid.raw", "validation alpha\nvalidation beta\nvalidation gamma\nvalidation delta\n");
+    write(staging / "wiki.test.raw", "test alpha\ntest beta\ntest gamma\ntest delta\n");
+    const auto archive = root / "raw" / "wikitext-2-raw-v1.zip";
+    const auto command = "cd \"" + (root / "zip-fixture").string() + "\" && zip -q -r \"" + std::filesystem::absolute(archive).string() + "\" wikitext-2-raw";
+    require(std::system(command.c_str()) == 0, "cannot create native WikiText Zip fixture");
+    std::filesystem::remove_all(root / "zip-fixture");
+}
+
 void create_flat_fixture(const std::filesystem::path& root) {
     const std::string wikitext = R"({"features":[{"name":"text"}],"rows":[{"row":{"text":"alpha beta gamma delta"}},{"row":{"text":"the causal engine learns from compact text"}},{"row":{"text":"spectral state updates are deterministic"}},{"row":{"text":"checkpoint replay preserves the stream"}}],"num_rows_total":4})";
-    const std::string train = R"({"data":[{"id":"a1","title":"One","context":"Paris is the capital of France.","question":"What is the capital of France?","answers":{"text":["Paris"],"answer_start":[0]}},{"id":"a2","title":"Two","context":"The engine uses a spectral state.","question":"What does the engine use?","answers":{"text":["a spectral state"],"answer_start":[16]}},{"id":"u1","title":"Five","context":"The sky is blue.","question":"What is the engine version?","answers":{"text":[],"answer_start":[]}},{"id":"u2","title":"Six","context":"The river is long.","question":"Who wrote the source?","answers":{"text":[],"answer_start":[]}}]})";
+    const std::string train = R"({"data":[{"id":"a1","title":"One","context":"Paris is the capital of France.","question":"What is the capital of France?","answers":{"text":["Paris"],"answer_start":[0]}},{"id":"a2","title":"Two","context":"A \ud83d\ude00 zh\u00e9 marker.","question":"What is the marker?","answers":{"text":["zh\u00e9"],"answer_start":[4]}},{"id":"u1","title":"Five","context":"The sky is blue.","question":"What is the engine version?","answers":{"text":[],"answer_start":[]}},{"id":"u2","title":"Six","context":"The river is long.","question":"Who wrote the source?","answers":{"text":[],"answer_start":[]}}]})";
     const std::string final = R"({"data":[{"id":"t1","title":"FinalOne","context":"London is in England.","question":"Where is London?","answers":{"text":["in England"],"answer_start":[10]}},{"id":"t2","title":"FinalTwo","context":"The final set is frozen.","question":"What is frozen?","answers":{"text":["The final set"],"answer_start":[0]}},{"id":"t3","title":"FinalThree","context":"The answer is not present.","question":"What is the secret?","answers":{"text":[],"answer_start":[]}},{"id":"t4","title":"FinalFour","context":"The pilot is bounded.","question":"What is the pilot?","answers":{"text":["bounded"],"answer_start":[13]}}]})";
     write(root / "raw" / "wikitext2_pretrain_train_train.json.0", wikitext);
     write(root / "raw" / "wikitext2_pretrain_validation_validation.json.0", wikitext);
     write(root / "raw" / "wikitext2_pretrain_test_test.json.0", wikitext);
     write(root / "raw" / "squad2_sft_train_source_train.json", train);
     write(root / "raw" / "squad2_final_test_source_validation.json", final);
+    create_wikitext_archive(root);
 }
 
 Track1Config fixture_config(const std::filesystem::path& root) {
@@ -72,6 +85,10 @@ void test_pinned_sources_and_contract() {
                     source.license.find("CC BY-SA") != std::string::npos,
                 "Track 1 source is not pinned to a licensed Hugging Face source");
     }
+    const auto& wikitext_source = pipeline.manifest().sources.front();
+    require(wikitext_source.acquisition_type == "hf_zip_member" && wikitext_source.raw_file_url.find("wikitext-2-raw-v1.zip") != std::string::npos &&
+                wikitext_source.archive_member == "wikitext-2-raw/wiki.train.raw",
+            "WikiText direct Zip provenance is incomplete");
     const auto& squad_source = pipeline.manifest().sources.at(3U);
     require(squad_source.dataset_id == "GEM/squad_v2" && squad_source.upstream_dataset_id == "rajpurkar/squad_v2" &&
                 squad_source.license == "CC BY-SA 4.0" && squad_source.acquisition_type == "hf_gem_flat_file" &&
@@ -124,8 +141,8 @@ void test_direct_flat_file_parser() {
     auto config = fixture_config(root);
     Track1Pipeline pipeline(config);
     pipeline.prepare();
-    require(pipeline.report().passed && pipeline.report().malformed_rows == 0U && pipeline.report().unanswerable_rows == 2U &&
-                pipeline.manifest().sft_train_examples == 2U && pipeline.manifest().final_test_examples == 4U,
+    require(pipeline.report().passed && pipeline.report().source_pages == 5U && pipeline.report().malformed_rows == 0U &&
+                pipeline.report().unanswerable_rows == 2U && pipeline.manifest().sft_train_examples == 2U && pipeline.manifest().final_test_examples == 4U,
             "GEM flat-file preparation did not preserve balanced categories and final-test rows");
 }
 

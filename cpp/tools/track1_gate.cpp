@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -61,6 +62,17 @@ Check run_check(const std::string& name, const std::function<std::string()>& fun
     }
 }
 
+void create_wikitext_archive(const std::filesystem::path& root) {
+    const auto staging = root / "zip-fixture" / "wikitext-2-raw";
+    write_file(staging / "wiki.train.raw", "alpha beta gamma delta\nthe causal engine learns from compact text\nspectral state updates are deterministic\ncheckpoint replay preserves the stream\n");
+    write_file(staging / "wiki.valid.raw", "validation alpha\nvalidation beta\nvalidation gamma\nvalidation delta\n");
+    write_file(staging / "wiki.test.raw", "test alpha\ntest beta\ntest gamma\ntest delta\n");
+    const auto archive = root / "raw" / "wikitext-2-raw-v1.zip";
+    const auto command = "cd \"" + (root / "zip-fixture").string() + "\" && zip -q -r \"" + std::filesystem::absolute(archive).string() + "\" wikitext-2-raw";
+    require(std::system(command.c_str()) == 0, "cannot create native WikiText Zip fixture");
+    std::filesystem::remove_all(root / "zip-fixture");
+}
+
 void create_fixture(const std::filesystem::path& root, const bool malformed = false) {
     const std::string wikitext = R"({"features":[{"name":"text"}],"rows":[{"row":{"text":"alpha beta gamma delta"}},{"row":{"text":"the causal engine learns from compact text"}},{"row":{"text":"spectral state updates are deterministic"}},{"row":{"text":"checkpoint replay preserves the stream"}}],"num_rows_total":4})";
     const std::string squad_train = R"({"features":[{"name":"id"}],"rows":[{"row":{"id":"a1","title":"One","context":"Paris is the capital of France.","question":"What is the capital of France?","answers":{"text":["Paris"],"answer_start":[0]}}},{"row":{"id":"a2","title":"Two","context":"The engine uses a spectral state.","question":"What does the engine use?","answers":{"text":["a spectral state"],"answer_start":[16]}}},{"row":{"id":"a3","title":"Three","context":"A checkpoint stores model state.","question":"What stores model state?","answers":{"text":["A checkpoint"],"answer_start":[0]}}},{"row":{"id":"a4","title":"Four","context":"Validation measures held-out loss.","question":"What does validation measure?","answers":{"text":["held-out loss"],"answer_start":[20]}}},{"row":{"id":"u1","title":"Five","context":"The sky is blue.","question":"What is the engine version?","answers":{"text":[],"answer_start":[]}}},{"row":{"id":"u2","title":"Six","context":"The river is long.","question":"Who wrote the source?","answers":{"text":[],"answer_start":[]}}},{"row":{"id":"u3","title":"Seven","context":"The model passed the gate.","question":"What is the hidden password?","answers":{"text":[],"answer_start":[]}}},{"row":{"id":"u4","title":"Eight","context":"The test is deterministic.","question":"Where is the server?","answers":{"text":[],"answer_start":[]}}}],"num_rows_total":8})";
@@ -72,6 +84,7 @@ void create_fixture(const std::filesystem::path& root, const bool malformed = fa
     write_file(root / "raw" / "wikitext2_pretrain_test_test.json.0", wikitext);
     write_file(root / "raw" / "squad2_sft_train_source_train.json.0", squad_train);
     write_file(root / "raw" / "squad2_final_test_source_validation.json.0", squad_final);
+    create_wikitext_archive(root);
 }
 
 Track1Config fixture_config(const std::filesystem::path& root) {
@@ -107,6 +120,10 @@ int main(int argc, char** argv) {
                         source.license.find("CC BY-SA") != std::string::npos,
                     "source is not pinned to a licensed Hugging Face source");
         }
+        const auto& wikitext_source = fixture_pipeline.manifest().sources.front();
+        require(wikitext_source.acquisition_type == "hf_zip_member" && wikitext_source.raw_file_url.find("wikitext-2-raw-v1.zip") != std::string::npos &&
+                    wikitext_source.archive_member == "wikitext-2-raw/wiki.train.raw",
+                "WikiText direct Zip provenance is incomplete");
         const auto& squad_source = fixture_pipeline.manifest().sources.at(3U);
         require(squad_source.dataset_id == "GEM/squad_v2" && squad_source.upstream_dataset_id == "rajpurkar/squad_v2" &&
                     squad_source.license == "CC BY-SA 4.0" && squad_source.acquisition_type == "hf_gem_flat_file" &&

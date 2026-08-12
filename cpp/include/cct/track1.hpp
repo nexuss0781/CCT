@@ -34,6 +34,7 @@ struct Track1Source {
     std::string upstream_dataset_id;
     std::string acquisition_type = "hf_rows";
     std::string raw_file_url;
+    std::string archive_member;
 };
 
 struct Track1Config {
