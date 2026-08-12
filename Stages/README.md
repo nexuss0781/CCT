@@ -23,7 +23,7 @@ This directory contains the independent implementation and evaluation specificat
 | 14 | [Preference Tuning and Alignment](14_Preference_Tuning_Alignment.md) | Native governed preference data, DPO-like alignment, verifier-weighted reranking, adversarial controls, calibration, blind review, and regression evidence | **PASS — Stage 15 requires explicit approval** |
 | 15 | [Verified Retrieval and Knowledge](15_Verified_Retrieval_Knowledge.md) | Native typed retrieval, citations, freshness, conflicts, deletion, poisoning isolation, audit, and verified grounding | **PASS — Stage 16 requires explicit approval** |
 | 16 | [Production Inference and Operations](16_Production_Inference_Operations.md) | Native versioned serving, batching, state/cache isolation, observability, SLOs, fault controls, canaries, and rollback | **PASS — Stage 17 requires explicit approval** |
-| 17 | [Controlled Pilot and Production Release](17_Controlled_Pilot_Production_Release.md) | Shadow, limited pilot, human oversight, incident response, rollback, and bounded release | Terminal release gate; no automatic Stage 18 |
+| 17 | [Controlled Pilot and Production Release](17_Controlled_Pilot_Production_Release.md) | Shadow, bounded pilot, human oversight, incident response, rollback, deletion, drift, approvals, and terminal release | **PASS — bounded production for named scope; future expansion requires a new specification** |
 
 ## Global gate protocol
 

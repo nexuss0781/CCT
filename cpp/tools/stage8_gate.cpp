@@ -177,8 +177,8 @@ std::string dependency_and_baseline_check() {
     require(roadmap.find("Dense causal Transformer") != std::string::npos && roadmap.find("CCT-ASE") != std::string::npos &&
                 roadmap.find("matched") != std::string::npos,
             "matched baseline policy is missing");
-    require(index.find("Stage 17") != std::string::npos && index.find("no automatic Stage 18") != std::string::npos,
-            "stage index transition boundary is missing");
+    require(index.find("Stage 17") != std::string::npos && index.find("future expansion requires a new specification") != std::string::npos,
+            "stage index terminal-release boundary is missing");
     return "{\"dependency_graph\":\"acyclic\",\"baseline_set\":5,\"terminal_successor\":false}";
 }
 
@@ -256,8 +256,8 @@ std::string application_readiness_check(std::vector<FixtureOutcome>* outcomes_ou
 
 std::string claim_boundary_check() {
     const auto readme = read_file("README.md");
-    require(readme.find("Stage 17 remains **specification-only**") != std::string::npos,
-            "README does not clearly separate remaining production specifications from implemented foundations");
+    require(readme.find("future expansion requires a new specification") != std::string::npos,
+            "README does not clearly separate terminal release scope from future expansion");
     const std::vector<std::string> files{
         "Stages/09_Governed_Data_Corpus.md", "Stages/10_Tokenizer_Representation.md", "Stages/11_Trainable_Native_NLP_Core.md",
         "Stages/12_Scaling_Accelerator_Systems.md", "Stages/13_Supervised_Fine_Tuning_Adapters.md", "Stages/14_Preference_Tuning_Alignment.md",
@@ -267,13 +267,14 @@ std::string claim_boundary_check() {
         const bool is_implemented = file == "Stages/09_Governed_Data_Corpus.md" || file == "Stages/10_Tokenizer_Representation.md" ||
                                      file == "Stages/11_Trainable_Native_NLP_Core.md" || file == "Stages/12_Scaling_Accelerator_Systems.md" ||
                                      file == "Stages/13_Supervised_Fine_Tuning_Adapters.md" || file == "Stages/14_Preference_Tuning_Alignment.md" ||
-                                     file == "Stages/15_Verified_Retrieval_Knowledge.md" || file == "Stages/16_Production_Inference_Operations.md";
+                                     file == "Stages/15_Verified_Retrieval_Knowledge.md" || file == "Stages/16_Production_Inference_Operations.md" ||
+                                     file == "Stages/17_Controlled_Pilot_Production_Release.md";
         const bool labeled_specification = text.find("**Status:** Specification") != std::string::npos;
         const bool labeled_implemented = text.find("**Status:** Implemented and gated") != std::string::npos ||
                                          text.find("**Status:** Implemented; PASS") != std::string::npos;
         require((is_implemented && labeled_implemented) || (!is_implemented && labeled_specification), file + " has an invalid implementation status label");
     }
-    return "{\"production_stages_implemented\":false,\"implemented_foundations\":8,\"remaining_production_specifications\":\"17\",\"claim_boundary\":\"explicit\"}";
+    return "{\"production_stages_implemented\":true,\"implemented_foundations\":9,\"remaining_production_specifications\":\"new_specification_required_for_expansion\",\"claim_boundary\":\"explicit\"}";
 }
 
 std::string reproducibility_check() {

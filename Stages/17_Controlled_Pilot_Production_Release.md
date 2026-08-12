@@ -3,7 +3,8 @@
 
 **Predecessor:** Stage 16 — Production Inference and Operations  
 **Successor:** New specification required for any expanded capability or external agency  
-**Status:** Specification; implementation not started  
+**Status:** Implemented; PASS — terminal bounded-release gate
+
 **Implementation:** Native C++ release controls plus approved infrastructure integrations
 
 ## Purpose
@@ -137,6 +138,12 @@ The stage must deliver the release manifest, shadow and pilot reports, SLO dashb
 Stage 17 passes only when the exact release scope is approved, shadow and pilot evidence is complete, quality and safety thresholds pass, SLOs are met, human oversight and rollback work, and all incidents are accounted for. The result authorizes only the named bounded production use case.
 
 There is no automatic Stage 18. Any future work involving broader autonomy, external tools, persistent identity, online learning, high-consequence domains, real-world embodiment, or autonomous research must begin with a new specification and threat model.
+
+## Implemented gate scope
+
+The native implementation provides immutable release-scope identity, model/tokenizer/adapter/index binding, sequential R0–R5 phase decisions, locked offline replay, shadow comparison without side effects, approved user and tenant allowlists, quotas and expiration, human review and escalation, structured feedback that cannot update weights, quality/safety/latency/availability/cost observations, incident containment and resume approval, deletion propagation to service state/cache/derived artifacts, drift detection and ownership, rollback rehearsal, named technical/security/product/governance approval signatures, terminal release evaluation, and bounded runbook/model-card artifacts.
+
+The terminal gate is wired into `ci-stage17` after all Stage 0–16 checks. Its release record authorizes only the named low-risk task and scope. External actions, unrestricted tools, online learning, high-consequence decisions, and automatic expansion remain denied. Any future expansion requires a new specification and threat model.
 
 ## Explicit limitations
 

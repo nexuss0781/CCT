@@ -30,6 +30,7 @@ add_library(cct_native STATIC
     src/preference.cpp
     src/knowledge.cpp
     src/inference.cpp
+    src/release.cpp
 )
 target_include_directories(cct_native PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(cct_native PUBLIC PkgConfig::FFTW3)
@@ -140,6 +141,12 @@ target_compile_options(cct_inference_tests PRIVATE -Wall -Wextra -Wpedantic -Wer
 add_executable(cct_stage16_gate tools/stage16_gate.cpp)
 target_link_libraries(cct_stage16_gate PRIVATE cct_native)
 target_compile_options(cct_stage16_gate PRIVATE -Wall -Wextra -Wpedantic -Werror)
+add_executable(cct_release_tests tests/release_tests.cpp)
+target_link_libraries(cct_release_tests PRIVATE cct_native)
+target_compile_options(cct_release_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+add_executable(cct_stage17_gate tools/stage17_gate.cpp)
+target_link_libraries(cct_stage17_gate PRIVATE cct_native)
+target_compile_options(cct_stage17_gate PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
 include(CTest)
 enable_testing()
@@ -192,3 +199,7 @@ add_test(NAME cct_inference_tests COMMAND cct_inference_tests)
 set_tests_properties(cct_inference_tests PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/..)
 add_test(NAME cct_stage16_gate COMMAND cct_stage16_gate --output ${CMAKE_SOURCE_DIR}/../artifacts/stage-16/cpp-gate)
 set_tests_properties(cct_stage16_gate PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/..)
+add_test(NAME cct_release_tests COMMAND cct_release_tests)
+set_tests_properties(cct_release_tests PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/..)
+add_test(NAME cct_stage17_gate COMMAND cct_stage17_gate --output ${CMAKE_SOURCE_DIR}/../artifacts/stage-17/cpp-gate)
+set_tests_properties(cct_stage17_gate PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/..)
