@@ -1,0 +1,8 @@
+# source_id split data_class license_or_consent source_uri path transformation sha256 training_allowed evaluation_allowed privacy_classification
+pg1342 train reference_text public_domain_us_declared https://www.gutenberg.org/cache/epub/1342/pg1342.txt data/stage-5/raw/pg1342.txt utf8-whitespace-v1+lowercase-v1 74f2665d6e6925fc2c17dec644bec9e87df478a0f1836822125e8acbb3777806 true true declared-public-source
+pg11 validation reference_text public_domain_us_declared https://www.gutenberg.org/cache/epub/11/pg11.txt data/stage-5/raw/pg11.txt utf8-whitespace-v1+lowercase-v1 01b38ea4c710a84bc18d0bd41271a5a1a92b94e97b2812f4dece97d4a694725e false true declared-public-source
+cct_production_cpp train code MIT https://github.com/nexuss0781/CCT/tree/2b60b8009917df4df2d558833e6860429474276b/cpp/src/production.cpp cpp/src/production.cpp utf8-whitespace-v1+lowercase-v1 local-hash-verified true true repository-MIT
+cct_corpus_cpp train code MIT local://repository-under-test/cpp/src/corpus.cpp cpp/src/corpus.cpp utf8-whitespace-v1+lowercase-v1 local-hash-verified true true repository-MIT
+stage9_evaluator_canary evaluator_only evaluator_only evaluator_only local://stage9-evaluator-canary evaluator-only heldout_literal local-generated false true evaluator-only
+# Rights note: public_domain_us_declared is a source declaration and does not replace jurisdiction-specific legal review.
+# Privacy note: automated PII detection is a quarantine control, not legal advice.

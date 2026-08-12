@@ -22,6 +22,7 @@ add_library(cct_native STATIC
     src/deliberation.cpp
     src/multimodal.cpp
     src/production.cpp
+    src/corpus.cpp
 )
 target_include_directories(cct_native PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(cct_native PUBLIC PkgConfig::FFTW3)
@@ -81,6 +82,12 @@ target_compile_options(cct_stage7_gate PRIVATE -Wall -Wextra -Wpedantic -Werror)
 add_executable(cct_production_tests tests/production_tests.cpp)
 target_link_libraries(cct_production_tests PRIVATE cct_native)
 target_compile_options(cct_production_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+add_executable(cct_corpus_tests tests/corpus_tests.cpp)
+target_link_libraries(cct_corpus_tests PRIVATE cct_native)
+target_compile_options(cct_corpus_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+add_executable(cct_stage9_gate tools/stage9_gate.cpp)
+target_link_libraries(cct_stage9_gate PRIVATE cct_native)
+target_compile_options(cct_stage9_gate PRIVATE -Wall -Wextra -Wpedantic -Werror)
 add_executable(cct_stage8_gate tools/stage8_gate.cpp)
 target_link_libraries(cct_stage8_gate PRIVATE cct_native)
 target_compile_options(cct_stage8_gate PRIVATE -Wall -Wextra -Wpedantic -Werror)
@@ -103,5 +110,9 @@ add_test(NAME cct_stage6_gate COMMAND cct_stage6_gate --output ${CMAKE_BINARY_DI
 add_test(NAME cct_multimodal_tests COMMAND cct_multimodal_tests)
 add_test(NAME cct_stage7_gate COMMAND cct_stage7_gate --output ${CMAKE_BINARY_DIR}/artifacts/stage-7/gate)
 add_test(NAME cct_production_tests COMMAND cct_production_tests)
+add_test(NAME cct_corpus_tests COMMAND cct_corpus_tests)
+set_tests_properties(cct_corpus_tests PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/..)
+add_test(NAME cct_stage9_gate COMMAND cct_stage9_gate --output ${CMAKE_SOURCE_DIR}/../artifacts/stage-9/cpp-gate)
+set_tests_properties(cct_stage9_gate PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/..)
 add_test(NAME cct_stage8_gate COMMAND cct_stage8_gate --output ${CMAKE_SOURCE_DIR}/../artifacts/stage-8/cpp-gate)
 set_tests_properties(cct_stage8_gate PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/..)
