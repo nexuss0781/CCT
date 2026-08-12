@@ -2,8 +2,9 @@
 ## Human Preferences, Refusal Quality, and Behavior Regression Control
 
 **Predecessor:** Stage 13 — Supervised Fine-Tuning and Adapters  
-**Successor:** Stage 15 — Verified Retrieval and Knowledge Plane  
-**Status:** Specification; implementation not started  
+**Successor:** Stage 15 — Verified Retrieval and Knowledge Plane
+**Status:** Implemented; PASS — Stage 15 requires explicit approval
+
 **Implementation:** Native C++20 preference-data and alignment pipeline
 
 ## Purpose
@@ -108,6 +109,12 @@ A `FAIL` requires method, data, rubric, or verifier remediation. A `BLOCKED` res
 ## Deliverables
 
 The stage must deliver preference/rubric schemas, rater protocol, preference dataset manifest, DPO-like and comparator trainers, verifier/reranker integration, adversarial suite, human-review report, alignment model card, native tests, gate executable, and CI command.
+
+## Implemented gate scope
+
+The native implementation provides a governed preference manifest with versioned rubrics, privacy-preserving reviewer classes, source/license lineage, tie and conflict retention, split isolation, evaluator-only barriers, and canonical replay. The selected optimization is a DPO-like pairwise objective against a recorded reference-model identity. A separate reward-model-plus-policy path remains explicitly unselected because it requires independent reward calibration and broader evidence. The implemented verifier covers unsafe-action refusal, citation/evidence adherence, structured-output shape, uncertainty and domain escalation, false-refusal detection, and adversarial reward/verifier-hacking fixtures. The reranker records verifier application, candidate diversity, selection, and latency. Blind-review artifacts require blind decisions, disagreement visibility, and domain-expert coverage for high-impact records.
+
+The Stage 14 native test executable and gate are wired into `ci-stage14`, which chains all prior Stage 0–13 checks before running the Stage 14 unit tests and 12-check formal gate. The release record keeps `training_authorized` false and `approval_required` true.
 
 ## Explicit limitations
 

@@ -27,6 +27,7 @@ add_library(cct_native STATIC
     src/nlp_trainer.cpp
     src/scaling_systems.cpp
     src/sft.cpp
+    src/preference.cpp
 )
 target_include_directories(cct_native PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(cct_native PUBLIC PkgConfig::FFTW3)
@@ -119,6 +120,12 @@ target_compile_options(cct_sft_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
 add_executable(cct_stage13_gate tools/stage13_gate.cpp)
 target_link_libraries(cct_stage13_gate PRIVATE cct_native)
 target_compile_options(cct_stage13_gate PRIVATE -Wall -Wextra -Wpedantic -Werror)
+add_executable(cct_preference_tests tests/preference_tests.cpp)
+target_link_libraries(cct_preference_tests PRIVATE cct_native)
+target_compile_options(cct_preference_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+add_executable(cct_stage14_gate tools/stage14_gate.cpp)
+target_link_libraries(cct_stage14_gate PRIVATE cct_native)
+target_compile_options(cct_stage14_gate PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
 include(CTest)
 enable_testing()
@@ -159,3 +166,7 @@ add_test(NAME cct_sft_tests COMMAND cct_sft_tests)
 set_tests_properties(cct_sft_tests PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/..)
 add_test(NAME cct_stage13_gate COMMAND cct_stage13_gate --output ${CMAKE_SOURCE_DIR}/../artifacts/stage-13/cpp-gate)
 set_tests_properties(cct_stage13_gate PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/..)
+add_test(NAME cct_preference_tests COMMAND cct_preference_tests)
+set_tests_properties(cct_preference_tests PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/..)
+add_test(NAME cct_stage14_gate COMMAND cct_stage14_gate --output ${CMAKE_SOURCE_DIR}/../artifacts/stage-14/cpp-gate)
+set_tests_properties(cct_stage14_gate PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/..)
