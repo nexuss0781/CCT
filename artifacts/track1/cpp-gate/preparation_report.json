@@ -1,0 +1,1 @@
+{"passed":true,"source_pages":5,"source_rows":24,"pretrain_rows":9,"pretrain_tokens":20,"sft_rows":4,"sft_train_rows":2,"sft_evaluation_rows":2,"final_test_rows":4,"duplicate_ids":0,"overlap_ids":0,"malformed_rows":0,"unanswerable_rows":4,"manifest_path":"artifacts/track1/cpp-gate/fixture/manifest.json","report_path":"artifacts/track1/cpp-gate/fixture/preparation_report.json"}

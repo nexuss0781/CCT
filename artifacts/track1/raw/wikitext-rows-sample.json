@@ -1,0 +1,1 @@
+{"features":[{"feature_idx":0,"name":"text","type":{"dtype":"string","_type":"Value"}}],"rows":[{"row_idx":0,"row":{"text":""},"truncated_cells":[]},{"row_idx":1,"row":{"text":" = Valkyria Chronicles III = \n"},"truncated_cells":[]},{"row_idx":2,"row":{"text":""},"truncated_cells":[]}],"num_rows_total":36718,"num_rows_per_page":100,"partial":false}
