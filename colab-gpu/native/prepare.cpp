@@ -20,7 +20,8 @@ struct Writer {
     std::ofstream stream;
     std::uint64_t count = 0;
     std::uint64_t bytes = 0;
-    explicit Writer(const std::string& path) : stream(path, std::ios::binary) {
+    std::uint64_t token_limit = 0;
+    explicit Writer(const std::string& path, const std::uint64_t limit) : stream(path, std::ios::binary), token_limit(limit) {
         if (!stream) throw std::runtime_error("cannot open output " + path);
         stream.write(reinterpret_cast<const char*>(&kMagic), sizeof(kMagic));
         stream.write(reinterpret_cast<const char*>(&count), sizeof(count));
@@ -31,10 +32,13 @@ struct Writer {
         ++count;
         bytes += sizeof(value);
     }
-    void bytes_text(const std::string& text) {
+    bool bytes_text(const std::string& text) {
+        const auto required = static_cast<std::uint64_t>(text.size()) + 2U;
+        if (token_limit != 0U && count + required > token_limit) return false;
         token(kBoundary);
         for (const unsigned char byte : text) token(kByteFirst + byte);
         token(kBoundary);
+        return true;
     }
     void close() {
         stream.seekp(static_cast<std::streamoff>(sizeof(kMagic)), std::ios::beg);
@@ -134,14 +138,16 @@ void write_manifest(const std::string& path, const std::string& source, const st
            << "  \"test\":{\"path\":\"" << test_path << "\",\"tokens\":" << test.count << "}\n}\n";
 }
 
-int prepare_wiki(const std::string& prefix) {
-    Writer train(prefix + ".train.bin");
-    Writer valid(prefix + ".validation.bin");
-    Writer test(prefix + ".test.bin");
+int prepare_wiki(const std::string& prefix, const std::uint64_t max_train, const std::uint64_t max_valid,
+                 const std::uint64_t max_test) {
+    Writer train(prefix + ".train.bin", max_train);
+    Writer valid(prefix + ".validation.bin", max_valid);
+    Writer test(prefix + ".test.bin", max_test);
     std::string line;
     std::string article;
     bool inside_text = false;
     std::uint64_t documents = 0;
+    std::uint64_t candidates = 0;
     std::uint64_t max_documents = std::numeric_limits<std::uint64_t>::max();
     while (std::getline(std::cin, line)) {
         const auto open = line.find("<text");
@@ -159,14 +165,18 @@ int prepare_wiki(const std::string& prefix) {
             if (close != std::string::npos) {
                 const auto text = strip_xml(article.substr(0, close));
                 if (text.size() >= 128U && !text.empty()) {
-                    const auto bucket = fnv1a(std::to_string(documents)) % 100U;
-                    if (bucket < 90U) train.bytes_text(text);
-                    else if (bucket < 95U) valid.bytes_text(text);
-                    else test.bytes_text(text);
-                    ++documents;
+                    const auto bucket = fnv1a(std::to_string(candidates)) % 100U;
+                    ++candidates;
+                    bool accepted = false;
+                    if (bucket < 90U) accepted = train.bytes_text(text);
+                    else if (bucket < 95U) accepted = valid.bytes_text(text);
+                    else accepted = test.bytes_text(text);
+                    if (accepted) ++documents;
                 }
                 inside_text = false;
                 if (documents >= max_documents) break;
+                if (max_train != 0U && max_valid != 0U && max_test != 0U &&
+                    train.count >= max_train && valid.count >= max_valid && test.count >= max_test) break;
             }
         }
     }
@@ -176,10 +186,11 @@ int prepare_wiki(const std::string& prefix) {
     return 0;
 }
 
-int prepare_oasst(const std::string& prefix) {
-    Writer train(prefix + ".train.bin");
-    Writer valid(prefix + ".validation.bin");
-    Writer test(prefix + ".test.bin");
+int prepare_oasst(const std::string& prefix, const std::uint64_t max_train, const std::uint64_t max_valid,
+                  const std::uint64_t max_test) {
+    Writer train(prefix + ".train.bin", max_train);
+    Writer valid(prefix + ".validation.bin", max_valid);
+    Writer test(prefix + ".test.bin", max_test);
     std::string line;
     std::uint64_t documents = 0;
     while (std::getline(std::cin, line)) {
@@ -190,10 +201,13 @@ int prepare_oasst(const std::string& prefix) {
         const auto message_id = json_string(line, "message_id");
         const auto bucket = fnv1a(message_id.empty() ? std::to_string(documents) : message_id) % 100U;
         const auto formatted = std::string("<assistant> ") + text;
-        if (bucket < 80U) train.bytes_text(formatted);
-        else if (bucket < 90U) valid.bytes_text(formatted);
-        else test.bytes_text(formatted);
-        ++documents;
+        bool accepted = false;
+        if (bucket < 80U) accepted = train.bytes_text(formatted);
+        else if (bucket < 90U) accepted = valid.bytes_text(formatted);
+        else accepted = test.bytes_text(formatted);
+        if (accepted) ++documents;
+        if (max_train != 0U && max_valid != 0U && max_test != 0U &&
+            train.count >= max_train && valid.count >= max_valid && test.count >= max_test) break;
     }
     train.close(); valid.close(); test.close();
     write_manifest(prefix + ".manifest.json", "OpenAssistant OASST1 pinned ready messages JSONL", prefix + ".train.bin", prefix + ".validation.bin", prefix + ".test.bin", train, valid, test, documents);
@@ -205,9 +219,17 @@ int prepare_oasst(const std::string& prefix) {
 
 int main(int argc, char** argv) {
     try {
-        if (argc != 3) throw std::runtime_error("usage: prepare <wiki|oasst> <output-prefix>");
-        if (std::string(argv[1]) == "wiki") return prepare_wiki(argv[2]);
-        if (std::string(argv[1]) == "oasst") return prepare_oasst(argv[2]);
+        if (argc != 3 && argc != 6) throw std::runtime_error("usage: prepare <wiki|oasst> <output-prefix> [max-train max-validation max-test]");
+        std::uint64_t max_train = 0U;
+        std::uint64_t max_valid = 0U;
+        std::uint64_t max_test = 0U;
+        if (argc == 6) {
+            max_train = std::stoull(argv[3]);
+            max_valid = std::stoull(argv[4]);
+            max_test = std::stoull(argv[5]);
+        }
+        if (std::string(argv[1]) == "wiki") return prepare_wiki(argv[2], max_train, max_valid, max_test);
+        if (std::string(argv[1]) == "oasst") return prepare_oasst(argv[2], max_train, max_valid, max_test);
         throw std::runtime_error("unknown preparation mode");
     } catch (const std::exception& error) {
         std::cerr << "prepare error: " << error.what() << '\n';

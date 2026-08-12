@@ -58,7 +58,7 @@ For the first end-to-end GPU check, use the bounded one-pass profile:
 SMOKE=1 bash run.sh
 ```
 
-`SMOKE=1` caps each split and computes the optimizer-step count from the generated training-stream token count so the pretraining and SFT stages each make one pass over their prepared training split. It is a pipeline smoke test, not a quality evaluation.
+`SMOKE=1` caps each split **during native preparation**, removes any earlier uncapped token streams, and computes the optimizer-step count from the regenerated capped manifest. The pretraining and SFT stages each then make one pass over their bounded prepared training split. It is a pipeline smoke test, not a quality evaluation.
 
 ## Output artifacts
 
