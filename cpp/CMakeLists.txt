@@ -21,6 +21,7 @@ add_library(cct_native STATIC
     src/scaling.cpp
     src/deliberation.cpp
     src/multimodal.cpp
+    src/production.cpp
 )
 target_include_directories(cct_native PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(cct_native PUBLIC PkgConfig::FFTW3)
@@ -77,6 +78,12 @@ target_compile_options(cct_multimodal_tests PRIVATE -Wall -Wextra -Wpedantic -We
 add_executable(cct_stage7_gate tools/stage7_gate.cpp)
 target_link_libraries(cct_stage7_gate PRIVATE cct_native)
 target_compile_options(cct_stage7_gate PRIVATE -Wall -Wextra -Wpedantic -Werror)
+add_executable(cct_production_tests tests/production_tests.cpp)
+target_link_libraries(cct_production_tests PRIVATE cct_native)
+target_compile_options(cct_production_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+add_executable(cct_stage8_gate tools/stage8_gate.cpp)
+target_link_libraries(cct_stage8_gate PRIVATE cct_native)
+target_compile_options(cct_stage8_gate PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
 include(CTest)
 enable_testing()
@@ -95,3 +102,6 @@ add_test(NAME cct_deliberation_tests COMMAND cct_deliberation_tests)
 add_test(NAME cct_stage6_gate COMMAND cct_stage6_gate --output ${CMAKE_BINARY_DIR}/artifacts/stage-6/gate)
 add_test(NAME cct_multimodal_tests COMMAND cct_multimodal_tests)
 add_test(NAME cct_stage7_gate COMMAND cct_stage7_gate --output ${CMAKE_BINARY_DIR}/artifacts/stage-7/gate)
+add_test(NAME cct_production_tests COMMAND cct_production_tests)
+add_test(NAME cct_stage8_gate COMMAND cct_stage8_gate --output ${CMAKE_SOURCE_DIR}/../artifacts/stage-8/cpp-gate)
+set_tests_properties(cct_stage8_gate PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/..)

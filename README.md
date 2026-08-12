@@ -20,7 +20,7 @@ The implementation is deliberately split into clear reference paths and optimize
 | Stage 5 — Language and code scaling | **PASS** | `cct_scaling_tests`, `cct_stage5_gate`, `Stages/05_Language_Code_Scaling.md` |
 | Stage 6 — Deliberation and verification | **PASS** | `cct_deliberation_tests`, `cct_stage6_gate`, `Stages/06_Deliberation_Verification.md` |
 | Stage 7 — Multimodal and controlled research | **PASS** | `cct_multimodal_tests`, `cct_stage7_gate`, `Stages/07_Multimodal_Open_Ended.md` |
-| Stage 8 — Production NLP foundation | **SPECIFICATION** | `Stages/08_Production_NLP_Roadmap.md` |
+| Stage 8 — Production NLP foundation and governance | **PASS — foundation only** | `cct_production_tests`, `cct_stage8_gate`, `Stages/08_Production_NLP_Roadmap.md` |
 | Stage 9 — Governed data and corpus | **SPECIFICATION** | `Stages/09_Governed_Data_Corpus.md` |
 | Stage 10 — Tokenizer and representation | **SPECIFICATION** | `Stages/10_Tokenizer_Representation.md` |
 | Stage 11 — Trainable native NLP core | **SPECIFICATION** | `Stages/11_Trainable_Native_NLP_Core.md` |
@@ -188,7 +188,7 @@ The strengthened Stage 2 gate requires **12 mandatory checks** plus limitation-c
 
 ## Research limitations
 
-The current implementation validates a numerical operator substrate, a deterministic real/complex selective recurrent core, a native causal-event learner, a local persistent verifiable memory subsystem, a small native language/code scaling benchmark, a bounded deliberation/verification harness, and a controlled multimodal event/simulation harness on declared offline fixtures. Stages 8–17 are **specifications only**: they define the production NLP implementation and release path but are not evidence that those production capabilities have been built. Stage 7 supports seven typed modalities, explicit provenance, temporal/spatial alignment, mask-aware fusion, typed cross-modal retrieval, deterministic grid replay, transfer metadata, and audit/safety records. The project does not yet validate broad language competence, general multimodal understanding, open-ended reasoning, unrestricted code generation, real-world perception or robotics, repository-level engineering, distributed scaling, autonomous agency, external deployment, or superintelligence. Further work requires explicit production-stage approval and new evidence at every gate.
+The current implementation validates a numerical operator substrate, a deterministic real/complex selective recurrent core, a native causal-event learner, a local persistent verifiable memory subsystem, a small native language/code scaling benchmark, a bounded deliberation/verification harness, a controlled multimodal event/simulation harness, and a Stage 8 production-governance foundation on declared offline fixtures. Stages 9–17 are **specifications only**: they define the remaining production NLP implementation and release path but are not evidence that those capabilities have been built. Stage 8 does not implement a production language model, trainer, tokenizer, serving system, or deployment. The project does not yet validate broad language competence, general multimodal understanding, open-ended reasoning, unrestricted code generation, real-world perception or robotics, repository-level engineering, distributed scaling, autonomous agency, external deployment, or superintelligence. Further work requires explicit production-stage approval and new evidence at every gate.
 
 ## License
 
