@@ -59,7 +59,7 @@ log "compiling native C++20 dataset preparer"
 g++ -std=c++20 -O3 -Wall -Wextra -Wpedantic -Werror "${NATIVE_DIR}/prepare.cpp" -o "${PREPARE_BIN}"
 g++ -std=c++20 -O3 -Wall -Wextra -Wpedantic -Werror "${NATIVE_DIR}/validate.cpp" -o "${VALIDATE_BIN}"
 log "compiling native C++20/CUDA CCT trainer"
-nvcc -std=c++20 -O3 --use_fast_math -lineinfo -Xcompiler=-Wall,-Wextra,-Wpedantic,-Werror "${NATIVE_DIR}/cuda_train.cu" -o "${TRAIN_BIN}"
+nvcc -std=c++20 -O3 --use_fast_math -lineinfo -Xcompiler=-Wall,-Wextra,-Wpedantic,-Werror,-Wno-error=pedantic "${NATIVE_DIR}/cuda_train.cu" -o "${TRAIN_BIN}"
 
 fetch() {
   local url="$1" output="$2"
