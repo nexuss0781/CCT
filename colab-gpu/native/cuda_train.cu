@@ -444,6 +444,7 @@ Arguments parse(int argc, char** argv) {
         else if (key == "--context") arguments.config.context = std::stoi(value());
         else if (key == "--hidden") arguments.config.hidden = std::stoi(value());
         else if (key == "--embedding") arguments.config.embedding = std::stoi(value());
+        else if (key == "--checkpoint-every") arguments.config.checkpoint_every = std::stoi(value());
         else if (key == "--seed") arguments.config.seed = std::stoull(value());
         else if (key == "--max-train-tokens") arguments.max_train_tokens = std::stoull(value());
         else if (key == "--max-validation-tokens") arguments.max_validation_tokens = std::stoull(value());
@@ -452,7 +453,8 @@ Arguments parse(int argc, char** argv) {
     }
     require(!arguments.train.empty() && !arguments.validation.empty() && !arguments.test.empty(), "train, validation, and test paths are required");
     require(arguments.config.context > 0 && arguments.config.context <= kMaxContext && arguments.config.embedding > 0 && arguments.config.embedding <= kMaxEmbedding &&
-                arguments.config.hidden > 0 && arguments.config.hidden <= kMaxHidden && arguments.config.batch > 0 && arguments.config.steps > 0,
+                arguments.config.hidden > 0 && arguments.config.hidden <= kMaxHidden && arguments.config.batch > 0 && arguments.config.steps > 0 &&
+                arguments.config.checkpoint_every > 0,
             "invalid CUDA CCT configuration");
     return arguments;
 }
