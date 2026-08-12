@@ -23,6 +23,7 @@ add_library(cct_native STATIC
     src/multimodal.cpp
     src/production.cpp
     src/corpus.cpp
+    src/tokenizer.cpp
 )
 target_include_directories(cct_native PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(cct_native PUBLIC PkgConfig::FFTW3)
@@ -91,6 +92,12 @@ target_compile_options(cct_stage9_gate PRIVATE -Wall -Wextra -Wpedantic -Werror)
 add_executable(cct_stage8_gate tools/stage8_gate.cpp)
 target_link_libraries(cct_stage8_gate PRIVATE cct_native)
 target_compile_options(cct_stage8_gate PRIVATE -Wall -Wextra -Wpedantic -Werror)
+add_executable(cct_tokenizer_tests tests/tokenizer_tests.cpp)
+target_link_libraries(cct_tokenizer_tests PRIVATE cct_native)
+target_compile_options(cct_tokenizer_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+add_executable(cct_stage10_gate tools/stage10_gate.cpp)
+target_link_libraries(cct_stage10_gate PRIVATE cct_native)
+target_compile_options(cct_stage10_gate PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
 include(CTest)
 enable_testing()
@@ -116,3 +123,6 @@ add_test(NAME cct_stage9_gate COMMAND cct_stage9_gate --output ${CMAKE_SOURCE_DI
 set_tests_properties(cct_stage9_gate PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/..)
 add_test(NAME cct_stage8_gate COMMAND cct_stage8_gate --output ${CMAKE_SOURCE_DIR}/../artifacts/stage-8/cpp-gate)
 set_tests_properties(cct_stage8_gate PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/..)
+add_test(NAME cct_tokenizer_tests COMMAND cct_tokenizer_tests)
+add_test(NAME cct_stage10_gate COMMAND cct_stage10_gate --output ${CMAKE_SOURCE_DIR}/../artifacts/stage-10/cpp-gate)
+set_tests_properties(cct_stage10_gate PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/..)
