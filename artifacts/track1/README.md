@@ -42,6 +42,39 @@ cmake --build build-cpp --parallel 2
 
 The completed output contains `manifest.json`, `preparation_report.json`, `evaluation_contract.json`, `data/pretrain_{train,validation,test}.txt`, `data/squad_sft_train.jsonl`, `data/squad_sft_evaluation.jsonl`, and `data/squad_final_test.jsonl`.
 
+## Native CCT training handoff
+
+After preparation, train the native CCT next-token model directly from the Track 1 artifacts:
+
+```bash
+make track1-train
+```
+
+The command creates `artifacts/track1/training/pretrain_checkpoint.bin`, `artifacts/track1/training/sft_checkpoint.bin`, and `artifacts/track1/training/training_report.json`. Pretraining uses WikiText-2 train data and selection validation data. SQuAD fine-tuning is formatted by the native Stage 13 formatter and applies the `target-span-only-v1` loss mask, so prompt/context tokens do not contribute to SFT loss. The frozen SQuAD final-test set is scored once only after SFT and is never used for updates or checkpoint selection.
+
+The default command runs a bounded first-pass configuration with 200 pretraining steps and 120 SFT steps. It reports held-out next-token cross-entropy, perplexity, and token accuracy. It does **not** claim generative SQuAD exact-match or F1, because this runner does not yet include constrained answer decoding.
+
+| Environment variable | Default | Purpose |
+|---|---:|---|
+| `TRACK1_PRETRAIN_STEPS` | 200 | WikiText-2 optimizer updates. |
+| `TRACK1_SFT_STEPS` | 120 | Answer-target-only SQuAD optimizer updates. |
+| `TRACK1_CONTEXT` | 32 | Native CCT token context length. |
+| `TRACK1_EMBEDDING` / `TRACK1_HIDDEN` | 4 / 4 | Compact first-pass CCT dimensions. |
+| `TRACK1_SFT_CONTEXT_BYTES` | 1024 | Maximum context bytes retained per SQuAD prompt. |
+| `TRACK1_SEED` | 1701 | Reproducibility seed. |
+
+For a short complete-corpus check before the first-pass run:
+
+```bash
+make track1-train \
+  TRACK1_PRETRAIN_STEPS=2 \
+  TRACK1_SFT_STEPS=2 \
+  TRACK1_CONTEXT=16 \
+  TRACK1_EMBEDDING=2 \
+  TRACK1_HIDDEN=2 \
+  TRACK1_SFT_CONTEXT_BYTES=256
+```
+
 ## Bounded smoke preparation
 
 This command is suitable for a quick, real-network exercise of the normal production acquisition path. It uses the same source revisions, manifest logic, answer-offset verifier, stable selection seed, and final-test isolation policy, but lower data budgets.
@@ -61,13 +94,15 @@ The `--fixture` switch only permits the intentionally small SFT counts. It does 
 
 ## Colab or local execution
 
-Clone the repository, change to its root, then run the same build and preparation commands above. CUDA is not required for this preparation stage; the generated data artifacts can be consumed by either native CPU or CUDA training paths after their input adapter is selected. Do not use the frozen SQuAD final-test stream for checkpoint selection or parameter updates.
+Clone the repository, change to its root, then run the build, preparation, and `make track1-train` commands above. The Track 1 runner is a native C++20 CCT-library execution path and does not require CUDA. Do not use the frozen SQuAD final-test stream for checkpoint selection or parameter updates.
 
 ## Evidence from complete direct-file preparation
 
 A complete production preparation exercised all three direct source routes: one WikiText Zip archive and two GEM SQuAD JSON files. It completed with `passed:true`, `source_pages:5`, `source_rows:173106`, `pretrain_tokens:2000000`, `sft_train_rows:7200`, `sft_evaluation_rows:800`, `final_test_rows:11873`, `overlap_ids:0`, `malformed_rows:0`, and 38,817 observed unanswerable training rows. The resulting manifest, report, and evaluation contract are tracked in `artifacts/track1/real-full-preparation/`.
 
-> The completed preparation validates native acquisition parsing and data-governance controls. It does not substitute for a completed model-training and evaluation run.
+A complete-corpus bounded-steps training verification then completed with `status:PASS`: it consumed the full prepared WikiText corpus, all 7,200 SFT examples, 64 held-out SFT-selection examples, and all 11,873 frozen final-test examples. It used target-span-only SQuAD loss masks and reported finite held-out metrics; the report is tracked at `artifacts/track1/real-training/training_report.json`.
+
+> The completed preparation and bounded-steps native training run validate the acquisition, data-governance, optimization, checkpoint, and held-out next-token evaluation paths. They do not establish generative SQuAD exact-match or F1, broad language competence, or production readiness.
 
 ## References
 
