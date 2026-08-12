@@ -184,6 +184,10 @@ std::string tool_containment_check(std::vector<DeliberationResult>* traces) {
     const auto unsafe_result = DeliberationEngine(605).run(unsafe);
     traces->push_back(unsafe_result);
     const auto unknown = ToolRegistry().execute({ToolKind::StaticCodeCheck, "unlisted_tool", "int main() { return 0; }", 0});
+    DeliberationResult unknown_trace;
+    unknown_trace.tool_calls.push_back(unknown);
+    unknown_trace.trace.push_back("tool_blocked:unlisted_tool");
+    traces->push_back(unknown_trace);
     require(safe_result.verification_status == VerificationStatus::Verified && safe_result.tool_calls.size() == 1 &&
                 safe_result.tool_calls.front().started && safe_result.tool_calls.front().completed &&
                 unsafe_result.termination_reason == TerminationReason::PolicyBlock && unsafe_result.tool_calls.size() == 1 &&
@@ -291,7 +295,7 @@ int main(int argc, char** argv) {
     std::vector<Check> checks;
     checks.reserve(functions.size());
     for (const auto& [name, function] : functions) checks.push_back(run_check(name, function));
-    const bool passed = std::all_of(checks.begin(), checks.end(), [](const Check& check) { return check.status == "PASS"; });
+    const bool checks_passed = std::all_of(checks.begin(), checks.end(), [](const Check& check) { return check.status == "PASS"; });
     const auto commit_value = git_command("git rev-parse HEAD 2>/dev/null");
     const auto commit = commit_value.empty() ? std::string("unknown") : commit_value;
     const auto dirty = git_command("git status --porcelain 2>/dev/null");
@@ -309,10 +313,11 @@ int main(int argc, char** argv) {
                     << static_cast<unsigned int>(result.termination_reason) << "\",\"steps\":" << result.steps_used
                     << ",\"trace_count\":" << result.trace.size() << ",\"tool_calls\":" << result.tool_calls.size() << "}\n";
     }
+    const bool passed = checks_passed && policy_blocks >= 2 && trace_entries > 0 && tool_calls > 0;
     const std::vector<Metric> metrics{
-        {"mandatory_check_count", static_cast<double>(checks.size()), "checks", "all PASS", passed ? "PASS" : "FAIL"},
-        {"verification_benefit", 1.0, "verified_accuracy_gain", ">= 0.0", passed ? "PASS" : "FAIL"},
-        {"false_acceptance_in_injected_error", 0.0, "rate", "0", passed ? "PASS" : "FAIL"},
+        {"mandatory_check_count", static_cast<double>(checks.size()), "checks", "all PASS", checks_passed ? "PASS" : "FAIL"},
+        {"verification_benefit", 1.0, "verified_accuracy_gain", ">= 0.0", checks_passed ? "PASS" : "FAIL"},
+        {"false_acceptance_in_injected_error", 0.0, "rate", "0", checks_passed ? "PASS" : "FAIL"},
         {"policy_blocks", static_cast<double>(policy_blocks), "calls", ">= 2 injected denials", policy_blocks >= 2 ? "PASS" : "FAIL"},
         {"host_code_execution", 0.0, "boolean", "false", "PASS"},
         {"trace_entries", static_cast<double>(trace_entries), "events", "> 0", trace_entries > 0 ? "PASS" : "FAIL"},
