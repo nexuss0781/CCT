@@ -3,7 +3,8 @@
 
 **Predecessor:** Stage 14 — Preference Tuning and Alignment  
 **Successor:** Stage 16 — Production Inference and Operations  
-**Status:** Specification; implementation not started  
+**Status:** Implemented; PASS — Stage 16 requires explicit approval
+
 **Implementation:** Native C++20 retrieval, memory, verification, and gate integration
 
 ## Purpose
@@ -116,6 +117,12 @@ A `FAIL` requires retrieval, access, verification, or deletion remediation. A `B
 ## Deliverables
 
 The stage must deliver knowledge-record schema, ingestion/index adapters, lexical/vector/hybrid retrieval, access-control integration, citation and validity system, conflict/deletion handling, answer verifier, poisoning suite, human-grounding report, native tests, gate executable, and CI command.
+
+## Implemented gate scope
+
+The native implementation provides a Stage 9-governed ingestion adapter, typed knowledge records, deterministic lexical/vector/hybrid retrieval, tenant and role access filters, document-version supersession, validity intervals, stale evidence opt-in, citation spans with content hashes, conflict visibility, immediate logical deletion with snapshot/restart replay, index and embedding version checks, poisoning and instruction-evidence separation, grounded-answer verification, audit traces, latency and memory measurements, and blind grounded-answer review with expert escalation.
+
+The Stage 15 unit executable and gate are wired into `ci-stage15`, which chains all prior Stage 0–14 checks before running the Stage 15 tests and 14-check formal gate. The release record keeps `training_authorized` false and `approval_required` true.
 
 ## Explicit limitations
 
