@@ -1,8 +1,8 @@
 # CCT-ASE Native C++ Research Prototype
 
-The **Chrono-Causal Tapestry — Adaptive Spectral Engine (CCT-ASE)** is a research prototype for testing causal event fields and efficient spectral dynamics. The repository currently provides a reproducible **native C++20 numerical, sequence, causal-event, persistent-memory, small-scale language/code, and bounded deliberation substrate**; it does not claim to be a general language model or superintelligence system. The implemented Stage 0 through Stage 6 gates establish reproducibility, numerical correctness, recurrent trainability, efficiency measurement, leakage-controlled graph conditioning, intervention prediction, counterfactual evaluation, persistent checksummed memory, exact retrieval, provenance, deletion, conflict handling, poisoning resistance, checkpoint replay, bounded token learning, code-safety checks, independent verification, evidence abstention, deny-by-default offline tools, interruption/replay, and trace logging on declared fixtures.
+The **Chrono-Causal Tapestry — Adaptive Spectral Engine (CCT-ASE)** is a research prototype for testing causal event fields and efficient spectral dynamics. The repository currently provides a reproducible **native C++20 numerical, sequence, causal-event, persistent-memory, small-scale language/code, bounded deliberation, and controlled multimodal substrate**; it does not claim to be a general language model or superintelligence system. The implemented Stage 0 through Stage 7 gates establish reproducibility, numerical correctness, recurrent trainability, efficiency measurement, leakage-controlled graph conditioning, intervention prediction, counterfactual evaluation, persistent checksummed memory, exact retrieval, provenance, deletion, conflict handling, poisoning resistance, checkpoint replay, bounded token learning, code-safety checks, independent verification, evidence abstention, deny-by-default offline tools, interruption/replay, typed multimodal events, temporal/spatial alignment, modality masking, cross-modal memory, deterministic simulation, transfer controls, and audit logging on declared fixtures.
 
-> **Current status:** Stages 0 through 6 are implemented in native C++ and pass their mandatory gates. Stage 7 has not been implemented and requires explicit approval.
+> **Current status:** Stages 0 through 7 are implemented in native C++ and pass their mandatory gates. The roadmap now requires research review before any further continuation or external integration.
 
 ## Implemented scope
 
@@ -19,7 +19,7 @@ The implementation is deliberately split into clear reference paths and optimize
 | Stage 4 — Persistent verifiable memory | **PASS** | `cct_memory_tests`, `cct_stage4_gate`, `Stages/04_Persistent_Verifiable_Memory.md` |
 | Stage 5 — Language and code scaling | **PASS** | `cct_scaling_tests`, `cct_stage5_gate`, `Stages/05_Language_Code_Scaling.md` |
 | Stage 6 — Deliberation and verification | **PASS** | `cct_deliberation_tests`, `cct_stage6_gate`, `Stages/06_Deliberation_Verification.md` |
-| Stage 7 | Specification only | Stage 7 requires explicit approval |
+| Stage 7 — Multimodal and controlled research | **PASS** | `cct_multimodal_tests`, `cct_stage7_gate`, `Stages/07_Multimodal_Open_Ended.md` |
 
 ## Requirements
 
@@ -52,10 +52,12 @@ make stage5-test
 make stage5-gate
 make stage6-test
 make stage6-gate
-make ci-stage6
+make stage7-test
+make stage7-gate
+make ci-stage7
 ```
 
-`make native-build` configures and compiles the C++ library and executables under `build-cpp/`. `make native-test` runs the CTest suite. The gate commands create machine-readable artifacts under `artifacts/stage-0/cpp-gate/`, `artifacts/stage-1/cpp-gate/`, `artifacts/stage-2/cpp-gate/`, `artifacts/stage-3/cpp-gate/`, and `artifacts/stage-4/cpp-gate/`. `make ci-stage4` executes the complete native Stage 4 pipeline, including all prior gates, and returns a nonzero status if any mandatory check fails. `make ci-stage5` extends this to the manifest-audited language/code scaling suite and Stage 5 gate. `make ci-stage6` adds the bounded deliberation, independent-verifier, offline policy, replay, interruption, and incident harness.
+`make native-build` configures and compiles the C++ library and executables under `build-cpp/`. `make native-test` runs the CTest suite. The gate commands create machine-readable artifacts under `artifacts/stage-0/cpp-gate/`, `artifacts/stage-1/cpp-gate/`, `artifacts/stage-2/cpp-gate/`, `artifacts/stage-3/cpp-gate/`, and `artifacts/stage-4/cpp-gate/`. `make ci-stage4` executes the complete native Stage 4 pipeline, including all prior gates, and returns a nonzero status if any mandatory check fails. `make ci-stage5` extends this to the manifest-audited language/code scaling suite and Stage 5 gate. `make ci-stage6` adds the bounded deliberation, independent-verifier, offline policy, replay, interruption, and incident harness. `make ci-stage7` adds the terminal multimodal event, alignment, fusion, typed-memory, simulation, transfer, audit, and safety harness.
 
 A clean build can also be invoked directly:
 
@@ -151,6 +153,11 @@ The strengthened Stage 2 gate requires **12 mandatory checks** plus limitation-c
 | `cpp/tests/deliberation_tests.cpp` | Stage 6 deliberation and safety regression suite |
 | `cpp/tools/stage6_gate.cpp` | Stage 6 artifact-producing gate |
 | `Stages/06_Expanded_Gate_Contract.md` | Stage 6 thresholds, controls, and artifact contract |
+| `cpp/include/cct/multimodal.hpp` | Stage 7 typed multimodal events, adapters, alignment, fusion, environment, transfer, and audit API |
+| `cpp/src/multimodal.cpp` | Native multimodal event store, adapters, alignment, fusion, deterministic environment, and audit implementation |
+| `cpp/tests/multimodal_tests.cpp` | Stage 7 multimodal and controlled-environment regression suite |
+| `cpp/tools/stage7_gate.cpp` | Stage 7 terminal artifact-producing gate |
+| `Stages/07_Expanded_Gate_Contract.md` | Stage 7 thresholds, controls, and terminal artifact contract |
 | `cpp/tools/stage0_gate.cpp` | Stage 0 artifact-producing gate |
 | `cpp/tools/stage1_gate.cpp` | Stage 1 artifact-producing gate |
 | `cpp/tools/stage2_gate.cpp` | Stage 2 artifact-producing gate |
@@ -161,7 +168,7 @@ The strengthened Stage 2 gate requires **12 mandatory checks** plus limitation-c
 
 ## Research limitations
 
-The current implementation validates a numerical operator substrate, a deterministic real/complex selective recurrent core, a native causal-event learner, a local persistent verifiable memory subsystem, a small native language/code scaling benchmark, and a bounded deliberation/verification harness on controlled synthetic and provenance-tracked fixtures. Stage 6 is offline-only and statically checks code rather than executing it. It does not validate broad language competence, open-ended reasoning, unrestricted code generation, real-world repository engineering, distributed scaling, general causal discovery, autonomous agency, or superintelligence. Those claims require larger real-data studies, stronger baselines, independent safety review, and later approved stages.
+The current implementation validates a numerical operator substrate, a deterministic real/complex selective recurrent core, a native causal-event learner, a local persistent verifiable memory subsystem, a small native language/code scaling benchmark, a bounded deliberation/verification harness, and a controlled multimodal event/simulation harness on declared offline fixtures. Stage 7 supports seven typed modalities, explicit provenance, temporal/spatial alignment, mask-aware fusion, typed cross-modal retrieval, deterministic grid replay, transfer metadata, and audit/safety records. It does not validate broad language competence, general multimodal understanding, open-ended reasoning, unrestricted code generation, real-world perception or robotics, repository-level engineering, distributed scaling, autonomous agency, external deployment, or superintelligence. Further work requires research review and a new specification for any external integration or broader autonomy.
 
 ## License
 

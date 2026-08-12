@@ -13,7 +13,7 @@ This directory contains the independent implementation and evaluation specificat
 | 4 | [Persistent Verifiable Memory](04_Persistent_Verifiable_Memory.md) and [Expanded Gate Contract](04_Expanded_Gate_Contract.md) | Native checksummed log, exact retrieval, provenance/citations, deletion, conflicts, retention, poisoning boundary, and recovery | Stage 4 gate in progress; Stage 5 requires explicit approval |
 | 5 | [Language and Code Scaling](05_Language_Code_Scaling.md) and [Expanded Gate Contract](05_Expanded_Gate_Contract.md) | Native small-scale language/code micro-run, matched baselines, provenance, checkpoint replay, memory attribution, long-context, and code-safety checks | Stage 5 gate in progress; Stage 6 requires explicit approval |
 | 6 | [Deliberation and Verification](06_Deliberation_Verification.md) and [Expanded Gate Contract](06_Expanded_Gate_Contract.md) | Native bounded planning, independent verifiers, evidence abstention, deny-by-default offline tools, replay, interruption, and incident logging | Stage 6 gate in progress; Stage 7 requires explicit approval |
-| 7 | [Multimodal and Open-Ended Research](07_Multimodal_Open_Ended.md) | Controlled cross-modal transfer and research continuation decision | Requires research review |
+| 7 | [Multimodal and Open-Ended Research](07_Multimodal_Open_Ended.md) and [Expanded Gate Contract](07_Expanded_Gate_Contract.md) | Native typed multimodal events, seven adapters, alignment, mask-aware fusion, typed memory, deterministic simulation, transfer, audit, and safety controls | Terminal gate in progress; PASS authorizes controlled continuation only |
 
 ## Global gate protocol
 

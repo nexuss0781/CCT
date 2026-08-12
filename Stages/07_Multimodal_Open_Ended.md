@@ -4,7 +4,7 @@
 **Stage ID:** 7  
 **Predecessor:** Stage 6 — Deliberation and Verification  
 **Successor:** Research review and controlled continuation  
-**Status:** Specification; implementation not started
+**Status:** Implemented in native C++20; Stage 7 terminal gate validation in progress; controlled continuation only
 
 ## Purpose
 
@@ -14,7 +14,7 @@ This is an open-ended research stage rather than a claim of completed general in
 
 ## Scope and non-goals
 
-The stage includes audio, vision, sensor, code, text, and simulated-environment adapters; cross-modal event fusion; temporal alignment; modality dropout; multimodal memory; transfer and compositional evaluation; controlled embodied or simulated tasks; and research reporting. It does not authorize real-world deployment, unrestricted robotics, autonomous replication, or unsupervised self-improvement.
+The implemented baseline includes native text, code, audio-window, vision-patch, sensor-vector, action, and tool adapters; cross-modal event fusion; temporal and spatial alignment; explicit modality dropout; typed multimodal memory; transfer metadata; deterministic grid simulation; audit traces; and controlled terminal reporting. It does not authorize real-world deployment, unrestricted robotics, autonomous replication, online learning, or unsupervised self-improvement.
 
 Every environment must provide reset, step, observation, action, reward or objective, termination, resource limits, and complete replay. Real-world data must have provenance, consent or license review, privacy handling, and an explicit access policy.
 
@@ -122,7 +122,7 @@ Passing Stage 7 requires capability evidence and control evidence. A model that 
 
 ## Transition to controlled continuation after Stage 7
 
-Stage 7 does not automatically authorize deployment or broader autonomy. A research review must decide whether to:
+The completed Stage 7 gate does not authorize deployment or broader autonomy. It authorizes controlled research continuation only. A research review must decide whether to:
 
 - continue improving the shared substrate;
 - specialize in a modality or task family;
@@ -138,7 +138,7 @@ The final report must include the unified event schema, adapter documentation, d
 
 The report must not describe the system as superintelligent solely because it performs well on a selected benchmark. The appropriate conclusion is whether CCT-ASE has demonstrated a reproducible, multimodal, structured, and controlled capability frontier.
 
-**Transition decision:** `PASS` authorizes controlled research continuation only. `FAIL` requires remediation. `BLOCKED` is acceptable for any modality whose provenance, privacy, licensing, or environment controls are unresolved.
+**Transition decision:** `PASS` authorizes controlled research continuation only. `FAIL` requires remediation. `BLOCKED` is acceptable for any modality whose provenance, privacy, licensing, or environment controls are unresolved. The native terminal gate passes only the declared offline fixture boundary.
 
 ## References
 
