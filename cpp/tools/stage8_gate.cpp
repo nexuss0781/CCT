@@ -256,7 +256,7 @@ std::string application_readiness_check(std::vector<FixtureOutcome>* outcomes_ou
 
 std::string claim_boundary_check() {
     const auto readme = read_file("README.md");
-    require(readme.find("Stages 13–17 remain **specifications only**") != std::string::npos,
+    require(readme.find("Stages 14–17 remain **specifications only**") != std::string::npos,
             "README does not clearly separate remaining production specifications from implemented foundations");
     const std::vector<std::string> files{
         "Stages/09_Governed_Data_Corpus.md", "Stages/10_Tokenizer_Representation.md", "Stages/11_Trainable_Native_NLP_Core.md",
@@ -265,12 +265,13 @@ std::string claim_boundary_check() {
     for (const auto& file : files) {
         const auto text = read_file(file);
         const bool is_implemented = file == "Stages/09_Governed_Data_Corpus.md" || file == "Stages/10_Tokenizer_Representation.md" ||
-                                     file == "Stages/11_Trainable_Native_NLP_Core.md" || file == "Stages/12_Scaling_Accelerator_Systems.md";
+                                     file == "Stages/11_Trainable_Native_NLP_Core.md" || file == "Stages/12_Scaling_Accelerator_Systems.md" ||
+                                     file == "Stages/13_Supervised_Fine_Tuning_Adapters.md";
         const bool labeled_specification = text.find("**Status:** Specification") != std::string::npos;
         const bool labeled_implemented = text.find("**Status:** Implemented and gated") != std::string::npos;
         require((is_implemented && labeled_implemented) || (!is_implemented && labeled_specification), file + " has an invalid implementation status label");
     }
-    return "{\"production_stages_implemented\":false,\"implemented_foundations\":4,\"remaining_production_specifications\":\"13-17\",\"claim_boundary\":\"explicit\"}";
+    return "{\"production_stages_implemented\":false,\"implemented_foundations\":5,\"remaining_production_specifications\":\"14-17\",\"claim_boundary\":\"explicit\"}";
 }
 
 std::string reproducibility_check() {
