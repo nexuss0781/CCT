@@ -25,8 +25,14 @@ double sigmoid(double value) {
     return z / (1.0 + z);
 }
 
-double stable_gate(double raw) {
-    return std::clamp(sigmoid(raw), 1e-4, 1.0 - 1e-4);
+double stable_gate(double raw, double epsilon) {
+    return std::clamp(sigmoid(raw), epsilon, 1.0 - epsilon);
+}
+
+void require_finite(const std::vector<double>& values, const char* name) {
+    for (const auto value : values) {
+        if (!std::isfinite(value)) throw SequenceError(std::string(name) + " contains non-finite value");
+    }
 }
 
 double norm(const std::vector<double>& values) {
@@ -191,7 +197,7 @@ SequenceState SelectiveSequenceCore::step(const std::vector<double>& input,
     std::vector<double> next_hidden(config_.hidden_dim, 0.0);
     std::vector<double> next_hidden_imag(config_.hidden_dim, 0.0);
     for (std::size_t index = 0; index < config_.hidden_dim; ++index) {
-        const auto retain = config_.selective_gates ? stable_gate(retain_raw[index]) : 0.95;
+        const auto retain = config_.selective_gates ? stable_gate(retain_raw[index], config_.gate_epsilon) : 0.95;
         const auto write = config_.selective_gates ? sigmoid(write_raw[index]) : 0.5;
         const auto candidate = std::tanh(candidate_raw[index] + previous[index]);
         next_hidden[index] = retain * state.hidden[index] + write * candidate;
@@ -256,18 +262,36 @@ SequenceGradients SelectiveSequenceCore::loss_and_gradients(
     if (!mask.empty() && mask.size() != inputs.size()) throw SequenceError("mask length mismatch");
     for (const auto& target : targets) {
         if (target.size() != config_.output_dim) throw SequenceError("target dimension mismatch");
+        for (const auto value : target) {
+            if (!std::isfinite(value)) throw SequenceError("target contains a non-finite value");
+        }
     }
 
     struct Cache {
         std::vector<double> input;
         std::vector<double> previous_input;
         std::vector<double> hidden_before;
+        std::vector<double> hidden_imag_before;
         std::vector<double> hidden_after;
+        std::vector<double> hidden_imag_after;
         std::vector<double> retain;
         std::vector<double> write;
+        std::vector<double> retain_derivative;
+        std::vector<double> write_derivative;
         std::vector<double> candidate;
-        std::vector<double> candidate_pre_tanh;
+        std::vector<double> imaginary_candidate;
+        std::vector<double> candidate_pre_activation;
+        std::vector<double> candidate_raw;
+        std::vector<double> phase;
+        std::vector<double> base_real;
+        std::vector<double> base_imag;
+        std::vector<double> rotated_real;
+        std::vector<double> rotated_imag;
+        std::vector<double> output_pre_normalized;
         std::vector<double> output;
+        double state_rms = 1.0;
+        double output_rms = 1.0;
+        bool active = false;
     };
     std::vector<Cache> cache;
     cache.reserve(inputs.size());
@@ -284,12 +308,35 @@ SequenceGradients SelectiveSequenceCore::loss_and_gradients(
     gradients.d_write_bias.assign(parameters_.write_bias.size(), 0.0);
     gradients.d_output_bias.assign(parameters_.output_bias.size(), 0.0);
 
-    std::size_t active_count = 0;
+    std::size_t active_count = 0U;
     for (std::size_t time = 0; time < inputs.size(); ++time) {
         validate_input(inputs[time]);
-        auto output = std::vector<double>{};
-        const auto before = state;
-        const auto after = step(inputs[time], state, &output);
+        const bool active = mask.empty() || mask[time] != 0U;
+        Cache item;
+        item.input = inputs[time];
+        item.previous_input = state.previous_input;
+        item.hidden_before = state.hidden;
+        item.hidden_imag_before = state.hidden_imag;
+        item.active = active;
+        if (!active) {
+            item.hidden_after = state.hidden;
+            item.hidden_imag_after = state.hidden_imag;
+            item.output_pre_normalized = affine(parameters_.output_projection, parameters_.output_bias,
+                                                config_.output_dim, config_.hidden_dim, state.hidden);
+            const auto skip = matvec(parameters_.skip_projection, config_.output_dim,
+                                     config_.input_dim, inputs[time]);
+            for (std::size_t output = 0; output < config_.output_dim; ++output) item.output_pre_normalized[output] += skip[output];
+            item.output = item.output_pre_normalized;
+            if (config_.normalize_output) {
+                double squared = 0.0;
+                for (const auto value : item.output_pre_normalized) squared += value * value;
+                item.output_rms = std::sqrt(squared / static_cast<double>(config_.output_dim) + config_.normalization_epsilon);
+                for (auto& value : item.output) value /= item.output_rms;
+            }
+            cache.push_back(std::move(item));
+            continue;
+        }
+        ++active_count;
         const auto retain_raw = affine(parameters_.retain_projection, parameters_.retain_bias,
                                        config_.hidden_dim, config_.input_dim, inputs[time]);
         const auto write_raw = affine(parameters_.write_projection, parameters_.write_bias,
@@ -297,81 +344,176 @@ SequenceGradients SelectiveSequenceCore::loss_and_gradients(
         const auto candidate_raw = affine(parameters_.input_projection, parameters_.bias,
                                           config_.hidden_dim, config_.input_dim, inputs[time]);
         const auto previous = matvec(parameters_.previous_projection, config_.hidden_dim,
-                                     config_.input_dim, before.previous_input);
-        Cache item{inputs[time], before.previous_input, before.hidden, after.hidden, {}, {}, {}, {}, output};
+                                     config_.input_dim, state.previous_input);
         item.retain.resize(config_.hidden_dim);
         item.write.resize(config_.hidden_dim);
+        item.retain_derivative.resize(config_.hidden_dim);
+        item.write_derivative.resize(config_.hidden_dim);
         item.candidate.resize(config_.hidden_dim);
-        item.candidate_pre_tanh.resize(config_.hidden_dim);
+        item.imaginary_candidate.resize(config_.hidden_dim);
+        item.candidate_pre_activation.resize(config_.hidden_dim);
+        item.candidate_raw = candidate_raw;
+        item.phase.resize(config_.hidden_dim);
+        item.base_real.resize(config_.hidden_dim);
+        item.base_imag.resize(config_.hidden_dim);
+        item.rotated_real.resize(config_.hidden_dim);
+        item.rotated_imag.resize(config_.hidden_dim);
+        std::vector<double> next_hidden(config_.hidden_dim, 0.0);
+        std::vector<double> next_hidden_imag(config_.hidden_dim, 0.0);
         for (std::size_t hidden = 0; hidden < config_.hidden_dim; ++hidden) {
-            item.retain[hidden] = config_.selective_gates ? stable_gate(retain_raw[hidden]) : 0.95;
+            const auto retain_sigmoid = sigmoid(retain_raw[hidden]);
+            item.retain[hidden] = config_.selective_gates ? stable_gate(retain_raw[hidden], config_.gate_epsilon) : 0.95;
+            item.retain_derivative[hidden] = config_.selective_gates && retain_sigmoid > config_.gate_epsilon && retain_sigmoid < 1.0 - config_.gate_epsilon
+                                                  ? retain_sigmoid * (1.0 - retain_sigmoid)
+                                                  : 0.0;
             item.write[hidden] = config_.selective_gates ? sigmoid(write_raw[hidden]) : 0.5;
-            item.candidate_pre_tanh[hidden] = candidate_raw[hidden] + previous[hidden];
-            item.candidate[hidden] = std::tanh(item.candidate_pre_tanh[hidden]);
+            item.write_derivative[hidden] = config_.selective_gates ? item.write[hidden] * (1.0 - item.write[hidden]) : 0.0;
+            item.candidate_pre_activation[hidden] = candidate_raw[hidden] + previous[hidden];
+            item.candidate[hidden] = std::tanh(item.candidate_pre_activation[hidden]);
+            item.imaginary_candidate[hidden] = std::sin(item.candidate_pre_activation[hidden]);
+            item.base_real[hidden] = item.retain[hidden] * state.hidden[hidden] + item.write[hidden] * item.candidate[hidden];
+            item.base_imag[hidden] = item.retain[hidden] * state.hidden_imag[hidden] + item.write[hidden] * item.imaginary_candidate[hidden];
+            if (config_.complex_state) {
+                item.phase[hidden] = 0.17 * std::sin(candidate_raw[hidden]);
+                const auto cosine = std::cos(item.phase[hidden]);
+                const auto sine = std::sin(item.phase[hidden]);
+                item.rotated_real[hidden] = cosine * item.base_real[hidden] - sine * item.base_imag[hidden];
+                item.rotated_imag[hidden] = sine * item.base_real[hidden] + cosine * item.base_imag[hidden];
+            } else {
+                item.phase[hidden] = 0.0;
+                item.rotated_real[hidden] = item.base_real[hidden];
+                item.rotated_imag[hidden] = 0.0;
+            }
+            next_hidden[hidden] = item.rotated_real[hidden];
+            next_hidden_imag[hidden] = item.rotated_imag[hidden];
         }
+        if (config_.normalize_state) {
+            double squared = 0.0;
+            for (std::size_t hidden = 0; hidden < config_.hidden_dim; ++hidden) {
+                squared += next_hidden[hidden] * next_hidden[hidden] + next_hidden_imag[hidden] * next_hidden_imag[hidden];
+            }
+            item.state_rms = std::sqrt(squared / static_cast<double>(config_.hidden_dim) + config_.normalization_epsilon);
+            for (std::size_t hidden = 0; hidden < config_.hidden_dim; ++hidden) {
+                next_hidden[hidden] /= item.state_rms;
+                next_hidden_imag[hidden] /= item.state_rms;
+            }
+        }
+        item.hidden_after = next_hidden;
+        item.hidden_imag_after = next_hidden_imag;
+        item.output_pre_normalized = affine(parameters_.output_projection, parameters_.output_bias,
+                                            config_.output_dim, config_.hidden_dim, next_hidden);
+        const auto skip = matvec(parameters_.skip_projection, config_.output_dim,
+                                 config_.input_dim, inputs[time]);
+        for (std::size_t output = 0; output < config_.output_dim; ++output) item.output_pre_normalized[output] += skip[output];
+        item.output = item.output_pre_normalized;
+        if (config_.normalize_output) {
+            double squared = 0.0;
+            for (const auto value : item.output_pre_normalized) squared += value * value;
+            item.output_rms = std::sqrt(squared / static_cast<double>(config_.output_dim) + config_.normalization_epsilon);
+            for (auto& value : item.output) value /= item.output_rms;
+        }
+        state = SequenceState{std::move(next_hidden), std::move(next_hidden_imag), inputs[time]};
         cache.push_back(std::move(item));
-        state = after;
-        if (mask.empty() || mask[time] != 0) ++active_count;
     }
     if (active_count == 0) throw SequenceError("mask excludes every training position");
     const auto normalization = 1.0 / static_cast<double>(active_count * config_.output_dim);
 
     std::vector<double> d_hidden_next(config_.hidden_dim, 0.0);
-    std::vector<double> d_previous_next(config_.input_dim, 0.0);
+    std::vector<double> d_hidden_imag_next(config_.hidden_dim, 0.0);
     for (std::size_t reverse = inputs.size(); reverse-- > 0;) {
         auto& item = cache[reverse];
+        if (!item.active) continue;
         std::vector<double> d_output(config_.output_dim, 0.0);
-        if (mask.empty() || mask[reverse] != 0) {
+        for (std::size_t output = 0; output < config_.output_dim; ++output) {
+            const auto error = item.output[output] - targets[reverse][output];
+            gradients.loss += 0.5 * error * error * normalization;
+            d_output[output] = error * normalization;
+        }
+        if (config_.normalize_output) {
+            double dot = 0.0;
+            for (std::size_t output = 0; output < config_.output_dim; ++output) dot += d_output[output] * item.output[output];
+            const auto scale = static_cast<double>(config_.output_dim);
             for (std::size_t output = 0; output < config_.output_dim; ++output) {
-                const auto error = item.output[output] - targets[reverse][output];
-                gradients.loss += 0.5 * error * error * normalization;
-                d_output[output] = error * normalization;
-                gradients.d_output_bias[output] += d_output[output];
+                d_output[output] = d_output[output] / item.output_rms -
+                                   item.output[output] * dot / (scale * item.output_rms);
             }
         }
         for (std::size_t output = 0; output < config_.output_dim; ++output) {
+            gradients.d_output_bias[output] += d_output[output];
             for (std::size_t hidden = 0; hidden < config_.hidden_dim; ++hidden) {
-                gradients.d_output_projection[output * config_.hidden_dim + hidden] +=
-                    d_output[output] * item.hidden_after[hidden];
+                gradients.d_output_projection[output * config_.hidden_dim + hidden] += d_output[output] * item.hidden_after[hidden];
                 d_hidden_next[hidden] += d_output[output] * parameters_.output_projection[output * config_.hidden_dim + hidden];
             }
             for (std::size_t input = 0; input < config_.input_dim; ++input) {
                 gradients.d_skip_projection[output * config_.input_dim + input] += d_output[output] * item.input[input];
             }
         }
-        std::vector<double> d_hidden_before(config_.hidden_dim, 0.0);
-        std::vector<double> d_input(config_.input_dim, 0.0);
-        std::vector<double> d_previous_input(config_.input_dim, 0.0);
-        for (std::size_t hidden = 0; hidden < config_.hidden_dim; ++hidden) {
-            const auto retain_raw = item.retain[hidden];
-            const auto write_raw = item.write[hidden];
-            const auto candidate = item.candidate[hidden];
-            const auto candidate_derivative = 1.0 - candidate * candidate;
-            const auto retain_derivative = config_.selective_gates ? retain_raw * (1.0 - retain_raw) : 0.0;
-            const auto write_derivative = config_.selective_gates ? write_raw * (1.0 - write_raw) : 0.0;
-            const auto d_retain = d_hidden_next[hidden] * item.hidden_before[hidden];
-            const auto d_write = d_hidden_next[hidden] * candidate;
-            const auto d_candidate_pre = d_hidden_next[hidden] * write_raw * candidate_derivative;
-            d_hidden_before[hidden] += d_hidden_next[hidden] * retain_raw;
-            gradients.d_retain_bias[hidden] += d_retain * retain_derivative;
-            gradients.d_write_bias[hidden] += d_write * write_derivative;
-            gradients.d_bias[hidden] += d_candidate_pre;
-            for (std::size_t input = 0; input < config_.input_dim; ++input) {
-                gradients.d_retain_projection[hidden * config_.input_dim + input] += d_retain * retain_derivative * item.input[input];
-                gradients.d_write_projection[hidden * config_.input_dim + input] += d_write * write_derivative * item.input[input];
-                gradients.d_input_projection[hidden * config_.input_dim + input] += d_candidate_pre * item.input[input];
-                d_input[input] += d_retain * retain_derivative * parameters_.retain_projection[hidden * config_.input_dim + input];
-                d_input[input] += d_write * write_derivative * parameters_.write_projection[hidden * config_.input_dim + input];
-                d_input[input] += d_candidate_pre * parameters_.input_projection[hidden * config_.input_dim + input];
-                gradients.d_previous_projection[hidden * config_.input_dim + input] += d_candidate_pre * item.previous_input[input];
-                d_previous_input[input] += d_candidate_pre * parameters_.previous_projection[hidden * config_.input_dim + input];
+        std::vector<double> d_rotated_real = d_hidden_next;
+        std::vector<double> d_rotated_imag = d_hidden_imag_next;
+        if (config_.normalize_state) {
+            double dot = 0.0;
+            for (std::size_t hidden = 0; hidden < config_.hidden_dim; ++hidden) {
+                dot += d_rotated_real[hidden] * item.hidden_after[hidden] + d_rotated_imag[hidden] * item.hidden_imag_after[hidden];
+            }
+            const auto scale = static_cast<double>(config_.hidden_dim);
+            for (std::size_t hidden = 0; hidden < config_.hidden_dim; ++hidden) {
+                d_rotated_real[hidden] = d_rotated_real[hidden] / item.state_rms -
+                                         item.hidden_after[hidden] * dot / (scale * item.state_rms);
+                d_rotated_imag[hidden] = d_rotated_imag[hidden] / item.state_rms -
+                                         item.hidden_imag_after[hidden] * dot / (scale * item.state_rms);
             }
         }
-        (void)d_input;
+        std::vector<double> d_hidden_before(config_.hidden_dim, 0.0);
+        std::vector<double> d_hidden_imag_before(config_.hidden_dim, 0.0);
+        for (std::size_t hidden = 0; hidden < config_.hidden_dim; ++hidden) {
+            double d_base_real = d_rotated_real[hidden];
+            double d_base_imag = d_rotated_imag[hidden];
+            double d_candidate_raw = 0.0;
+            if (config_.complex_state) {
+                const auto cosine = std::cos(item.phase[hidden]);
+                const auto sine = std::sin(item.phase[hidden]);
+                d_base_real = cosine * d_rotated_real[hidden] + sine * d_rotated_imag[hidden];
+                d_base_imag = -sine * d_rotated_real[hidden] + cosine * d_rotated_imag[hidden];
+                const auto d_phase = -item.rotated_imag[hidden] * d_rotated_real[hidden] +
+                                     item.rotated_real[hidden] * d_rotated_imag[hidden];
+                d_candidate_raw += d_phase * 0.17 * std::cos(item.candidate_raw[hidden]);
+            } else {
+                d_base_imag = 0.0;
+            }
+            const auto d_retain = d_base_real * item.hidden_before[hidden] + d_base_imag * item.hidden_imag_before[hidden];
+            const auto d_write = d_base_real * item.candidate[hidden] + d_base_imag * item.imaginary_candidate[hidden];
+            d_hidden_before[hidden] = d_base_real * item.retain[hidden];
+            d_hidden_imag_before[hidden] = d_base_imag * item.retain[hidden];
+            const auto d_candidate_pre = d_base_real * item.write[hidden] *
+                                             (1.0 - item.candidate[hidden] * item.candidate[hidden]) +
+                                         d_base_imag * item.write[hidden] * std::cos(item.candidate_pre_activation[hidden]);
+            d_candidate_raw += d_candidate_pre;
+            const auto d_retain_raw = d_retain * item.retain_derivative[hidden];
+            const auto d_write_raw = d_write * item.write_derivative[hidden];
+            gradients.d_retain_bias[hidden] += d_retain_raw;
+            gradients.d_write_bias[hidden] += d_write_raw;
+            gradients.d_bias[hidden] += d_candidate_raw;
+            for (std::size_t input = 0; input < config_.input_dim; ++input) {
+                gradients.d_retain_projection[hidden * config_.input_dim + input] += d_retain_raw * item.input[input];
+                gradients.d_write_projection[hidden * config_.input_dim + input] += d_write_raw * item.input[input];
+                gradients.d_input_projection[hidden * config_.input_dim + input] += d_candidate_raw * item.input[input];
+                gradients.d_previous_projection[hidden * config_.input_dim + input] += d_candidate_pre * item.previous_input[input];
+            }
+        }
         d_hidden_next = std::move(d_hidden_before);
-        d_previous_next = std::move(d_previous_input);
+        d_hidden_imag_next = std::move(d_hidden_imag_before);
     }
-    (void)d_previous_next;
+    if (!std::isfinite(gradients.loss)) throw SequenceError("sequence loss became non-finite");
+    require_finite(gradients.d_input_projection, "input projection gradient became non-finite");
+    require_finite(gradients.d_previous_projection, "previous projection gradient became non-finite");
+    require_finite(gradients.d_retain_projection, "retain projection gradient became non-finite");
+    require_finite(gradients.d_write_projection, "write projection gradient became non-finite");
+    require_finite(gradients.d_output_projection, "output projection gradient became non-finite");
+    require_finite(gradients.d_skip_projection, "skip projection gradient became non-finite");
+    require_finite(gradients.d_bias, "candidate bias gradient became non-finite");
+    require_finite(gradients.d_retain_bias, "retain bias gradient became non-finite");
+    require_finite(gradients.d_write_bias, "write bias gradient became non-finite");
+    require_finite(gradients.d_output_bias, "output bias gradient became non-finite");
     return gradients;
 }
 
@@ -435,7 +577,7 @@ double SelectiveSequenceCore::transition_radius_bound() const {
         for (std::size_t column = 0; column < config_.input_dim; ++column) {
             row_sum += std::abs(parameters_.retain_projection[row * config_.input_dim + column]);
         }
-        maximum = std::max(maximum, stable_gate(parameters_.retain_bias[row]) + 0.25 * row_sum);
+        maximum = std::max(maximum, stable_gate(parameters_.retain_bias[row], config_.gate_epsilon) + 0.25 * row_sum);
     }
     return maximum;
 }

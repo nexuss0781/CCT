@@ -139,9 +139,50 @@ std::vector<std::vector<double>> copy_target(std::size_t length, std::size_t sym
 }
 
 std::vector<std::uint8_t> final_mask(std::size_t length) {
-    std::vector<std::uint8_t> mask(length, 0);
-    mask.back() = 1;
+    require(length > 0U, "copy-task training sequence is empty");
+    std::vector<std::uint8_t> mask(length, 0U);
+    mask.back() = 1U;
     return mask;
+}
+
+double sparse_supervision_loss(const SelectiveSequenceCore& core,
+                               const std::vector<std::vector<double>>& inputs,
+                               const std::vector<std::vector<double>>& targets,
+                               const std::vector<std::uint8_t>& loss_mask) {
+    require(inputs.size() == targets.size() && inputs.size() == loss_mask.size(), "sparse objective shape mismatch");
+    const auto outputs = core.forward(inputs).outputs;
+    double total = 0.0;
+    std::size_t active = 0U;
+    for (std::size_t time = 0U; time < inputs.size(); ++time) {
+        if (loss_mask[time] == 0U) continue;
+        require(outputs[time].size() == targets[time].size(), "sparse objective target dimension mismatch");
+        for (std::size_t output = 0U; output < outputs[time].size(); ++output) {
+            const auto error = outputs[time][output] - targets[time][output];
+            total += 0.5 * error * error;
+        }
+        ++active;
+    }
+    require(active > 0U, "sparse objective has no active positions");
+    const auto output_dim = outputs.front().size();
+    require(output_dim > 0U, "sparse objective has no output dimensions");
+    return total / static_cast<double>(active * output_dim);
+}
+
+void apply_masked_training_step(SelectiveSequenceCore& core,
+                                const std::vector<std::vector<double>>& inputs,
+                                const std::vector<std::vector<double>>& targets,
+                                const std::vector<std::uint8_t>& loss_mask,
+                                double learning_rate,
+                                double clip_norm) {
+    require(loss_mask.size() == inputs.size(), "masked training loss length mismatch");
+    const auto current = core.forward(inputs);
+    auto training_targets = targets;
+    const std::vector<std::uint8_t> state_mask(inputs.size(), 1U);
+    for (std::size_t time = 0U; time < inputs.size(); ++time) {
+        if (loss_mask[time] == 0U) training_targets[time] = current.outputs[time];
+    }
+    const auto sequence_scale = static_cast<double>(inputs.size());
+    core.apply_sgd(core.loss_and_gradients(inputs, training_targets, state_mask), learning_rate * sequence_scale, clip_norm);
 }
 
 TaskResult train_copy_task() {
@@ -153,16 +194,15 @@ TaskResult train_copy_task() {
     const auto mask = final_mask(train_length);
     const auto first_sequence = copy_sequence(train_length, 0, symbols);
     const auto first_target = copy_target(train_length, 0, symbols);
-    const auto before = core.loss_only(first_sequence, first_target, mask);
+    const auto before = sparse_supervision_loss(core, first_sequence, first_target, mask);
     for (std::size_t epoch = 0; epoch < 3000; ++epoch) {
         for (std::size_t symbol = 0; symbol < symbols; ++symbol) {
             const auto sequence = copy_sequence(train_length, symbol, symbols);
             const auto target = copy_target(train_length, symbol, symbols);
-            const auto gradients = core.loss_and_gradients(sequence, target, mask);
-            core.apply_sgd(gradients, 0.04, 5.0);
+            apply_masked_training_step(core, sequence, target, mask, 0.04, 5.0);
         }
     }
-    const auto after = core.loss_only(first_sequence, first_target, mask);
+    const auto after = sparse_supervision_loss(core, first_sequence, first_target, mask);
     const auto evaluate = [&](std::size_t length) {
         std::size_t correct = 0;
         for (std::size_t symbol = 0; symbol < symbols; ++symbol) {
@@ -277,7 +317,13 @@ std::string checkpoint_check(const std::filesystem::path& output) {
 }
 
 std::string algorithmic_training_check(const TaskResult& result) {
-    require(result.after_loss < result.before_loss * 0.25, "copy-task training did not reduce loss by 75 percent");
+    if (!(result.after_loss < result.before_loss * 0.25)) {
+        std::ostringstream error;
+        error << "copy-task training did not reduce loss by 75 percent: before=" << result.before_loss
+              << ", after=" << result.after_loss << ", train_accuracy=" << result.accuracy_train_length
+              << ", extrapolated_accuracy=" << result.accuracy_extrapolated;
+        throw std::runtime_error(error.str());
+    }
     require(result.accuracy_train_length >= 0.75, "copy-task train-length accuracy below threshold");
     require(result.accuracy_extrapolated >= 0.50, "copy-task extrapolated accuracy below threshold");
     std::ostringstream details;
@@ -292,13 +338,13 @@ std::string expanded_algorithmic_suite_check() {
     struct Task { std::vector<std::vector<double>> inputs; std::vector<std::vector<double>> targets; std::vector<std::uint8_t> mask; };
     const auto train_and_measure = [](SelectiveSequenceCore& core, const std::vector<Task>& tasks, std::size_t epochs) {
         double before = 0.0;
-        for (const auto& task : tasks) before += core.loss_only(task.inputs, task.targets, task.mask);
+        for (const auto& task : tasks) before += sparse_supervision_loss(core, task.inputs, task.targets, task.mask);
         before /= static_cast<double>(tasks.size());
         for (std::size_t epoch = 0; epoch < epochs; ++epoch) {
-            for (const auto& task : tasks) core.apply_sgd(core.loss_and_gradients(task.inputs, task.targets, task.mask), 0.05, 8.0);
+            for (const auto& task : tasks) apply_masked_training_step(core, task.inputs, task.targets, task.mask, 0.05, 8.0);
         }
         double after = 0.0;
-        for (const auto& task : tasks) after += core.loss_only(task.inputs, task.targets, task.mask);
+        for (const auto& task : tasks) after += sparse_supervision_loss(core, task.inputs, task.targets, task.mask);
         after /= static_cast<double>(tasks.size());
         return std::pair<double, double>{before, after};
     };
@@ -315,7 +361,7 @@ std::string expanded_algorithmic_suite_check() {
             task.inputs[time][1] = time == 0 ? 1.0 : 0.0;
             task.targets[time][0] = parity == 0 ? -1.0 : 1.0;
         }
-        task.mask.back() = 1;
+        task.mask.back() = 1U;
         parity_tasks.push_back(std::move(task));
     }
     SelectiveSequenceCore parity_core(SequenceConfig{2, 32, 1, 1e-5, 51});
@@ -337,7 +383,7 @@ std::string expanded_algorithmic_suite_check() {
         task.inputs[1] = {0.0, 1.0, value_b, 0.0};
         task.inputs[10] = {1.0, 0.0, 0.0, 1.0};
         task.targets.back()[0] = value_a;
-        task.mask.back() = 1;
+        task.mask.back() = 1U;
         associative_tasks.push_back(std::move(task));
     }
     SelectiveSequenceCore associative_core(SequenceConfig{4, 16, 1, 1e-5, 52});
@@ -359,7 +405,7 @@ std::string expanded_algorithmic_suite_check() {
         task.inputs[1] = {second, 1.0, 0.0};
         task.inputs[2] = {0.0, 0.0, 1.0};
         task.targets.back()[0] = second;
-        task.mask.back() = 1;
+        task.mask.back() = 1U;
         overwrite_tasks.push_back(std::move(task));
     }
     SelectiveSequenceCore overwrite_core(SequenceConfig{3, 16, 1, 1e-5, 53});

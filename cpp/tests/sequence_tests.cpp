@@ -4,6 +4,7 @@
 #include <cmath>
 #include <filesystem>
 #include <iostream>
+#include <limits>
 #include <random>
 #include <stdexcept>
 #include <string>
@@ -32,6 +33,42 @@ double max_output_difference(const std::vector<std::vector<double>>& left,
     require(left.size() == right.size(), "sequence length mismatch");
     double result = 0.0;
     for (std::size_t time = 0; time < left.size(); ++time) result = std::max(result, max_difference(left[time], right[time]));
+    return result;
+}
+
+double masked_loss(const SelectiveSequenceCore& core,
+                   const std::vector<std::vector<double>>& sequence,
+                   const std::vector<std::vector<double>>& target,
+                   const std::vector<std::uint8_t>& mask) {
+    const auto result = core.forward(sequence, mask);
+    double total = 0.0;
+    std::size_t active = 0U;
+    for (std::size_t time = 0U; time < sequence.size(); ++time) {
+        if (!mask.empty() && mask[time] == 0U) continue;
+        require(target[time].size() == result.outputs[time].size(), "masked loss target shape mismatch");
+        for (std::size_t output = 0U; output < target[time].size(); ++output) {
+            const auto error = result.outputs[time][output] - target[time][output];
+            total += 0.5 * error * error;
+        }
+        ++active;
+    }
+    const auto output_dim = result.outputs.empty() ? 0U : result.outputs.front().size();
+    return active == 0U || output_dim == 0U ? 0.0 : total / static_cast<double>(active * output_dim);
+}
+
+std::vector<double> flatten_gradients(const cct::SequenceGradients& gradients) {
+    std::vector<double> result;
+    const auto append = [&](const std::vector<double>& values) { result.insert(result.end(), values.begin(), values.end()); };
+    append(gradients.d_input_projection);
+    append(gradients.d_previous_projection);
+    append(gradients.d_retain_projection);
+    append(gradients.d_write_projection);
+    append(gradients.d_output_projection);
+    append(gradients.d_skip_projection);
+    append(gradients.d_bias);
+    append(gradients.d_retain_bias);
+    append(gradients.d_write_bias);
+    append(gradients.d_output_bias);
     return result;
 }
 
@@ -145,6 +182,101 @@ void test_gradient_finite_difference() {
     }
 }
 
+void test_gradient_all_modes_finite_difference() {
+    struct Mode {
+        bool complex_state;
+        bool normalize_state;
+        bool normalize_output;
+    };
+    const std::vector<Mode> modes{
+        {false, false, false}, {true, false, false}, {false, true, false}, {false, false, true},
+        {true, true, false}, {true, false, true}, {false, true, true}, {true, true, true},
+    };
+    const auto sequence = inputs(5, 2);
+    std::vector<std::vector<double>> target(sequence.size(), std::vector<double>(2, 0.0));
+    for (std::size_t time = 0U; time < target.size(); ++time) {
+        target[time][0] = 0.2 * std::sin(static_cast<double>(time + 1U));
+        target[time][1] = -0.15 * std::cos(static_cast<double>(time + 2U));
+    }
+    const std::vector<std::uint8_t> mask{1U, 0U, 1U, 0U, 1U};
+    std::size_t mode_index = 0U;
+    for (const auto& mode : modes) {
+        SequenceConfig test_config;
+        test_config.input_dim = 2U;
+        test_config.hidden_dim = 3U;
+        test_config.output_dim = 2U;
+        test_config.gate_epsilon = 1e-5;
+        test_config.seed = 71U;
+        test_config.complex_state = mode.complex_state;
+        test_config.normalize_state = mode.normalize_state;
+        test_config.normalize_output = mode.normalize_output;
+        test_config.normalization_epsilon = 1e-6;
+        test_config.selective_gates = true;
+        SelectiveSequenceCore core(test_config);
+        const auto analytic = flatten_gradients(core.loss_and_gradients(sequence, target, mask));
+        const auto original = core.parameter_vector();
+        require(analytic.size() == original.size(), "flattened sequence gradient size mismatch");
+        double maximum_error = 0.0;
+        std::size_t maximum_index = 0U;
+        constexpr double epsilon = 1e-6;
+        for (std::size_t parameter = 0U; parameter < original.size(); ++parameter) {
+            auto plus = original;
+            auto minus = original;
+            plus[parameter] += epsilon;
+            minus[parameter] -= epsilon;
+            SelectiveSequenceCore plus_core(test_config);
+            SelectiveSequenceCore minus_core(test_config);
+            plus_core.set_parameter_vector(plus);
+            minus_core.set_parameter_vector(minus);
+            const auto numerical = (masked_loss(plus_core, sequence, target, mask) -
+                                    masked_loss(minus_core, sequence, target, mask)) / (2.0 * epsilon);
+            const auto error = std::abs(analytic[parameter] - numerical);
+            if (error > maximum_error) {
+                maximum_error = error;
+                maximum_index = parameter;
+            }
+        }
+        require(maximum_error < 1e-8, "all-mode sequence gradient disagrees with finite difference in mode " +
+                                             std::to_string(mode_index) + " (max error=" + std::to_string(maximum_error) + ", parameter=" +
+                                             std::to_string(maximum_index) + ")");
+        ++mode_index;
+    }
+}
+
+void test_masked_positions_and_target_validation() {
+    SequenceConfig test_config;
+    test_config.input_dim = 2U;
+    test_config.hidden_dim = 3U;
+    test_config.output_dim = 2U;
+    test_config.seed = 79U;
+    test_config.complex_state = true;
+    test_config.normalize_state = true;
+    test_config.normalize_output = true;
+    SelectiveSequenceCore core(test_config);
+    const auto sequence = inputs(5, 2);
+    auto target = std::vector<std::vector<double>>(sequence.size(), std::vector<double>(2, 0.0));
+    const std::vector<std::uint8_t> mask{1U, 0U, 1U, 0U, 1U};
+    const auto masked = core.forward(sequence, mask);
+    auto expected_state = core.initial_state();
+    for (std::size_t time = 0U; time < sequence.size(); ++time) {
+        if (mask[time] != 0U) expected_state = core.step(sequence[time], expected_state);
+    }
+    require(max_difference(masked.final_state.hidden, expected_state.hidden) < 1e-12,
+            "masked positions changed the real recurrent state");
+    require(max_difference(masked.final_state.hidden_imag, expected_state.hidden_imag) < 1e-12,
+            "masked positions changed the imaginary recurrent state");
+    const auto gradients = core.loss_and_gradients(sequence, target, mask);
+    for (const auto value : flatten_gradients(gradients)) require(std::isfinite(value), "masked gradient is non-finite");
+    bool rejected = false;
+    target[1][0] = std::numeric_limits<double>::quiet_NaN();
+    try {
+        (void)core.loss_and_gradients(sequence, target, mask);
+    } catch (const SequenceError&) {
+        rejected = true;
+    }
+    require(rejected, "non-finite target was accepted");
+}
+
 void test_checkpoint_recovery() {
     SelectiveSequenceCore core(config());
     const auto sequence = inputs(19, 3);
@@ -242,6 +374,8 @@ int main() {
         {"chunked_equivalence", test_chunked_equivalence},
         {"mask_semantics", test_mask_semantics},
         {"gradient_finite_difference", test_gradient_finite_difference},
+        {"gradient_all_modes_finite_difference", test_gradient_all_modes_finite_difference},
+        {"masked_positions_and_target_validation", test_masked_positions_and_target_validation},
         {"checkpoint_recovery", test_checkpoint_recovery},
         {"stability_and_updates", test_stability_and_updates},
         {"invalid_input_safety", test_invalid_inputs},
