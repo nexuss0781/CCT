@@ -137,15 +137,19 @@ pinned source
   -> frozen target-token evaluation
 ```
 
-The causal encoder can feed the general sequence core, and the memory layer can produce retrieval hits and citation bindings. The inference layer can consume retrieval hits and return grounded content with audit events.
+The causal encoder can feed the general sequence core, and the memory layer can produce retrieval hits and citation bindings. The inference layer supports two explicit modes: a fixture-template backend for lifecycle tests and a checkpoint-backed native Track 1 recurrence backend that loads a tokenizer snapshot and `NLP_MODEL_V3` checkpoint, validates identity, and performs bounded greedy decoding. Required retrieval remains a separately governed grounding path with citation verification.
+
+The service boundary is synchronized with a recursive mutex across admission, execution, queue, state, cache, audit, deployment wrappers, and metric snapshots. Checkpoint sessions retain a bounded token context separately from transcript metadata; cancelled generation does not commit the newly offered token context. Fixture caching is bounded by entry count and response bytes.
+
+Streaming is callback-driven. Checkpoint decoding emits decoded tokens during generation, records measured first-token and inter-token timing, and stops cooperatively on cancellation or event-budget exhaustion. SLO reports distinguish accepted successful work from abstentions, rejections, and cancellations; queue latency uses monotonic enqueue-to-start measurement and throughput uses an observed monotonic workload window.
 
 ### 5.2 What is not connected
 
-The following connections are not yet real end-to-end model behavior:
+The following connections remain outside the verified implementation boundary:
 
-1. `InferenceService` does not invoke a trained CCT generative model. Without retrieval it returns a route-labelled echo such as `CCT-ASE response: <input>`.
-2. The `transformer` and `hybrid` model routes are labels and response prefixes, not separate model backends.
-3. Streaming splits a completed response into whitespace words after `handle()` has already executed and updated state; it is not incremental model decoding.
+1. The Track 1 checkpoint backend is a native greedy next-token service, not a broad instruction-following, answer-extraction, or production-quality language system. SQuAD exact match/F1 and human preference are not claimed by this interface.
+2. `ModelRoute::Hybrid` and `ModelRoute::Transformer` remain controlled fixture route identities; they do not load independent transformer or hybrid model artifacts.
+3. Retrieval output is governed document content with citation verification; it is not evidence that the checkpoint model generated or reasoned over the document.
 4. The Track 1 trainer uses the explicitly separate `Track1CctRecurrence` path and does not use the general complex or normalized sequence-core modes; its claims are reported independently.
 5. Memory retrieval uses a deterministic hash encoder and linear scan rather than a learned embedding model and indexed search.
 6. The mathematical manifold, topological memory, eigenmode reasoning, learned metric, variational inference, and claimed scaling laws are not implemented as end-to-end components.
@@ -161,8 +165,8 @@ The following connections are not yet real end-to-end model behavior:
 | Duplicate detection | Scalable contamination control | Exact hash plus pairwise set-Jaccard scan | Worst-case quadratic in accepted records |
 | Causal ridge fit | Stable learner | Normal equations and dense Gauss-Jordan elimination | Can be ill-conditioned and scales poorly |
 | FFT field step | `O(n log n)` transform | FFTW path for supported periodic field layout | Plausible for that kernel only; not a whole-model guarantee |
-| Inference queue | Batching and SLO control | In-process vector queue with synchronous `handle()` processing | No concurrent scheduler or real queue-delay measurement |
-| Streaming | Token streaming | Full response first, then word splitting | Latency and cancellation claims are invalid for true streaming |
+| Inference queue | Batching and SLO control | In-process bounded vector queue with synchronized admission/execution and monotonic queue timing | No external worker scheduler or durable queue |
+| Streaming | Token streaming | Callback-driven checkpoint token emission; fixture/retrieval paths emit bounded service chunks | Checkpoint path is incremental, but broad decoder scheduling is not implemented |
 
 ## 7. Strong engineering areas
 
@@ -174,9 +178,9 @@ These are **engineering strengths**, not proof that the mathematical hypotheses 
 
 ## 8. Architectural priorities
 
-The first trainable-path boundary is now explicit: the Track 1 recurrence is named and tested independently from the general sequence core, while the sequence core’s complex, normalized, and masked reverse pass is covered by complete finite-difference regressions. The next priority is connecting a real checkpoint-backed model to inference without expanding the claim boundary.
+The first trainable-path boundary is explicit: the Track 1 recurrence is named and tested independently from the general sequence core, while the sequence core’s complex, normalized, and masked reverse pass is covered by complete finite-difference regressions. Inference now loads a real checkpoint through an explicit backend mode without expanding the claim boundary.
 
-The second priority is honest system integration: replace template inference outputs with a real checkpoint-backed model interface, implement true incremental decoding, make routing select actual backends, and measure concurrent queue behavior rather than only stateful synchronous calls.
+The second priority is honest system integration: route only configured model artifacts, connect release activation to artifact lifecycle, and replace the remaining in-memory governance and persistence fixtures with durable deployment integration. The serving contract now measures concurrent in-process behavior, but it is not a distributed worker or production deployment system.
 
 The third priority is mathematical validation: formulate the actual discrete operator, state the boundary conditions and timestep domain, prove or test stability in that domain, compare against matched baselines, and remove unsupported complexity, geometry, topology, and scaling claims until their implementations and measurements exist.
 

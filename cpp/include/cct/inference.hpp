@@ -6,12 +6,19 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <memory>
+#include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
 namespace cct {
+
+enum class InferenceBackendMode : std::uint8_t {
+    FixtureTemplate = 0,
+    Checkpoint = 1
+};
 
 enum class ModelRoute : std::uint8_t {
     Cct = 0,
@@ -36,6 +43,27 @@ enum class ServiceFault : std::uint8_t {
     Dependency = 5
 };
 
+using InferenceTokenCallback = std::function<bool(const std::string&, std::size_t, double)>;
+
+struct BackendGenerationResult {
+    std::string output;
+    std::size_t input_tokens = 0;
+    std::size_t output_tokens = 0;
+    double first_token_milliseconds = 0.0;
+    double inter_token_milliseconds = 0.0;
+    bool cancelled = false;
+    std::vector<std::uint32_t> state_token_ids;
+};
+
+class InferenceBackend {
+public:
+    virtual ~InferenceBackend() = default;
+    virtual std::string identity() const = 0;
+    virtual BackendGenerationResult generate(const std::string& input, std::size_t maximum_input_tokens,
+                                             std::size_t maximum_output_tokens, const std::vector<std::uint32_t>& prior_context,
+                                             const InferenceTokenCallback& callback) const = 0;
+};
+
 std::string model_route_name(ModelRoute route);
 std::string stream_event_type_name(StreamEventType type);
 std::string service_fault_name(ServiceFault fault);
@@ -52,12 +80,17 @@ struct InferenceConfig {
     std::string adapter_version = "adapter-none-v1";
     std::string tokenizer_version = "tokenizer-stage10-v1";
     std::string knowledge_index_version = "lexical-v1";
+    InferenceBackendMode backend_mode = InferenceBackendMode::FixtureTemplate;
+    std::string model_checkpoint_path;
+    std::string tokenizer_snapshot_path;
     std::size_t maximum_input_tokens = 512;
     std::size_t maximum_output_tokens = 128;
     std::size_t maximum_batch_size = 8;
     std::size_t maximum_queue_depth = 64;
     std::size_t maximum_state_bytes_per_session = 16384;
     std::size_t maximum_state_bytes_per_tenant = 131072;
+    std::size_t maximum_cache_entries = 256;
+    std::size_t maximum_cache_bytes = 4U * 1024U * 1024U;
     std::int64_t default_deadline_milliseconds = 1500;
     std::int64_t state_ttl_milliseconds = 300000;
     std::size_t circuit_failure_threshold = 2;
@@ -108,6 +141,8 @@ struct InferenceUsage {
 
 struct InferenceLatency {
     double queue_milliseconds = 0.0;
+    double first_token_milliseconds = 0.0;
+    double inter_token_milliseconds = 0.0;
     double compute_milliseconds = 0.0;
     double retrieval_milliseconds = 0.0;
     double verification_milliseconds = 0.0;
@@ -172,6 +207,8 @@ struct ServiceAuditRecord {
 struct ServiceMetrics {
     std::size_t submitted_requests = 0;
     std::size_t completed_requests = 0;
+    std::size_t successful_requests = 0;
+    std::size_t abstained_requests = 0;
     std::size_t rejected_requests = 0;
     std::size_t cancelled_requests = 0;
     std::size_t timed_out_requests = 0;
@@ -183,7 +220,12 @@ struct ServiceMetrics {
     std::size_t total_output_tokens = 0;
     std::size_t total_state_bytes = 0;
     std::size_t cache_hits = 0;
+    std::size_t cache_evictions = 0;
+    double measurement_started_milliseconds = 0.0;
+    double measurement_ended_milliseconds = 0.0;
     std::vector<double> queue_latencies;
+    std::vector<double> first_token_latencies;
+    std::vector<double> inter_token_latencies;
     std::vector<double> compute_latencies;
     std::vector<double> retrieval_latencies;
     std::vector<double> verification_latencies;
@@ -201,8 +243,14 @@ struct SloThresholds {
 struct SloReport {
     std::size_t considered_requests = 0;
     std::size_t successful_requests = 0;
+    std::size_t abstained_requests = 0;
+    std::size_t rejected_requests = 0;
+    std::size_t cancelled_requests = 0;
     double availability_fraction = 0.0;
     double error_rate_fraction = 0.0;
+    double first_token_p50_milliseconds = 0.0;
+    double first_token_p95_milliseconds = 0.0;
+    double inter_token_p95_milliseconds = 0.0;
     double queue_p50_milliseconds = 0.0;
     double queue_p95_milliseconds = 0.0;
     double queue_p99_milliseconds = 0.0;
@@ -296,16 +344,25 @@ private:
 class InferenceService {
 public:
     explicit InferenceService(InferenceConfig config = {}, KnowledgePlane* knowledge = nullptr);
+    InferenceService(InferenceService&& other) noexcept;
+    InferenceService& operator=(InferenceService&& other) = delete;
+    InferenceService(const InferenceService&) = delete;
+    InferenceService& operator=(const InferenceService&) = delete;
 
     const InferenceConfig& config() const noexcept { return config_; }
-    const ServiceMetrics& metrics() const noexcept { return metrics_; }
-    const StateMetrics& state_metrics() const noexcept { return state_metrics_; }
-    const std::vector<ServiceAuditRecord>& audit() const noexcept { return audit_; }
-    const DeploymentController& deployment() const noexcept { return deployment_; }
-    DeploymentController& deployment() noexcept { return deployment_; }
+    ServiceMetrics metrics() const;
+    StateMetrics state_metrics() const;
+    std::vector<ServiceAuditRecord> audit() const;
+    DeploymentStatus deployment_status() const;
 
     void attach_knowledge_plane(KnowledgePlane& knowledge) noexcept;
     void set_slo_thresholds(const SloThresholds& thresholds);
+    void register_release(const DeploymentRelease& release);
+    void activate_release(const std::string& release_id);
+    void start_canary(const std::string& release_id, std::size_t percent);
+    void record_canary(const CanaryComparison& comparison);
+    void promote_canary();
+    double rollback_release();
     void set_fault(ServiceFault fault) noexcept;
     void clear_fault() noexcept;
     std::int64_t now_epoch_milliseconds() const noexcept;
@@ -331,7 +388,7 @@ private:
     struct PendingRequest {
         InferenceRequest request;
         AuthContext auth;
-        std::int64_t enqueued_at = 0;
+        double enqueued_at_milliseconds = 0.0;
     };
     struct SessionKey {
         std::string tenant_id;
@@ -345,6 +402,7 @@ private:
         StateSnapshot snapshot;
         SessionKey key;
         std::string transcript_digest;
+        std::vector<std::uint32_t> model_context;
     };
     struct CachedResponse {
         std::string cache_key;
@@ -365,17 +423,22 @@ private:
     std::vector<PendingRequest> pending_;
     std::vector<RuntimeState> states_;
     std::vector<CachedResponse> cache_;
+    std::size_t cache_bytes_ = 0U;
     std::vector<ServiceAuditRecord> audit_;
     ServiceMetrics metrics_;
     StateMetrics state_metrics_;
+    std::shared_ptr<InferenceBackend> backend_;
+    mutable std::recursive_mutex mutex_;
 
     InferenceResponse reject(const InferenceRequest& request, const std::string& code, const std::string& detail,
                              Decision decision = Decision::Deny);
     std::optional<std::string> validate(const InferenceRequest& request, const AuthContext& auth) const;
     std::vector<InferenceResponse> process_batch(const std::vector<PendingRequest>& batch);
-    InferenceResponse execute(const InferenceRequest& request, std::size_t batch_size);
+    InferenceResponse execute(const InferenceRequest& request, std::size_t batch_size, const InferenceTokenCallback& callback = {},
+                              double queue_milliseconds = 0.0);
     RuntimeState& state_for(const InferenceRequest& request);
-    void update_state(RuntimeState& state, const InferenceRequest& request, std::size_t output_tokens);
+    void update_state(RuntimeState& state, const InferenceRequest& request, std::size_t output_tokens,
+                      const std::vector<std::uint32_t>& model_context = {});
     void append_audit(const InferenceRequest& request, const InferenceResponse& response,
                       const std::string& event_type, const std::string& retrieval_ids,
                       const std::string& verifier_decision, const std::string& policy_rule);

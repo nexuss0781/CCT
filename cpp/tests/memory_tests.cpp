@@ -1,6 +1,7 @@
 #include "cct/memory.hpp"
 
 #include <cmath>
+#include <filesystem>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -143,6 +144,36 @@ void test_poisoning_boundary_and_causal_adapter() {
     require(!no_memory.memory_enabled && no_memory.hits.empty(), "no-memory ablation context is not empty");
 }
 
+void test_digest_deferred_policy_and_atomic_snapshot() {
+    const auto path = std::filesystem::temp_directory_path() / "cct-memory-atomic-snapshot.txt";
+    std::filesystem::remove(path);
+    auto memory_config = config();
+    memory_config.immediate_deletion = false;
+    memory_config.novelty_threshold = 0.01;
+    PersistentMemory memory(memory_config);
+    const auto first = memory.write(make_record(40, "digest fact", {1.0, 0.0, 0.0, 0.0}, 1, "digest-source"));
+    require(first.kind == MemoryDecisionKind::Write && memory.active_record(40).checksum_digest.size() == 64U,
+            "memory did not publish a full SHA-256 record digest");
+    const auto near_duplicate = memory.write(make_record(41, "near duplicate", {1.001, 0.0, 0.0, 0.0}, 2, "digest-source"));
+    require(near_duplicate.kind == MemoryDecisionKind::Ignore && near_duplicate.reason == "below_novelty_threshold",
+            "configured novelty threshold did not suppress a near duplicate");
+    const auto deletion = memory.delete_memory(40, "privacy_delete");
+    require(deletion.reason == "deletion_deferred" && memory.contains(40), "deferred deletion removed a record too early");
+    require(memory.process_deferred_deletions() == 1U && !memory.contains(40), "deferred deletion was not processed deterministically");
+    memory.save_snapshot(path.string());
+    require(std::filesystem::exists(path), "atomic snapshot was not published");
+    const auto restored = PersistentMemory::load_snapshot(path.string());
+    require(restored.serialize_snapshot() == memory.serialize_snapshot(), "atomic snapshot did not replay byte-for-byte");
+    auto tampered = memory.serialize_snapshot();
+    const auto content_position = tampered.find("digest fact");
+    require(content_position != std::string::npos, "memory record payload was not serialized");
+    tampered[content_position] = tampered[content_position] == 'd' ? 'x' : 'd';
+    bool tamper_rejected = false;
+    try { static_cast<void>(PersistentMemory::deserialize_snapshot(tampered)); } catch (const MemoryError&) { tamper_rejected = true; }
+    require(tamper_rejected, "tampered SHA-256 memory snapshot was accepted");
+    std::filesystem::remove(path);
+}
+
 void test_malformed_snapshot_rejection() {
     bool rejected = false;
     try {
@@ -151,6 +182,13 @@ void test_malformed_snapshot_rejection() {
         rejected = true;
     }
     require(rejected, "malformed memory snapshot was accepted");
+    bool oversized_rejected = false;
+    try {
+        static_cast<void>(PersistentMemory::deserialize_snapshot("CCT_MEMORY_SNAPSHOT_V2\nCONFIG 999999999 16 0.0 91 0.0 0.05 1\n"));
+    } catch (const MemoryError&) {
+        oversized_rejected = true;
+    }
+    require(oversized_rejected, "oversized memory snapshot configuration was accepted");
 }
 
 }  // namespace
@@ -161,6 +199,7 @@ int main() {
         {"filtered_exact_retrieval_and_citation", test_filtered_exact_retrieval_and_citation},
         {"deletion_expiry_quarantine_and_capacity", test_deletion_expiry_quarantine_and_capacity},
         {"poisoning_boundary_and_causal_adapter", test_poisoning_boundary_and_causal_adapter},
+        {"digest_deferred_policy_and_atomic_snapshot", test_digest_deferred_policy_and_atomic_snapshot},
         {"malformed_snapshot_rejection", test_malformed_snapshot_rejection},
     };
     std::size_t passed = 0;
