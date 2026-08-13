@@ -31,11 +31,16 @@ A task is not complete because code exists. It is complete only when the impleme
 
 ## Current execution position
 
+The repository records are not uniform: Stages 0–3 have explicit `PASS` status lines; Stages 4–7 explicitly state that gate validation is still in progress; Stage 8 and Stages 9–17 contain implementation or gate records but must remain tied to their exact artifacts and approval records. The current restored sandbox also lacks CMake, so a fresh native replay cannot be claimed from this environment.
+
 | Work item | Status | Evidence or next action |
 |---|---|---|
-| Stages 0–17 | `[x]` COMPLETE | Existing stage gates and release artifacts. Revalidate after any change. |
-| Track 1 source preparation | `[x]` COMPLETE | `artifacts/track1/` reports, manifests, unit tests, and formal gate. |
-| Track 1 native training handoff | `[x]` COMPLETE for the declared bounded contract | Native runner, checkpoints, and training report. Exact-answer EM/F1 remains outside the current contract. |
+| Stages 0–3 | `[x]` RECORDED PASS | Stage specifications and historical gate records; rerun after any change. |
+| Stages 4–7 | `[ ]` IN PROGRESS | Complete and record the missing gate validation and transition evidence. |
+| Stages 8–17 | `REVALIDATE` | Individual stage records exist, but reconcile stage-map status, approval records, and artifacts before treating the chain as uniformly complete. |
+| Track 1 source preparation | `[x]` RECORDED PASS | `artifacts/track1/` reports, manifests, unit tests, and formal gate. |
+| Track 1 native training handoff | `[x]` RECORDED PASS for the declared bounded contract | Native runner and training report; checkpoint paths in the report are historical `/tmp` paths and exact-answer EM/F1 remains outside the current contract. |
+| Fresh native replay | `[ ]` BLOCKED in this sandbox | CMake is not installed here; run the declared build and gate commands in the project or Colab environment. |
 | Ongoing maintenance | `REVALIDATE` | Pull the release commit, rerun the declared gate chain, and preserve new evidence when changing CCT. |
 
 ---
@@ -44,7 +49,7 @@ A task is not complete because code exists. It is complete only when the impleme
 
 **Goal:** Create a clean native C++20 baseline that builds, tests, benchmarks, and replays from a known repository state.
 
-**Status:** `[x] COMPLETE — REVALIDATE after changes.`
+**Status:** `[x] RECORDED PASS — fresh replay required after changes or in a new environment.`
 
 ## Implementation tasks
 
@@ -78,7 +83,7 @@ A task is not complete because code exists. It is complete only when the impleme
 
 **Goal:** Implement a correct and numerically stable field/operator substrate with independently verified analytic gradients.
 
-**Status:** `[x] COMPLETE — REVALIDATE after changes.`
+**Status:** `[x] RECORDED PASS — fresh replay required after changes or in a new environment.`
 
 ## Implementation tasks
 
@@ -113,7 +118,7 @@ A task is not complete because code exists. It is complete only when the impleme
 
 **Goal:** Build a stable selective recurrent sequence mechanism with causal semantics and full-vs-streaming equivalence.
 
-**Status:** `[x] COMPLETE — REVALIDATE after changes.`
+**Status:** `[x] RECORDED PASS — fresh replay required after changes or in a new environment.`
 
 ## Implementation tasks
 
@@ -147,7 +152,7 @@ A task is not complete because code exists. It is complete only when the impleme
 
 **Goal:** Add event identity, causal ordering, dependency structure, interventions, counterfactuals, robustness, and abstention.
 
-**Status:** `[x] COMPLETE — REVALIDATE after changes.`
+**Status:** `[x] RECORDED PASS — fresh replay required after changes or in a new environment.`
 
 ## Implementation tasks
 
@@ -183,7 +188,7 @@ A task is not complete because code exists. It is complete only when the impleme
 
 **Goal:** Implement durable, checksummed, provenance-linked, retrievable, deletable, conflict-aware, retention-governed, and recoverable memory.
 
-**Status:** `[x] COMPLETE — REVALIDATE after changes.`
+**Status:** `[ ] IN PROGRESS — the stage specification says gate validation is in progress.`
 
 ## Implementation tasks
 
@@ -196,19 +201,19 @@ A task is not complete because code exists. It is complete only when the impleme
 
 ## Gate and evidence tasks
 
-- [x] Verify exact retrieval and provenance integrity.
-- [x] Verify deletion, retention, expiry, conflict resolution, and deterministic rebuild.
-- [x] Verify poisoning isolation and malformed-record rejection.
-- [x] Simulate interruption and confirm recovery of the last committed state.
-- [x] Verify corrupt checksums fail closed.
-- [x] Record memory manifest, recovery report, deletion report, and gate decision.
-- [x] Write the Stage 4 transition report.
+- [ ] Verify exact retrieval and provenance integrity.
+- [ ] Verify deletion, retention, expiry, conflict resolution, and deterministic rebuild.
+- [ ] Verify poisoning isolation and malformed-record rejection.
+- [ ] Simulate interruption and confirm recovery of the last committed state.
+- [ ] Verify corrupt checksums fail closed.
+- [ ] Record memory manifest, recovery report, deletion report, and gate decision.
+- [ ] Write the Stage 4 transition report.
 
 ## Transition
 
-- [x] Record `PASS` for Stage 4.
-- [x] Preserve explicit approval before Stage 5 transition.
-- [x] Authorize language and code scaling within the approved data and resource scope.
+- [ ] Record `PASS` for Stage 4.
+- [ ] Preserve explicit approval before Stage 5 transition.
+- [ ] Authorize language and code scaling within the approved data and resource scope.
 
 **Evidence locations:** `artifacts/stage-4/`, memory logs, recovery fixtures, deletion records, and gate report.
 
@@ -218,7 +223,7 @@ A task is not complete because code exists. It is complete only when the impleme
 
 **Goal:** Demonstrate native language and code micro-training with matched baselines, memory attribution, long-context checks, replay, and code-safety controls.
 
-**Status:** `[x] COMPLETE — REVALIDATE after changes.`
+**Status:** `[ ] IN PROGRESS — the stage specification says gate validation is in progress.`
 
 ## Implementation tasks
 
@@ -231,19 +236,19 @@ A task is not complete because code exists. It is complete only when the impleme
 
 ## Gate and evidence tasks
 
-- [x] Verify finite training and stable checkpoints.
-- [x] Compare CCT to the declared matched controls.
-- [x] Verify checkpoint replay and deterministic restoration.
-- [x] Produce memory and runtime attribution.
-- [x] Produce long-context evidence.
-- [x] Exercise unsafe-code and malformed-code failures.
-- [x] Record the scaling report, baseline report, attribution report, and gate decision.
+- [ ] Verify finite training and stable checkpoints.
+- [ ] Compare CCT to the declared matched controls.
+- [ ] Verify checkpoint replay and deterministic restoration.
+- [ ] Produce memory and runtime attribution.
+- [ ] Produce long-context evidence.
+- [ ] Exercise unsafe-code and malformed-code failures.
+- [ ] Record the scaling report, baseline report, attribution report, and gate decision.
 
 ## Transition
 
-- [x] Record `PASS` for Stage 5.
-- [x] Preserve explicit approval before Stage 6 transition.
-- [x] Authorize bounded deliberation and verification.
+- [ ] Record `PASS` for Stage 5.
+- [ ] Preserve explicit approval before Stage 6 transition.
+- [ ] Authorize bounded deliberation and verification.
 
 **Evidence locations:** `artifacts/stage-5/`, scaling matrix, matched-baseline report, memory profile, and code-safety gate.
 
@@ -253,7 +258,7 @@ A task is not complete because code exists. It is complete only when the impleme
 
 **Goal:** Add bounded planning, independent verification, evidence-aware abstention, deny-by-default tools, replay, interruption recovery, and incident logging.
 
-**Status:** `[x] COMPLETE — REVALIDATE after changes.`
+**Status:** `[ ] IN PROGRESS — the stage specification says gate validation is in progress.`
 
 ## Implementation tasks
 
@@ -266,18 +271,18 @@ A task is not complete because code exists. It is complete only when the impleme
 
 ## Gate and evidence tasks
 
-- [x] Inject planning errors and verify independent detection.
-- [x] Verify plans remain within budget and timeout limits.
-- [x] Verify tools remain denied without authorization.
-- [x] Verify evidence and abstention outcomes.
-- [x] Replay interrupted plans deterministically.
-- [x] Confirm incidents are reconstructable from logs.
-- [x] Record the Stage 6 gate and transition package.
+- [ ] Inject planning errors and verify independent detection.
+- [ ] Verify plans remain within budget and timeout limits.
+- [ ] Verify tools remain denied without authorization.
+- [ ] Verify evidence and abstention outcomes.
+- [ ] Replay interrupted plans deterministically.
+- [ ] Confirm incidents are reconstructable from logs.
+- [ ] Record the Stage 6 gate and transition package.
 
 ## Transition
 
-- [x] Record `PASS` for Stage 6.
-- [x] Authorize controlled multimodal and open-ended research in Stage 7.
+- [ ] Record `PASS` for Stage 6.
+- [ ] Authorize controlled multimodal and open-ended research in Stage 7.
 
 **Evidence locations:** `artifacts/stage-6/`, plan fixtures, verifier report, tool-policy report, replay logs, and incident records.
 
@@ -287,7 +292,7 @@ A task is not complete because code exists. It is complete only when the impleme
 
 **Goal:** Extend CCT with typed multimodal events and validated adapters while preserving alignment, masks, typed memory, deterministic simulation, transfer checks, auditability, and safety.
 
-**Status:** `[x] COMPLETE — REVALIDATE after changes.`
+**Status:** `[ ] IN PROGRESS — the stage specification says terminal gate validation is in progress.`
 
 ## Implementation tasks
 
@@ -299,18 +304,18 @@ A task is not complete because code exists. It is complete only when the impleme
 
 ## Gate and evidence tasks
 
-- [x] Run contract tests for every declared adapter.
-- [x] Verify alignment, masking, missing-modality, and temporal-order behavior.
-- [x] Verify deterministic simulation and transfer evaluation.
-- [x] Verify typed-memory provenance and deletion.
-- [x] Verify audit and safety controls.
-- [x] Record the terminal research gate and controlled-continuation boundary.
+- [ ] Run contract tests for every declared adapter.
+- [ ] Verify alignment, masking, missing-modality, and temporal-order behavior.
+- [ ] Verify deterministic simulation and transfer evaluation.
+- [ ] Verify typed-memory provenance and deletion.
+- [ ] Verify audit and safety controls.
+- [ ] Record the terminal research gate and controlled-continuation boundary.
 
 ## Transition
 
-- [x] Record `PASS` for Stage 7.
-- [x] Authorize the production NLP governance segment.
-- [x] Keep unrestricted deployment closed.
+- [ ] Record `PASS` for Stage 7.
+- [ ] Authorize the production NLP governance segment.
+- [ ] Keep unrestricted deployment closed.
 
 **Evidence locations:** `artifacts/stage-7/`, adapter reports, multimodal fixtures, transfer report, safety report, and gate record.
 
@@ -320,7 +325,7 @@ A task is not complete because code exists. It is complete only when the impleme
 
 **Goal:** Establish the governance registry, policy boundaries, realistic application fixtures, artifact protocol, adversarial controls, and readiness evidence.
 
-**Status:** `[x] COMPLETE — REVALIDATE after changes.`
+**Status:** `REVALIDATE — recorded implementation or gate status; fresh replay and artifact reconciliation required.`
 
 ## Implementation tasks
 
@@ -352,7 +357,7 @@ A task is not complete because code exists. It is complete only when the impleme
 
 **Goal:** Acquire and prepare real data through native, reproducible, rights-aware, contamination-resistant corpus processing.
 
-**Status:** `[x] COMPLETE — REVALIDATE after changes.`
+**Status:** `REVALIDATE — recorded implementation or gate status; fresh replay and artifact reconciliation required.`
 
 ## Implementation tasks
 
@@ -386,7 +391,7 @@ A task is not complete because code exists. It is complete only when the impleme
 
 **Goal:** Create an immutable native tokenizer and representation contract with offsets, byte fallback, provenance, causal batches, and efficiency measurement.
 
-**Status:** `[x] COMPLETE — REVALIDATE after changes.`
+**Status:** `REVALIDATE — recorded implementation or gate status; fresh replay and artifact reconciliation required.`
 
 ## Implementation tasks
 
@@ -421,7 +426,7 @@ A task is not complete because code exists. It is complete only when the impleme
 
 **Goal:** Make CCT trainable through a native categorical next-token objective with analytic recurrence gradients, optimizer safety, checkpoint recovery, real-source evidence, and matched controls.
 
-**Status:** `[x] COMPLETE — REVALIDATE after changes.`
+**Status:** `REVALIDATE — recorded implementation or gate status; fresh replay and artifact reconciliation required.`
 
 ## Implementation tasks
 
@@ -456,7 +461,7 @@ A task is not complete because code exists. It is complete only when the impleme
 
 **Goal:** Scale the native path through reference and optimized implementations with parity, resource profiling, ordered workers, atomic recovery, and a backend decision.
 
-**Status:** `[x] COMPLETE — REVALIDATE after changes.`
+**Status:** `REVALIDATE — recorded implementation or gate status; fresh replay and artifact reconciliation required.`
 
 ## Implementation tasks
 
@@ -490,7 +495,7 @@ A task is not complete because code exists. It is complete only when the impleme
 
 **Goal:** Turn the trainable CCT core into a bounded task-adaptation system with explicit formatting, target-only masks, full and low-rank adaptation, structured outputs, citations, safety retention, authorization, and deletion lineage.
 
-**Status:** `[x] COMPLETE — REVALIDATE after changes.`
+**Status:** `REVALIDATE — recorded implementation or gate status; fresh replay and artifact reconciliation required.`
 
 ## Implementation tasks
 
@@ -524,7 +529,7 @@ A task is not complete because code exists. It is complete only when the impleme
 
 **Goal:** Improve controllability, helpfulness, refusal quality, citations, style, calibration, and task quality without unacceptable truthfulness, safety, or regression damage.
 
-**Status:** `[x] COMPLETE — REVALIDATE after changes.`
+**Status:** `REVALIDATE — recorded implementation or gate status; fresh replay and artifact reconciliation required.`
 
 ## Implementation tasks
 
@@ -558,7 +563,7 @@ A task is not complete because code exists. It is complete only when the impleme
 
 **Goal:** Provide typed retrieval, freshness, citations, conflict handling, deletion, poisoning isolation, auditability, and verified grounding.
 
-**Status:** `[x] COMPLETE — REVALIDATE after changes.`
+**Status:** `REVALIDATE — recorded implementation or gate status; fresh replay and artifact reconciliation required.`
 
 ## Implementation tasks
 
@@ -592,7 +597,7 @@ A task is not complete because code exists. It is complete only when the impleme
 
 **Goal:** Provide a production-like native inference service with versioned APIs, batching, state/cache isolation, observability, SLOs, fault controls, canaries, and rollback.
 
-**Status:** `[x] COMPLETE — REVALIDATE after changes.`
+**Status:** `REVALIDATE — recorded implementation or gate status; fresh replay and artifact reconciliation required.`
 
 ## Implementation tasks
 
