@@ -1,416 +1,762 @@
 # CCT Todo
 
-## Purpose and compliance
+## Operating rule
 
-This file is the executable task plan derived from [`Goal.md`](Goal.md). `Goal.md` is the canonical specification of what CCT must accomplish. `Todo.md` converts each goal into implementation, verification, artifact, and transition tasks.
+This file is the actionable execution companion to [`Goal.md`](Goal.md). It does not introduce a second roadmap. Every task below exists to satisfy a CCT Goal objective, implementation breakdown, gate, evidence requirement, or transition condition.
 
-A task is complete only when its code, realistic tests, formal gate, artifacts, and transition evidence are complete. Smoke tests support development but do not close a gate. No task may weaken a criterion, hide a failure, or claim behavior outside its measured evaluation contract.
+A task is not complete because code exists. It is complete only when the implementation is exercised by a realistic test or harness, the failure path is covered, the evidence artifact is written, and the relevant gate is rerun from the resulting commit.
 
-## Global CCT tasks
+## Status legend
 
-- [x] Keep implementation native C++20 with strict compilation and reproducible build configuration.
-- [x] Keep implementation, regression tests, formal gates, artifacts, and transition records separate.
-- [x] Record commit, configuration, source or environment manifest, seeds, hardware, software, tests, benchmarks, thresholds, known failures, artifact hashes, and final status.
-- [x] Use only `PASS`, `FAIL`, and explicitly permitted `BLOCKED` statuses.
-- [x] Preserve deterministic replay and fail closed on missing, malformed, corrupt, incompatible, or non-finite inputs.
-- [x] Require baseline or ablation evidence before claiming a component advantage.
-- [x] Invalidate and rerun a gate after an affecting implementation change.
-- [x] Keep artifacts reviewable and exclude secrets, private source material, hidden test data, and evaluator-only information.
+| Marker | Meaning |
+|---|---|
+| `[ ]` | Not complete. It remains an actionable task. |
+| `[x]` | Complete in the repository and supported by recorded evidence. |
+| `[!]` | Failed or invalidated. Stop at the boundary, remediate, and rerun. |
+| `[?]` | Blocked by an explicitly declared optional dependency. The core gate remains closed. |
+| `REVALIDATE` | Previously passed, but must be rerun if code, configuration, data, environment, or artifact identity changes. |
 
-## Stage 0 — Reproducible Baseline
+## Global execution checklist
 
-**Status:** [x] Implemented and gated.
+- [x] Keep the implementation native C++20 unless a stage specification explicitly declares another native backend.
+- [x] Define one canonical build, test, gate, benchmark, artifact, and release-record contract.
+- [x] Pin repository commit, configuration, seeds, data or environment manifests, software versions, hardware context, and artifact hashes for every release-quality run.
+- [x] Treat `PASS`, `FAIL`, and `BLOCKED` as the only valid gate statuses.
+- [x] Stop at any failed correctness, reproducibility, provenance, safety, recovery, or operational criterion.
+- [x] Require a realistic failure path for each major feature rather than only a happy-path smoke test.
+- [x] Preserve a human-readable report together with machine-readable checks, manifests, logs, and benchmark records.
+- [x] Rerun an invalidated gate whenever implementation, configuration, source, environment, or checkpoint identity changes.
+- [x] Require a baseline or ablation for every claimed contribution of recurrence, spectral operation, causal metadata, workspace, memory, deliberation, or optimization.
+- [x] Do not claim a capability beyond its declared evaluation contract.
 
-### Implementation
+## Current execution position
 
-- [x] Freeze compiler, CMake, language-standard, warning, dependency, operating-system, and build contracts.
-- [x] Maintain a clean native C++20 build with strict warnings and warnings-as-errors.
-- [x] Provide deterministic unit, integration, and benchmark harnesses with explicit seeds.
-- [x] Define artifact directories, report schemas, status values, and release-record fields.
-- [x] Add missing-dependency, malformed-configuration, non-finite-output, and replay failure paths.
+| Work item | Status | Evidence or next action |
+|---|---|---|
+| Stages 0–17 | `[x]` COMPLETE | Existing stage gates and release artifacts. Revalidate after any change. |
+| Track 1 source preparation | `[x]` COMPLETE | `artifacts/track1/` reports, manifests, unit tests, and formal gate. |
+| Track 1 native training handoff | `[x]` COMPLETE for the declared bounded contract | Native runner, checkpoints, and training report. Exact-answer EM/F1 remains outside the current contract. |
+| Ongoing maintenance | `REVALIDATE` | Pull the release commit, rerun the declared gate chain, and preserve new evidence when changing CCT. |
 
-### Gate and transition
+---
 
-- [x] Verify clean checkout build, repeated test identity, benchmark schema, and commit/configuration identity.
-- [x] Record Stage 0 `PASS`.
-- [x] Authorize Stage 1 numerical implementation only after all mandatory checks pass.
+# Stage 0 — CCT Todo: Reproducible Baseline
 
-## Stage 1 — Differentiable Numerical Engine
+**Goal:** Create a clean native C++20 baseline that builds, tests, benchmarks, and replays from a known repository state.
 
-**Status:** [x] Implemented and gated.
+**Status:** `[x] COMPLETE — REVALIDATE after changes.`
 
-### Implementation
+## Implementation tasks
 
-- [x] Define tensor, field, shape, layout, dtype, ownership, and lifetime contracts.
-- [x] Implement required numerical operators and deterministic boundary behavior.
-- [x] Implement analytic gradients for every operator used by the sequence core.
-- [x] Add finite-difference or independent-reference gradient verification.
-- [x] Add overflow, underflow, NaN, infinity, invalid-shape, aliasing, and mutation checks.
+- [x] Define supported compiler, CMake version, C++ standard, operating system, warning policy, and dependency contract.
+- [x] Configure native C++20 targets with strict warnings and warnings-as-errors.
+- [x] Implement deterministic unit and integration test entry points with explicit seeds and configuration.
+- [x] Implement a stable benchmark schema containing workload, seed, elapsed time, throughput, memory, and environment.
+- [x] Define canonical artifact directories, report schemas, status values, and release-record fields.
+- [x] Add missing-dependency, malformed-configuration, non-finite-output, and nondeterministic-replay failures.
 
-### Gate and transition
+## Gate and evidence tasks
 
-- [x] Verify forward correctness, gradient tolerance, deterministic replay, finite outputs, and invalid-input failures.
-- [x] Record Stage 1 `PASS`.
-- [x] Authorize Stage 2 sequence-core implementation.
+- [x] Run a clean checkout build.
+- [x] Run all baseline tests and verify exit codes.
+- [x] Run the benchmark twice under the same declared environment.
+- [x] Compare repeated test and benchmark identities within declared tolerances.
+- [x] Verify every artifact identifies the exact commit and configuration.
+- [x] Write the Stage 0 gate record and human-readable report.
 
-## Stage 2 — Efficient Sequence Core
+## Transition
 
-**Status:** [x] Implemented and gated.
+- [x] Record `PASS` for Stage 0.
+- [x] Record authorization for Stage 1 numerical implementation.
+- [x] Confirm the record does not claim learning, language capability, or deployment.
 
-### Implementation
+**Evidence locations:** `artifacts/stage-0/`, Stage 0 gate executable, CTest records, and release report.
 
-- [x] Define sequence state, update order, reset semantics, and causal boundaries.
-- [x] Implement recurrent state updates on the Stage 1 substrate.
-- [x] Implement chunked and streaming execution with bounded state memory.
-- [x] Expose state ownership, reset, serialization, and versioning.
-- [x] Measure throughput, latency, memory, and numerical stability.
-- [x] Add invalid-state, wrong-shape, out-of-order, reset, and non-finite failures.
+---
 
-### Gate and transition
+# Stage 1 — CCT Todo: Differentiable Numerical Engine
 
-- [x] Verify full-sequence/streaming equivalence, deterministic recovery, resource bounds, and fail-closed transitions.
-- [x] Record Stage 2 `PASS`.
-- [x] Authorize Stage 3 causal-event learning.
+**Goal:** Implement a correct and numerically stable field/operator substrate with independently verified analytic gradients.
 
-## Stage 3 — Causal Event Learning
+**Status:** `[x] COMPLETE — REVALIDATE after changes.`
 
-**Status:** [x] Implemented and gated.
+## Implementation tasks
 
-### Implementation
+- [x] Define tensor or field storage, shape, layout, dtype, ownership, indexing, and lifetime contracts.
+- [x] Implement forward numerical operators, stable reductions, normalization, activation, mixing, and required spectral or adaptive primitives.
+- [x] Implement analytic gradients for every trainable operator used by the later sequence core.
+- [x] Implement gradient accumulation, parameter identity, and deterministic update interfaces.
+- [x] Add finite, range, overflow, underflow, aliasing, mutation, invalid-shape, and boundary checks.
+- [x] Ensure corrupted or non-finite numerical state fails closed.
 
-- [x] Add stable event identity, order, source metadata, and causal relationships.
-- [x] Validate causal dependency structures without future or evaluator leakage.
-- [x] Implement intervention and counterfactual pathways with provenance.
-- [x] Add reorder, omission, irrelevant-event, contradiction, and perturbation tests.
-- [x] Implement confidence and abstention for unsupported or ambiguous conclusions.
+## Gate and evidence tasks
 
-### Gate and transition
+- [x] Compare forward results with an independent reference.
+- [x] Compare analytic gradients with finite differences or an independent derivative implementation.
+- [x] Run the full numerical test matrix with fixed seeds.
+- [x] Verify deterministic replay and finite outputs.
+- [x] Exercise invalid-shape, aliasing, overflow, and corrupted-state failures.
+- [x] Record tolerances, environment, operator coverage, gradient results, and artifact hashes.
+- [x] Write the Stage 1 gate record and transition report.
 
-- [x] Verify event identity, causal ordering, leakage audit, intervention, counterfactuals, robustness, and abstention.
-- [x] Verify the expanded gate contract.
-- [x] Record Stage 3 `PASS` and approval boundary.
-- [x] Authorize Stage 4 only within its documented scope.
+## Transition
 
-## Stage 4 — Persistent Verifiable Memory
+- [x] Record `PASS` for Stage 1.
+- [x] Authorize Stage 2 sequence-core work.
+- [x] Preserve the numerical contract as the correctness reference for later optimized paths.
 
-**Status:** [x] Implemented and gated.
+**Evidence locations:** `artifacts/stage-1/`, numerical engine tests, gradient reports, and gate record.
 
-### Implementation
+---
+
+# Stage 2 — CCT Todo: Efficient Sequence Core
+
+**Goal:** Build a stable selective recurrent sequence mechanism with causal semantics and full-vs-streaming equivalence.
+
+**Status:** `[x] COMPLETE — REVALIDATE after changes.`
+
+## Implementation tasks
+
+- [x] Define sequence state, update order, reset semantics, causal boundaries, and state ownership.
+- [x] Implement recurrent state updates using the Stage 1 numerical substrate.
+- [x] Implement typed state initialization, serialization, versioning, and reset.
+- [x] Implement chunked and streaming execution with incremental state reuse and flush behavior.
+- [x] Bound state memory and allocations.
+- [x] Add invalid-state-version, wrong-shape, out-of-order-event, unexpected-reset, and non-finite-recurrence failures.
+
+## Gate and evidence tasks
+
+- [x] Compare full-sequence and streaming outputs.
+- [x] Verify deterministic state initialization, update, serialization, reload, and reset.
+- [x] Measure memory, throughput, latency, and long-sequence behavior.
+- [x] Exercise invalid state transitions and ensure they fail closed.
+- [x] Record state identity, resource thresholds, seeds, and comparison tolerances.
+- [x] Write the Stage 2 gate record and transition report.
+
+## Transition
+
+- [x] Record `PASS` for Stage 2.
+- [x] Authorize Stage 3 causal-event work.
+- [x] Retain the simple sequence path as a correctness oracle for later optimization.
+
+**Evidence locations:** `artifacts/stage-2/`, sequence-core tests, streaming-equivalence report, and gate record.
+
+---
+
+# Stage 3 — CCT Todo: Causal Event Learning
+
+**Goal:** Add event identity, causal ordering, dependency structure, interventions, counterfactuals, robustness, and abstention.
+
+**Status:** `[x] COMPLETE — REVALIDATE after changes.`
+
+## Implementation tasks
+
+- [x] Represent stable event IDs, ordering or timestamps, source metadata, and causal relationships.
+- [x] Build and validate causal dependency structures with a declared cycle policy.
+- [x] Add topological execution and future-information leakage checks.
+- [x] Implement interventions with changed-input records, outcome comparison, and temporary-state rollback.
+- [x] Implement paired counterfactual worlds with shared seed control and changed-variable manifests.
+- [x] Add reorder, omission, irrelevant-event, contradiction, perturbation, and adversarial-event tests.
+- [x] Implement confidence, evidence thresholds, uncertainty records, and safe abstention.
+
+## Gate and evidence tasks
+
+- [x] Verify event identity, duplicate detection, source digests, and ordering.
+- [x] Pass the causal DAG and leakage audit.
+- [x] Verify intervention and counterfactual consistency.
+- [x] Verify robustness under declared perturbations.
+- [x] Verify unsupported and ambiguous requests abstain safely.
+- [x] Record the expanded gate contract and approval boundary.
+- [x] Write the Stage 3 gate record and transition report.
+
+## Transition
+
+- [x] Record `PASS` for Stage 3.
+- [x] Preserve explicit approval before Stage 4 transition.
+- [x] Authorize Stage 4 only within the documented scope.
+
+**Evidence locations:** `artifacts/stage-3/`, causal-event fixtures, expanded gate report, and approval record.
+
+---
+
+# Stage 4 — CCT Todo: Persistent Verifiable Memory
+
+**Goal:** Implement durable, checksummed, provenance-linked, retrievable, deletable, conflict-aware, retention-governed, and recoverable memory.
+
+**Status:** `[x] COMPLETE — REVALIDATE after changes.`
+
+## Implementation tasks
 
 - [x] Implement checksummed records, versions, atomic commits, indexes, and durable metadata.
-- [x] Implement exact retrieval with provenance and citation metadata.
-- [x] Implement deletion, retention, expiry, conflict resolution, and deterministic rebuild.
-- [x] Isolate or reject poisoned, malformed, duplicated, and unauthorized records.
-- [x] Test partial writes, corruption, interruption, and last-committed-state recovery.
+- [x] Implement exact lookup, deterministic ranking, provenance, citation, and missing-result behavior.
+- [x] Implement retention, expiry, deletion tombstones, rebuild, conflict records, and ownership.
+- [x] Reject malformed, duplicated, poisoned, and unauthorized records.
+- [x] Implement crash, partial-write, corrupted-checksum, and committed-state recovery.
+- [x] Preserve append or record-log identity and audit history.
 
-### Gate and transition
+## Gate and evidence tasks
 
-- [x] Verify exact retrieval, provenance, deletion, retention, conflicts, poisoning isolation, rebuild, and recovery.
-- [x] Verify the expanded gate contract.
-- [x] Record Stage 4 `PASS` and approval boundary.
-- [x] Authorize Stage 5 language and code scaling.
+- [x] Verify exact retrieval and provenance integrity.
+- [x] Verify deletion, retention, expiry, conflict resolution, and deterministic rebuild.
+- [x] Verify poisoning isolation and malformed-record rejection.
+- [x] Simulate interruption and confirm recovery of the last committed state.
+- [x] Verify corrupt checksums fail closed.
+- [x] Record memory manifest, recovery report, deletion report, and gate decision.
+- [x] Write the Stage 4 transition report.
 
-## Stage 5 — Language and Code Scaling
+## Transition
 
-**Status:** [x] Implemented and gated.
+- [x] Record `PASS` for Stage 4.
+- [x] Preserve explicit approval before Stage 5 transition.
+- [x] Authorize language and code scaling within the approved data and resource scope.
 
-### Implementation
+**Evidence locations:** `artifacts/stage-4/`, memory logs, recovery fixtures, deletion records, and gate report.
 
-- [x] Run governed native language and code micro-corpora.
-- [x] Establish matched baselines with equal data, token budgets, and evaluation splits.
-- [x] Attribute memory and runtime to recurrent, spectral, memory, and data components.
-- [x] Measure context-length and sequence-size behavior.
+---
+
+# Stage 5 — CCT Todo: Language and Code Scaling
+
+**Goal:** Demonstrate native language and code micro-training with matched baselines, memory attribution, long-context checks, replay, and code-safety controls.
+
+**Status:** `[x] COMPLETE — REVALIDATE after changes.`
+
+## Implementation tasks
+
+- [x] Pin governed language and code micro-corpora with source, license, split, and contamination records.
+- [x] Implement fixed-budget native training, finite-objective checks, checkpoint, and resume.
+- [x] Implement matched recurrent or dense reference baselines using equal data, token budget, and evaluation splits.
+- [x] Build context, memory, throughput, and parameter-budget scaling matrix.
+- [x] Attribute resource cost to recurrence, spectral operation, memory, and data processing.
+- [x] Add syntax-aware code fixtures, malformed-code behavior, execution denial, and sandbox boundaries.
+
+## Gate and evidence tasks
+
+- [x] Verify finite training and stable checkpoints.
+- [x] Compare CCT to the declared matched controls.
 - [x] Verify checkpoint replay and deterministic restoration.
-- [x] Add syntax-aware code fixtures and deny-by-default execution boundaries.
+- [x] Produce memory and runtime attribution.
+- [x] Produce long-context evidence.
+- [x] Exercise unsafe-code and malformed-code failures.
+- [x] Record the scaling report, baseline report, attribution report, and gate decision.
 
-### Gate and transition
+## Transition
 
-- [x] Verify finite training, provenance, matched baselines, memory attribution, long-context behavior, checkpoint replay, and code-safety failures.
-- [x] Verify the expanded gate contract.
-- [x] Record Stage 5 `PASS` and approval boundary.
-- [x] Authorize Stage 6 deliberation and verification.
+- [x] Record `PASS` for Stage 5.
+- [x] Preserve explicit approval before Stage 6 transition.
+- [x] Authorize bounded deliberation and verification.
 
-## Stage 6 — Deliberation and Verification
+**Evidence locations:** `artifacts/stage-5/`, scaling matrix, matched-baseline report, memory profile, and code-safety gate.
 
-**Status:** [x] Implemented and gated.
+---
 
-### Implementation
+# Stage 6 — CCT Todo: Deliberation and Verification
 
-- [x] Define typed plans, dependencies, preconditions, expected results, budgets, and timeouts.
-- [x] Implement independent verification and disagreement handling.
-- [x] Require evidence and bounded abstention for unsupported conclusions.
-- [x] Keep tools deny-by-default with explicit authorization and audit records.
-- [x] Implement deterministic replay, idempotent retries, cancellation, and incident reconstruction.
+**Goal:** Add bounded planning, independent verification, evidence-aware abstention, deny-by-default tools, replay, interruption recovery, and incident logging.
 
-### Gate and transition
+**Status:** `[x] COMPLETE — REVALIDATE after changes.`
 
-- [x] Verify plan budgets, injected-error detection, evidence, abstention, tool denial, replay, interruption, and incident logging.
-- [x] Verify the expanded gate contract.
-- [x] Record Stage 6 `PASS` and approval boundary.
-- [x] Authorize Stage 7 controlled multimodal research.
+## Implementation tasks
 
-## Stage 7 — Multimodal and Open-Ended Research
+- [x] Represent typed plans with steps, dependencies, preconditions, expected results, budget, timeout, and cancellation.
+- [x] Implement an independent verifier that cannot silently self-certify the same result.
+- [x] Attach evidence, disagreement, approval, and abstention status to each material claim.
+- [x] Register offline tools with deny-by-default authorization and input/output validation.
+- [x] Implement idempotent retry, interruption, cancellation, partial-completion, and incident reconstruction.
+- [x] Add unsupported-plan, ambiguous-result, missing-evidence, and unsafe-action failures.
 
-**Status:** [x] Implemented and gated.
+## Gate and evidence tasks
 
-### Implementation
+- [x] Inject planning errors and verify independent detection.
+- [x] Verify plans remain within budget and timeout limits.
+- [x] Verify tools remain denied without authorization.
+- [x] Verify evidence and abstention outcomes.
+- [x] Replay interrupted plans deterministically.
+- [x] Confirm incidents are reconstructable from logs.
+- [x] Record the Stage 6 gate and transition package.
 
-- [x] Define typed interfaces for all declared modalities and adapter lifecycle.
-- [x] Implement the declared adapter set with provenance, timestamps, masks, and failure behavior.
-- [x] Implement mask-aware fusion with missing and invalid modality behavior.
-- [x] Store typed multimodal memory with source identity and deletion behavior.
-- [x] Add deterministic simulation, transfer checks, audit records, and unsafe-input controls.
+## Transition
 
-### Gate and transition
+- [x] Record `PASS` for Stage 6.
+- [x] Authorize controlled multimodal and open-ended research in Stage 7.
 
-- [x] Verify every adapter, alignment, masks, temporal ordering, conflicts, typed memory, deletion, simulation, transfer, audit, and safety.
-- [x] Verify the expanded terminal research gate.
-- [x] Record controlled-continuation `PASS`.
-- [x] Authorize Stage 8 governance foundation only within controlled scope.
+**Evidence locations:** `artifacts/stage-6/`, plan fixtures, verifier report, tool-policy report, replay logs, and incident records.
 
-## Stage 8 — Production NLP Governance Foundation
+---
 
-**Status:** [x] Implemented and gated.
+# Stage 7 — CCT Todo: Multimodal and Open-Ended Research
 
-### Implementation
+**Goal:** Extend CCT with typed multimodal events and validated adapters while preserving alignment, masks, typed memory, deterministic simulation, transfer checks, auditability, and safety.
 
-- [x] Register models, datasets, tools, policies, evaluators, and releases with immutable identities.
+**Status:** `[x] COMPLETE — REVALIDATE after changes.`
+
+## Implementation tasks
+
+- [x] Define typed modality interfaces, adapter lifecycle, source, timestamp, confidence, shape, and validity fields.
+- [x] Implement the seven declared adapters with versioning, capability checks, and malformed-input failures.
+- [x] Implement mask-aware fusion with missing-modality, temporal-order, conflict, and future-leakage handling.
+- [x] Store typed multimodal memory with source identity, retention, retrieval, and deletion behavior.
+- [x] Implement deterministic simulation, transfer boundaries, audit logging, and unsafe-input controls.
+
+## Gate and evidence tasks
+
+- [x] Run contract tests for every declared adapter.
+- [x] Verify alignment, masking, missing-modality, and temporal-order behavior.
+- [x] Verify deterministic simulation and transfer evaluation.
+- [x] Verify typed-memory provenance and deletion.
+- [x] Verify audit and safety controls.
+- [x] Record the terminal research gate and controlled-continuation boundary.
+
+## Transition
+
+- [x] Record `PASS` for Stage 7.
+- [x] Authorize the production NLP governance segment.
+- [x] Keep unrestricted deployment closed.
+
+**Evidence locations:** `artifacts/stage-7/`, adapter reports, multimodal fixtures, transfer report, safety report, and gate record.
+
+---
+
+# Stage 8 — CCT Todo: Production NLP Governance Foundation
+
+**Goal:** Establish the governance registry, policy boundaries, realistic application fixtures, artifact protocol, adversarial controls, and readiness evidence.
+
+**Status:** `[x] COMPLETE — REVALIDATE after changes.`
+
+## Implementation tasks
+
+- [x] Register models, data, tools, policies, evaluators, and releases with immutable identities.
 - [x] Define allowed, disallowed, review-required, and evaluator-only operations.
-- [x] Create realistic bounded application fixtures and user-visible failure reports.
-- [x] Implement complete reviewable artifact protocol.
-- [x] Test adversarial inputs, policy bypass, leakage, and unsafe-operation controls.
+- [x] Build realistic bounded application fixtures with user-visible reports and evaluator ownership.
+- [x] Produce manifest, config, environment, tests, benchmarks, gate, logs, and report artifacts.
+- [x] Exercise prompt, data, tool, identity, leakage, policy-bypass, and rollback challenges.
 
-### Gate and transition
+## Gate and evidence tasks
 
-- [x] Verify registry and policy integrity, realistic evidence, artifact completeness, adversarial controls, and readiness boundary.
-- [x] Record governance-only `PASS`.
-- [x] Authorize Stage 9 governed real-source data work.
+- [x] Verify registry and policy integrity.
+- [x] Run realistic application fixtures, including failure paths.
+- [x] Verify artifact completeness and identity linkage.
+- [x] Verify adversarial controls and unsafe-operation denial.
+- [x] Document the readiness boundary.
+- [x] Record that the gate authorizes governed data work only, not unrestricted deployment.
 
-## Stage 9 — Governed Data and Corpus
+## Transition
 
-**Status:** [x] Implemented and gated.
+- [x] Record `PASS` for Stage 8.
+- [x] Authorize governed real-source corpus work in Stage 9.
 
-### Implementation
+**Evidence locations:** `artifacts/stage-8/`, governance registry, policy records, application fixtures, adversarial report, and gate record.
 
-- [x] Pin sources, revisions, splits, license records, and acquisition URLs.
+---
+
+# Stage 9 — CCT Todo: Governed Data and Corpus
+
+**Goal:** Acquire and prepare real data through native, reproducible, rights-aware, contamination-resistant corpus processing.
+
+**Status:** `[x] COMPLETE — REVALIDATE after changes.`
+
+## Implementation tasks
+
+- [x] Pin every source, revision, split, license record, and acquisition URL.
 - [x] Quarantine rights, privacy, malformed, unsafe, and disallowed records.
-- [x] Detect exact and near duplicates and prevent cross-split contamination.
-- [x] Build deterministic shards with stable ordering, seeds, counts, and digests.
-- [x] Implement deletion, re-preparation, stale-artifact detection, and audit.
+- [x] Implement exact and near-duplicate detection.
+- [x] Enforce cross-split contamination barriers.
+- [x] Build deterministic shards with stable ordering, seed, counts, digests, and replay.
+- [x] Implement deletion, re-preparation, audit, stale-artifact detection, and missing-source failure.
 
-### Gate and transition
+## Gate and evidence tasks
 
-- [x] Verify source identity, rights/quarantine rules, contamination barriers, deterministic replay, deletion, and audit.
-- [x] Verify zero unexplained rows and overlaps.
-- [x] Record Stage 9 `PASS`.
-- [x] Authorize Stage 10 tokenizer and representation work.
+- [x] Verify source identity and rights metadata.
+- [x] Verify quarantine and safety decisions.
+- [x] Verify exact and near deduplication.
+- [x] Verify zero unexplained train, validation, and test overlaps.
+- [x] Replay shard preparation from the same seed and source.
+- [x] Verify deletion and stale-artifact detection.
+- [x] Record the data gate and source audit.
 
-## Stage 10 — Tokenizer and Representation
+## Transition
 
-**Status:** [x] Implemented and gated.
+- [x] Record `PASS` for Stage 9.
+- [x] Authorize tokenizer and representation work in Stage 10.
 
-### Implementation
+**Evidence locations:** `artifacts/stage-9/`, source manifests, quarantine records, deduplication reports, deterministic shards, deletion report, and gate record.
 
-- [x] Implement and compare declared byte, subword, and hybrid tokenizer candidates.
-- [x] Freeze the selected vocabulary and tokenizer snapshot with stable hash.
-- [x] Preserve Unicode-safe source-to-token offsets and invalid-input policy.
-- [x] Guarantee byte fallback for the supported byte range.
-- [x] Build packed and padded causal batches with masks and boundary metadata.
-- [x] Measure token efficiency, memory, throughput, and round-trip behavior.
+---
 
-### Gate and transition
+# Stage 10 — CCT Todo: Tokenizer and Representation
 
-- [x] Verify snapshot identity, offsets, byte coverage, round trips, batches, and efficiency comparison.
-- [x] Record Stage 10 `PASS` and tokenizer identity.
-- [x] Authorize Stage 11 trainable native NLP core.
+**Goal:** Create an immutable native tokenizer and representation contract with offsets, byte fallback, provenance, causal batches, and efficiency measurement.
 
-## Stage 11 — Trainable Native NLP Core
+**Status:** `[x] COMPLETE — REVALIDATE after changes.`
 
-**Status:** [x] Implemented and gated.
+## Implementation tasks
 
-### Implementation
+- [x] Implement byte, subword, and hybrid tokenizer candidates.
+- [x] Compare candidates under a declared data and evaluation contract.
+- [x] Freeze the selected vocabulary and tokenizer snapshot with a stable hash.
+- [x] Implement Unicode-safe source-to-token offsets and malformed-input policy.
+- [x] Implement byte fallback for every supported byte.
+- [x] Build deterministic packed and padded causal batches with padding, boundary, and record masks.
+- [x] Measure token efficiency, source bytes, memory, throughput, and round-trip behavior.
 
-- [x] Define categorical next-token objective, causal masks, and token accounting.
-- [x] Implement analytic recurrence gradients and independent numerical verification.
-- [x] Implement optimizer scheduling, clipping, finite checks, and deterministic initialization.
-- [x] Implement checkpoint identity for tokenizer, dataset, model, optimizer, step, and cursor.
-- [x] Run real-source pilots and matched controls.
+## Gate and evidence tasks
+
+- [x] Verify tokenizer snapshot identity and immutable loading.
+- [x] Verify source offsets, Unicode behavior, and byte fallback.
+- [x] Verify deterministic round trips.
+- [x] Verify packed and padded batch masks and boundaries.
+- [x] Compare efficiency and representation results.
+- [x] Record that tokenizer changes invalidate downstream data and checkpoint identity.
+- [x] Write the Stage 10 gate and transition record.
+
+## Transition
+
+- [x] Record `PASS` for Stage 10.
+- [x] Authorize the trainable native NLP core in Stage 11.
+
+**Evidence locations:** `artifacts/stage-10/`, tokenizer snapshots, offset fixtures, batch reports, efficiency comparison, and gate record.
+
+---
+
+# Stage 11 — CCT Todo: Trainable Native NLP Core
+
+**Goal:** Make CCT trainable through a native categorical next-token objective with analytic recurrence gradients, optimizer safety, checkpoint recovery, real-source evidence, and matched controls.
+
+**Status:** `[x] COMPLETE — REVALIDATE after changes.`
+
+## Implementation tasks
+
+- [x] Define the next-token objective, causal masks, sequence contract, target validation, and token accounting.
+- [x] Implement analytic recurrence gradients and independently verify them numerically.
+- [x] Implement stable optimization, clipping, scheduling, finite checks, and deterministic initialization.
+- [x] Save and reload checkpoints containing tokenizer, dataset, configuration, optimizer, step, cursor, and model identity.
+- [x] Implement wrong-identity, corruption, and incompatible-checkpoint rejection.
+- [x] Run a real-source pilot and matched controls.
 - [x] Measure validation loss, perplexity, token accuracy, throughput, memory, and parameters.
 
-### Gate and transition
+## Gate and evidence tasks
 
-- [x] Verify finite objective and analytic-gradient agreement.
-- [x] Verify deterministic multi-seed behavior and held-out results.
-- [x] Verify matched controls and exact checkpoint save/load/resume.
-- [x] Verify wrong-identity rejection, corruption failure, and complete artifacts.
-- [x] Record Stage 11 `PASS`.
-- [x] Authorize Stage 12 scaling and accelerator systems.
+- [x] Verify finite objectives and gradients.
+- [x] Verify analytic-gradient agreement.
+- [x] Verify deterministic multi-seed behavior.
+- [x] Verify held-out behavior or explain the result without weakening the criterion.
+- [x] Verify checkpoint save, exact load, wrong-identity rejection, corruption failure, and resume equivalence.
+- [x] Verify real-source provenance and matched controls.
+- [x] Record complete machine-readable and human-readable artifacts.
 
-## Stage 12 — Scaling and Accelerator Systems
+## Transition
 
-**Status:** [x] Implemented and gated.
+- [x] Record `PASS` for Stage 11.
+- [x] Authorize scaling and accelerator systems in Stage 12.
 
-### Implementation
+**Evidence locations:** `artifacts/stage-11/`, NLP trainer tests, gradient report, pilot report, checkpoint artifacts, and gate record.
 
-- [x] Preserve a deterministic CPU reference correctness oracle.
-- [x] Implement optimized or fused paths with numerical parity checks.
-- [x] Run the declared scaling matrix across context, batch, model, and data budgets.
+---
+
+# Stage 12 — CCT Todo: Scaling and Accelerator Systems
+
+**Goal:** Scale the native path through reference and optimized implementations with parity, resource profiling, ordered workers, atomic recovery, and a backend decision.
+
+**Status:** `[x] COMPLETE — REVALIDATE after changes.`
+
+## Implementation tasks
+
+- [x] Preserve the simple CPU reference path as correctness oracle.
+- [x] Implement optimized or fused path with explicit fallback.
+- [x] Build the context, batch, model, and data scaling matrix.
 - [x] Profile memory, throughput, latency, allocations, and failure behavior.
-- [x] Verify ordered worker equivalence, interruption handling, atomic recovery, and corruption rejection.
-- [x] Record an evidence-based backend decision without fabricating unsupported backends.
+- [x] Implement ordered worker behavior and seed partitioning.
+- [x] Implement atomic checkpoint, partial-write simulation, corrupt-checkpoint rejection, and committed-state replay.
+- [x] Record backend selection and unsupported-platform capabilities honestly.
 
-### Gate and transition
+## Gate and evidence tasks
 
-- [x] Verify reference/fused parity, finite resource-accounted scaling, worker equivalence, recovery, and corruption failure.
-- [x] Record Stage 12 `PASS`.
-- [x] Authorize Stage 13 supervised fine-tuning and adapters.
+- [x] Verify reference and optimized numerical parity.
+- [x] Run the complete resource-accounted scaling matrix.
+- [x] Verify worker equivalence and interruption behavior.
+- [x] Verify atomic recovery and corruption failure.
+- [x] Record the backend decision and absent capabilities.
+- [x] Write the Stage 12 gate and transition package.
 
-## Stage 13 — Supervised Fine-Tuning and Adapters
+## Transition
 
-**Status:** [x] Implemented and gated.
+- [x] Record `PASS` for Stage 12.
+- [x] Authorize supervised fine-tuning and adapters in Stage 13.
 
-### Implementation
+**Evidence locations:** `artifacts/stage-12/`, parity report, scaling matrix, resource profile, recovery report, architecture decision, and gate record.
 
-- [x] Define task schemas, example identity, provenance, eligibility, and evaluator ownership.
-- [x] Implement deterministic formatting and `target-span-only-v1` masks.
-- [x] Implement and compare full-parameter and low-rank adaptation.
-- [x] Validate structured outputs, grounded citations, missing-evidence behavior, and safe refusals.
+---
+
+# Stage 13 — CCT Todo: Supervised Fine-Tuning and Adapters
+
+**Goal:** Turn the trainable CCT core into a bounded task-adaptation system with explicit formatting, target-only masks, full and low-rank adaptation, structured outputs, citations, safety retention, authorization, and deletion lineage.
+
+**Status:** `[x] COMPLETE — REVALIDATE after changes.`
+
+## Implementation tasks
+
+- [x] Define the six task schemas, example identity, target provenance, eligibility, policy class, and evaluator ownership.
+- [x] Implement canonical instruction formatting and `target-span-only-v1` loss masks.
+- [x] Implement and compare full-parameter and parameter-efficient adapter training.
+- [x] Validate structured outputs, grounded citations, missing-evidence behavior, and safe refusal.
 - [x] Enforce adapter authorization, base immutability, merge equivalence, deletion, and lineage.
-- [x] Evaluate representative tasks against the base model.
+- [x] Evaluate representative held-out tasks against the base model.
 
-### Gate and transition
+## Gate and evidence tasks
 
-- [x] Verify task improvement, target-only masks, structured validation, citations, abstention, and safety retention.
-- [x] Verify permissions, base immutability, merge/runtime agreement, deletion, and identity-linked artifacts.
-- [x] Record Stage 13 `PASS`.
-- [x] Authorize Stage 14 preference tuning and alignment.
+- [x] Verify representative task improvement.
+- [x] Verify target-only mask correctness.
+- [x] Verify structured-output validation.
+- [x] Verify grounded citations and missing-evidence handling.
+- [x] Verify unsafe-request denial and safety retention.
+- [x] Verify adapter permissions, base immutability, merge/runtime agreement, deletion, and identity linkage.
+- [x] Record the Stage 13 gate and transition package.
 
-## Stage 14 — Preference Tuning and Alignment
+## Transition
 
-**Status:** [x] Implemented and gated.
+- [x] Record `PASS` for Stage 13.
+- [x] Authorize preference tuning and alignment in Stage 14.
 
-### Implementation
+**Evidence locations:** `artifacts/stage-13/`, SFT tests, adapter reports, structured-output fixtures, safety report, deletion lineage, and gate record.
 
-- [x] Govern preference records with task, provenance, annotator, and split identity.
-- [x] Compare preference optimization candidates.
-- [x] Implement verifier-weighted reranking or the declared alternative.
+---
+
+# Stage 14 — CCT Todo: Preference Tuning and Alignment
+
+**Goal:** Improve controllability, helpfulness, refusal quality, citations, style, calibration, and task quality without unacceptable truthfulness, safety, or regression damage.
+
+**Status:** `[x] COMPLETE — REVALIDATE after changes.`
+
+## Implementation tasks
+
+- [x] Govern preference pairs or rankings with annotator, task, provenance, conflict, and split identity.
+- [x] Compare preference optimization candidates under the same evaluation contract.
+- [x] Implement verifier-weighted reranking or the declared equivalent control.
 - [x] Measure helpfulness, truthfulness, calibration, refusal quality, citation integrity, and task quality.
-- [x] Run adversarial and blind evaluations against the prior baseline.
-- [x] Preserve deletion, replay, checkpoint, and approval records.
+- [x] Run adversarial and blind evaluations against the Stage 13 baseline.
+- [x] Preserve deletion, replay, checkpoint, approval, and decision records.
 
-### Gate and transition
+## Gate and evidence tasks
 
-- [x] Verify declared improvement without unacceptable regression.
-- [x] Verify truthfulness, safety, calibration, task, operations, adversarial, and blind evidence.
-- [x] Verify checkpoint and approval lineage.
-- [x] Record Stage 14 `PASS`.
-- [x] Authorize Stage 15 verified retrieval and knowledge.
+- [x] Verify preference data governance and quarantine.
+- [x] Compare candidate methods without presuming universal superiority.
+- [x] Verify independent quality checks and disagreement handling.
+- [x] Verify blind, adversarial, calibration, safety, truthfulness, and regression results.
+- [x] Verify checkpoint lineage, deletion, and approvals.
+- [x] Record the selected method and all known limitations.
+- [x] Write the Stage 14 gate and transition package.
 
-## Stage 15 — Verified Retrieval and Knowledge
+## Transition
 
-**Status:** [x] Implemented and gated.
+- [x] Record `PASS` for Stage 14.
+- [x] Authorize verified retrieval and knowledge in Stage 15.
 
-### Implementation
+**Evidence locations:** `artifacts/stage-14/`, preference manifest, alignment report, blind review, adversarial report, calibration report, and gate record.
 
-- [x] Define typed knowledge records, provenance, source authority, freshness, and version identity.
-- [x] Implement deterministic retrieval with query, ranking, evidence, and citation records.
+---
+
+# Stage 15 — CCT Todo: Verified Retrieval and Knowledge
+
+**Goal:** Provide typed retrieval, freshness, citations, conflict handling, deletion, poisoning isolation, auditability, and verified grounding.
+
+**Status:** `[x] COMPLETE — REVALIDATE after changes.`
+
+## Implementation tasks
+
+- [x] Define typed knowledge records with source, authority, freshness, version, digest, and retention.
+- [x] Implement deterministic retrieval with query, ranking, evidence bundle, and citation identity.
 - [x] Distinguish fresh, stale, conflicting, missing, and deleted knowledge.
-- [x] Isolate poisoned or unauthorized records.
-- [x] Require grounded responses or bounded abstention when evidence is insufficient.
-- [x] Audit retrieval, use, deletion, refresh, and conflicts.
+- [x] Quarantine poisoned and unauthorized records.
+- [x] Require grounded output or bounded abstention when evidence is insufficient.
+- [x] Audit retrieval, use, deletion, refresh, and conflict resolution.
 
-### Gate and transition
+## Gate and evidence tasks
 
-- [x] Verify citations, freshness, conflicts, deterministic retrieval, deletion, poisoning isolation, grounding, and abstention.
-- [x] Verify audit completeness.
-- [x] Record Stage 15 `PASS`.
-- [x] Authorize Stage 16 production inference and operations.
+- [x] Verify citation correctness and provenance.
+- [x] Verify freshness, stale boundaries, and conflicting-source behavior.
+- [x] Verify deletion and rebuild.
+- [x] Verify poisoning isolation and unauthorized-source rejection.
+- [x] Verify deterministic retrieval and complete audit trace.
+- [x] Verify grounded or abstaining outputs.
+- [x] Write the Stage 15 gate and transition package.
 
-## Stage 16 — Production Inference and Operations
+## Transition
 
-**Status:** [x] Implemented and gated.
+- [x] Record `PASS` for Stage 15.
+- [x] Authorize production inference and operations in Stage 16.
 
-### Implementation
+**Evidence locations:** `artifacts/stage-15/`, knowledge manifest, retrieval report, freshness/conflict fixtures, poisoning report, audit traces, and gate record.
 
-- [x] Expose versioned native request, response, error, and compatibility APIs.
-- [x] Implement batching, streaming, state lifecycle, retrieval integration, and policy enforcement.
-- [x] Isolate request, user, model, adapter, retrieval, and cache state.
+---
+
+# Stage 16 — CCT Todo: Production Inference and Operations
+
+**Goal:** Provide a production-like native inference service with versioned APIs, batching, state/cache isolation, observability, SLOs, fault controls, canaries, and rollback.
+
+**Status:** `[x] COMPLETE — REVALIDATE after changes.`
+
+## Implementation tasks
+
+- [x] Define versioned request, response, error, compatibility, and authentication-boundary contracts.
+- [x] Implement scheduling, batching, streaming, recurrent-state lifecycle, and retrieval integration.
+- [x] Isolate user, request, model, adapter, retrieval, and cache state.
 - [x] Measure latency, throughput, resource use, saturation, and SLOs.
-- [x] Implement fault detection, quotas, incident records, canary release, rollback, and deletion.
+- [x] Enforce quotas, policy checks, fault handling, timeout, retry, and circuit controls.
+- [x] Implement version registry, canary, approval, rollback, deletion, retirement, and incident workflow.
 
-### Gate and transition
+## Gate and evidence tasks
 
-- [x] Verify API and state/cache isolation.
-- [x] Verify observability, SLO evidence, saturation, fault controls, canary, rollback, and deletion.
-- [x] Record Stage 16 `PASS`.
-- [x] Authorize Stage 17 controlled pilot and bounded release.
+- [x] Verify API correctness and compatibility.
+- [x] Verify state and cache isolation.
+- [x] Verify metrics, traces, logs, privacy controls, and SLO evidence.
+- [x] Inject faults and verify timeout, retry, circuit, quota, and recovery behavior.
+- [x] Verify canary and rollback.
+- [x] Verify deletion and retirement behavior.
+- [x] Write the Stage 16 gate and transition package.
 
-## Stage 17 — Controlled Pilot and Production Release
+## Transition
 
-**Status:** [x] Implemented and gated for the named bounded scope.
+- [x] Record `PASS` for Stage 16.
+- [x] Authorize only the controlled pilot and bounded release in Stage 17.
 
-### Implementation
+**Evidence locations:** `artifacts/stage-16/`, API contract, runtime report, SLO profile, fault report, canary records, rollback records, and gate record.
 
-- [x] Freeze named scope, model, data, policy, evaluator, runtime, and release configuration.
+---
+
+# Stage 17 — CCT Todo: Controlled Pilot and Production Release
+
+**Goal:** Move a narrowly defined CCT-NLP use case through shadow evaluation, bounded pilot, oversight, incident response, rollback, deletion, drift review, and release approval.
+
+**Status:** `[x] COMPLETE — TERMINAL BOUNDED RELEASE; REVALIDATE after changes.`
+
+## Implementation tasks
+
+- [x] Freeze the named scope, model, data, policy, evaluator, runtime, and release configuration.
 - [x] Run shadow evaluation without external side effects.
-- [x] Operate a bounded pilot with quotas, permissions, human oversight, and activity logs.
-- [x] Exercise incident response, rollback, deletion, drift review, and release approval.
-- [x] Preserve limitations, evaluator records, and terminal decision artifacts.
-- [x] Keep scope expansion and new external actions closed without a new specification.
+- [x] Record disagreement, error taxonomy, evaluator decisions, and approval.
+- [x] Operate the bounded pilot with named users, quotas, permissions, and human review.
+- [x] Exercise incident response, rollback, deletion, drift detection, and release review.
+- [x] Preserve visible limitations, evaluator records, release note, scope, expiry, and terminal artifacts.
+- [x] Keep training authorization, external action, and scope expansion closed unless separately specified and approved.
 
-### Gate and transition
+## Gate and evidence tasks
 
-- [x] Verify shadow evidence and disagreement records.
-- [x] Verify bounded pilot controls and human oversight.
-- [x] Verify incident, rollback, deletion, and drift exercises.
-- [x] Verify approvals, known limitations, and complete artifacts.
-- [x] Record terminal bounded-release `PASS`.
-- [x] Close the automatic stage chain.
-- [x] Require a new CCT specification for expanded capability, different domain, materially changed model, new external action, or broader deployment.
+- [x] Verify shadow evidence and reference comparison.
+- [x] Verify bounded pilot controls and activity logs.
+- [x] Verify policy, refusal, escalation, incident, rollback, and deletion behavior.
+- [x] Verify data, quality, calibration, latency, and behavior drift signals.
+- [x] Verify approvals, known limitations, scope, expiry, and final release record.
+- [x] Record terminal `PASS` for the named bounded scope.
 
-## Current CCT Training Milestone — Track 1
+## Transition
 
-**Status:** [x] Preparation, native gates, and bounded complete-corpus training handoff implemented and verified.
+- [x] Confirm Stage 17 has no automatic successor.
+- [x] Require a new CCT specification and new gate for any expanded capability, different domain, changed model, external action, or broader deployment.
 
-### Data preparation
+**Evidence locations:** `artifacts/stage-17/`, shadow report, pilot report, incident records, rollback evidence, drift report, approval record, release record, and terminal gate.
 
-- [x] Pin sources, revisions, splits, licenses, and acquisition URLs.
-- [x] Acquire WikiText-2 through the pinned direct archive path.
-- [x] Acquire SQuAD 2.0 through pinned direct GEM JSON files with upstream provenance.
-- [x] Implement resumable caching, retries, source-window controls, and fail-closed cache validation.
-- [x] Validate Unicode-safe answer offsets, including non-BMP surrogate pairs.
-- [x] Build deterministic pretraining, SFT, selection, and frozen-final-test artifacts.
-- [x] Verify balanced answerability selection and zero final-test overlap.
+---
 
-### Native training
+# Current CCT Training Milestone — Track 1 Todo
 
-- [x] Add the native C++20 Track 1 training runner.
-- [x] Train CCT on WikiText-2 preparation artifacts.
-- [x] Apply `target-span-only-v1` SQuAD supervision.
-- [x] Keep frozen final-test data out of updates and checkpoint selection.
-- [x] Save pretraining and SFT checkpoints with tokenizer and dataset identity.
-- [x] Emit finite validation, held-out, and frozen-test target-token metrics.
+**Goal:** Prepare and train CCT on a governed real-data bundle using WikiText-2 pretraining and SQuAD 2.0 supervised target learning with frozen evaluation.
 
-### Track 1 gate
+**Status:** `[x] COMPLETE for the declared Track 1 contract.`
 
-- [x] Pass Track 1 unit tests.
-- [x] Pass the formal Track 1 gate.
-- [x] Pass the full native CTest suite.
-- [x] Pass cumulative `make ci-track1`.
-- [x] Run complete prepared-corpus bounded training verification.
-- [ ] Implement constrained answer decoding and exact-match/F1 evaluation before claiming those metrics.
-- [ ] Run longer-budget training with recorded resource and quality evidence before treating it as a larger competence result.
+## Preparation tasks
 
-## CCT maintenance and completion
+- [x] Pin WikiText-2 source identity, raw archive URL, revision, license metadata, and split members.
+- [x] Pin SQuAD 2.0 source identity, GEM direct-file revision, upstream provenance, license metadata, and direct URLs.
+- [x] Implement native resumable downloads, cache reuse, atomic extraction, retry, pacing, and fail-closed missing-cache behavior.
+- [x] Parse WikiText raw members natively without the rate-limited rows endpoint in production mode.
+- [x] Parse GEM flat SQuAD files natively without paginated row acquisition.
+- [x] Decode JSON Unicode surrogate pairs correctly.
+- [x] Convert SQuAD codepoint answer offsets to UTF-8 byte offsets.
+- [x] Validate answer text against the source context.
+- [x] Select deterministic balanced answerable and unanswerable SFT examples.
+- [x] Keep SFT evaluation and frozen final-test identities isolated from training.
+- [x] Generate source manifests, dataset manifests, digests, preparation reports, and evaluation contracts.
+- [x] Support a bounded local fixture mode without weakening production validation.
 
-- [x] Keep every stage specification and this task plan consistent with `Goal.md`.
-- [x] Preserve source, model, tokenizer, dataset, checkpoint, and release identities.
-- [x] Keep explicit known limitations in every report.
-- [ ] Add or update matched baselines and component ablations whenever architecture claims change.
-- [ ] Rerun affected gates after any gated implementation change.
-- [ ] Expand training budgets only after resource, stability, and held-out quality measurements are recorded.
-- [ ] Create a new specification before any post-Stage-17 capability or scope expansion.
+## Preparation gate tasks
 
-## Final completion rule
+- [x] Run Track 1 unit tests.
+- [x] Run the Track 1 formal gate.
+- [x] Run the full native CTest suite.
+- [x] Run cumulative Track 1 CI.
+- [x] Run a real bounded network preparation.
+- [x] Run complete production-scale preparation.
+- [x] Verify `passed: true`, `malformed_rows: 0`, and `overlap_ids: 0`.
+- [x] Preserve preparation report, source manifest, dataset manifest, evaluation contract, and release record.
 
-The Todo is complete for a declared scope only when every mandatory task in the corresponding `Goal.md` section is checked, the associated gate is `PASS`, artifacts are reviewable, and the transition record is valid. Open tasks remain open when the implementation does not yet provide the required evidence; they must not be silently marked complete.
+## Native training tasks
+
+- [x] Implement the native Track 1 training runner in C++20.
+- [x] Consume prepared WikiText pretraining records.
+- [x] Consume prepared SQuAD SFT records.
+- [x] Use `target-span-only-v1` supervision so prompt tokens do not contribute to SFT target loss.
+- [x] Filter zero-loss prompt-only chunks.
+- [x] Train the pretraining phase and save a checkpoint.
+- [x] Continue from the pretraining checkpoint for SFT.
+- [x] Save the SFT checkpoint with dataset, tokenizer, configuration, optimizer, and step identity.
+- [x] Evaluate validation and the frozen final-test target-token metrics.
+- [x] Write a training report that states the exact evaluation scope and limitations.
+- [x] Verify checkpoint reload and declared identity.
+- [x] Keep the frozen final-test split out of updates and checkpoint selection.
+
+## Track 1 gate and boundaries
+
+- [x] Record the Track 1 preparation gate as `PASS`.
+- [x] Record the native training handoff as `PASS` for its declared bounded contract.
+- [x] Keep exact-answer SQuAD EM/F1 unclaimed until constrained answer decoding is implemented and evaluated.
+- [x] Keep broader capability claims outside the report.
+- [ ] Re-run the full Track 1 preparation and training command from a fresh Colab checkout after any training-runner change.
+- [ ] Add constrained answer decoding and exact-match/F1 only as a separately specified CCT task, with new tests and a new gate.
+
+**Primary evidence:** `artifacts/track1/`, `artifacts/track1/cpp-gate/`, `artifacts/track1/real-full-preparation/`, `artifacts/track1/real-training/`, `cpp/tools/track1_train.cpp`, `cpp/tools/track1_gate.cpp`, and `artifacts/track1/README.md`.
+
+## Reproducible Track 1 commands
+
+```bash
+cd CCT
+git pull origin main
+cmake -S cpp -B build-cpp -DCMAKE_BUILD_TYPE=Release
+cmake --build build-cpp --parallel 2
+make track1-test track1-gate
+./build-cpp/cct_track1_prepare \
+  --output artifacts/track1 \
+  --pretrain-token-cap 2000000 \
+  --sft-examples 8000 \
+  --sft-eval-examples 800 \
+  --seed 1701
+make track1-train
+cat artifacts/track1/preparation_report.json
+cat artifacts/track1/training/training_report.json
+```
+
+---
+
+# Maintenance and Revalidation Todo
+
+These tasks remain active after a stage is marked complete because a later code, data, configuration, or environment change invalidates prior evidence.
+
+- [ ] Before each milestone, start from a clean checkout and record `git rev-parse HEAD`.
+- [ ] Rebuild with the declared strict native flags.
+- [ ] Run the complete prior-stage chain before declaring a later gate valid.
+- [ ] Recompute configuration, environment, data, checkpoint, and artifact hashes after changes.
+- [ ] Rerun all affected failure-path tests.
+- [ ] Rerun baseline and ablation comparisons after changing a model component.
+- [ ] Rerun resource profiles after changing context, batch, model, optimizer, or backend.
+- [ ] Preserve old evidence and write a new release record rather than overwriting historical results.
+- [ ] Review reports for claims beyond their metrics and remove unsupported language.
+- [ ] Push the release commit after the gate passes and verify the remote branch.
+
+# Completion Rule
+
+The CCT Todo is complete for a declared scope only when every required task for that scope is checked, all mandatory gates are `PASS`, artifacts are identity-linked and reviewable, failure conditions remain covered, transitions are recorded, and no implementation change has invalidated the evidence. A task must be reopened whenever its supporting code, data, configuration, environment, checkpoint, or gate artifact changes.
+
+## References
+
+- [CCT Goal](Goal.md)
+- [CCT stage specifications](Stages/README.md)
+- [CCT architecture](Architecture.md)
+- [Track 1 operational guide](artifacts/track1/README.md)
