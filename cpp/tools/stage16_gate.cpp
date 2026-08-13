@@ -1,4 +1,6 @@
 #include "cct/inference.hpp"
+#include "cct/nlp_trainer.hpp"
+#include "cct/tokenizer.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -125,11 +127,48 @@ AuthContext make_auth(const std::string& tenant = "tenant-a") {
     return {true, tenant, tenant + "-user", {"analyst"}};
 }
 
+InferenceService checkpoint_service(const std::filesystem::path& root) {
+    std::filesystem::create_directories(root);
+    TokenizerConfig tokenizer_config;
+    tokenizer_config.tokenizer_version = "tokenizer-stage10-v1";
+    tokenizer_config.candidate = TokenizerCandidate::Byte;
+    tokenizer_config.include_bos_eos = false;
+    const auto tokenizer = Tokenizer::build(tokenizer_config, {TokenizerTrainingRecord{"stage16", "alpha beta", true, false}});
+    const auto tokenizer_path = root / "tokenizer.snapshot";
+    write_file(tokenizer_path, tokenizer.serialize_snapshot());
+    const auto vocabulary_size = static_cast<std::size_t>(tokenizer.vocabulary().back().id) + 1U;
+    const NlpModelConfig model_config{NlpModelKind::Track1CctRecurrence, vocabulary_size, 4U, 4U, 16U, 16U};
+    NlpOptimizerConfig optimizer;
+    optimizer.total_steps = 1U;
+    NlpTrainer trainer(model_config, optimizer, tokenizer.snapshot_hash(), "stage16-inference-fixture");
+    auto parameters = trainer.model().parameter_vector();
+    parameters.assign(parameters.size(), 0.0);
+    const auto recurrent_offset = vocabulary_size * model_config.embedding_dim;
+    const auto head_offset = recurrent_offset + 4U * model_config.hidden_dim * model_config.embedding_dim + 3U * model_config.hidden_dim;
+    const auto bias_offset = head_offset + vocabulary_size * model_config.hidden_dim;
+    parameters[bias_offset + static_cast<TokenId>(Tokenizer::kByteFirstId + static_cast<unsigned int>('a'))] = 10.0;
+    parameters[bias_offset + Tokenizer::kEosId] = -10.0;
+    trainer.model().set_parameter_vector(parameters);
+    const auto checkpoint_path = root / "model.checkpoint";
+    trainer.save_checkpoint(checkpoint_path.string());
+    InferenceConfig config;
+    config.backend_mode = InferenceBackendMode::Checkpoint;
+    config.model_checkpoint_path = checkpoint_path.string();
+    config.tokenizer_snapshot_path = tokenizer_path.string();
+    config.tokenizer_version = tokenizer.version();
+    config.model_version = "stage16-checkpoint-fixture";
+    config.maximum_input_tokens = 16U;
+    config.maximum_output_tokens = 4U;
+    return InferenceService(config);
+}
+
 std::string slo_json(const SloReport& report) {
     std::ostringstream output;
     output << std::setprecision(10) << "{\"considered_requests\":" << report.considered_requests << ",\"successful_requests\":"
-           << report.successful_requests << ",\"availability\":" << report.availability_fraction << ",\"error_rate\":"
-           << report.error_rate_fraction << ",\"queue_p50_ms\":" << report.queue_p50_milliseconds << ",\"queue_p95_ms\":"
+           << report.successful_requests << ",\"abstained_requests\":" << report.abstained_requests << ",\"rejected_requests\":" << report.rejected_requests
+           << ",\"cancelled_requests\":" << report.cancelled_requests << ",\"availability\":" << report.availability_fraction << ",\"error_rate\":"
+           << report.error_rate_fraction << ",\"first_token_p50_ms\":" << report.first_token_p50_milliseconds << ",\"first_token_p95_ms\":"
+           << report.first_token_p95_milliseconds << ",\"inter_token_p95_ms\":" << report.inter_token_p95_milliseconds << ",\"queue_p50_ms\":" << report.queue_p50_milliseconds << ",\"queue_p95_ms\":"
            << report.queue_p95_milliseconds << ",\"queue_p99_ms\":" << report.queue_p99_milliseconds << ",\"compute_p50_ms\":"
            << report.compute_p50_milliseconds << ",\"compute_p95_ms\":" << report.compute_p95_milliseconds << ",\"compute_p99_ms\":"
            << report.compute_p99_milliseconds << ",\"retrieval_p95_ms\":" << report.retrieval_p95_milliseconds << ",\"verification_p95_ms\":"
@@ -147,6 +186,23 @@ int main(int argc, char** argv) {
     if (argc >= 3 && std::string(argv[1]) == "--output") output = argv[2];
     std::filesystem::create_directories(output);
     std::vector<Check> checks;
+
+    checks.push_back(run_check("checkpoint_backed_generation_and_incremental_streaming", [&]() {
+        auto service = checkpoint_service(output / "checkpoint-fixture");
+        auto item = make_request("checkpoint-backed");
+        item.input = "alpha";
+        const auto response = service.handle(item, make_auth());
+        require(response.error_code.empty() && response.backend_identity.find("checkpoint-backed-") == 0U && !response.output.empty() &&
+                    response.latency.first_token_milliseconds >= 0.0,
+                "checkpoint-backed inference did not produce a measured model response");
+        item.request_id = "checkpoint-backed-stream";
+        item.trace_id = "trace-checkpoint-backed-stream";
+        const auto stream = service.execute_stream(item, make_auth(), 4U, true);
+        require(stream.cancelled && stream.resources_released && !stream.events.empty() && stream.events.front().type == StreamEventType::Token &&
+                    stream.events.back().type == StreamEventType::Cancelled,
+                "checkpoint-backed streaming did not cancel cooperatively after an emitted token");
+        return "{\"checkpoint_loaded\":true,\"backend_identity\":\"checkpoint-backed-track1-cct-recurrence\",\"first_token_measured\":true,\"incremental_cancel\":true}";
+    }));
 
     checks.push_back(run_check("api_contract_and_canonical_response", [&]() {
         auto plane = build_knowledge_plane();
@@ -256,18 +312,18 @@ int main(int argc, char** argv) {
     checks.push_back(run_check("model_tokenizer_adapter_and_index_versioning", [&]() {
         auto plane = build_knowledge_plane();
         InferenceService service({}, &plane);
-        service.deployment().register_release({"hybrid-release", "model-hybrid-v1", "adapter-hybrid-v1", "tokenizer-stage10-v1", "lexical-v1", "digest-hybrid", ModelRoute::Hybrid});
-        service.deployment().register_release({"transformer-release", "model-transformer-v1", "adapter-transformer-v1", "tokenizer-stage10-v1", "lexical-v1", "digest-transformer", ModelRoute::Transformer});
+        service.register_release({"hybrid-release", "model-hybrid-v1", "adapter-hybrid-v1", "tokenizer-stage10-v1", "lexical-v1", "digest-hybrid", ModelRoute::Hybrid});
+        service.register_release({"transformer-release", "model-transformer-v1", "adapter-transformer-v1", "tokenizer-stage10-v1", "lexical-v1", "digest-transformer", ModelRoute::Transformer});
         auto hybrid = make_request("route-hybrid");
         hybrid.model_version = "model-hybrid-v1";
         hybrid.adapter_version = "adapter-hybrid-v1";
         const auto hybrid_response = service.handle(hybrid, make_auth());
-        require(hybrid_response.backend_identity == "native-c++20-hybrid" && hybrid_response.model_version == "model-hybrid-v1", "hybrid route identity was lost");
+        require(hybrid_response.backend_identity == "fixture-template-hybrid" && hybrid_response.model_version == "model-hybrid-v1", "hybrid route identity was lost");
         auto transformer = make_request("route-transformer", "tenant-a", "transformer-session");
         transformer.model_version = "model-transformer-v1";
         transformer.adapter_version = "adapter-transformer-v1";
         const auto transformer_response = service.handle(transformer, make_auth());
-        require(transformer_response.backend_identity == "native-c++20-transformer-control", "transformer control route was not observable");
+        require(transformer_response.backend_identity == "fixture-template-transformer-control", "transformer control route was not observable");
         auto mismatch = make_request("version-mismatch");
         mismatch.tokenizer_version = "tokenizer-v2";
         require(service.handle(mismatch, make_auth()).error_code == "TOKENIZER_VERSION_MISMATCH", "tokenizer mismatch was accepted");
@@ -311,8 +367,8 @@ int main(int argc, char** argv) {
             require(response.error_code.empty() && !response.output.empty(), "load request failed during SLO measurement");
         }
         const auto report = service.evaluate_slo();
-        require(report.considered_requests == 64U && report.successful_requests == 64U && report.passed &&
-                    report.queue_p95_milliseconds >= report.queue_p50_milliseconds && report.total_p99_milliseconds >= report.total_p95_milliseconds &&
+        require(report.considered_requests == 64U && report.successful_requests == 64U && report.abstained_requests == 0U && report.rejected_requests == 0U && report.passed &&
+                    report.first_token_p95_milliseconds <= 1500.0 && report.queue_p95_milliseconds >= report.queue_p50_milliseconds && report.total_p99_milliseconds >= report.total_p95_milliseconds &&
                     report.throughput_requests_per_second > 0.0 && report.throughput_tokens_per_second > 0.0,
                 "declared p50/p95/p99 or throughput SLO did not pass");
         return slo_json(report);
@@ -393,33 +449,33 @@ int main(int argc, char** argv) {
     checks.push_back(run_check("canary_shadow_comparison_and_failed_promotion", [&]() {
         auto plane = build_knowledge_plane();
         InferenceService service({}, &plane);
-        service.deployment().register_release({"candidate-good", "model-candidate-good", "adapter-candidate", "tokenizer-stage10-v1", "lexical-v1", "digest-candidate-good", ModelRoute::Hybrid});
-        service.deployment().register_release({"candidate-bad", "model-candidate-bad", "adapter-candidate", "tokenizer-stage10-v1", "lexical-v1", "digest-candidate-bad", ModelRoute::Hybrid});
-        service.deployment().start_canary("candidate-good", 10U);
-        service.deployment().record_canary({20U, 0U, 0U, 1.0, true});
-        require(service.deployment().status().canary_shadowing && service.deployment().status().canary_percent == 10U,
+        service.register_release({"candidate-good", "model-candidate-good", "adapter-candidate", "tokenizer-stage10-v1", "lexical-v1", "digest-candidate-good", ModelRoute::Hybrid});
+        service.register_release({"candidate-bad", "model-candidate-bad", "adapter-candidate", "tokenizer-stage10-v1", "lexical-v1", "digest-candidate-bad", ModelRoute::Hybrid});
+        service.start_canary("candidate-good", 10U);
+        service.record_canary({20U, 0U, 0U, 1.0, true});
+        require(service.deployment_status().canary_shadowing && service.deployment_status().canary_percent == 10U,
                 "good canary was not shadowed");
-        service.deployment().promote_canary();
-        require(service.deployment().status().active_release_id == "candidate-good" && service.deployment().status().rollback_available,
+        service.promote_canary();
+        require(service.deployment_status().active_release_id == "candidate-good" && service.deployment_status().rollback_available,
                 "good canary was not promoted");
-        service.deployment().start_canary("candidate-bad", 5U);
-        service.deployment().record_canary({20U, 10U, 2U, 0.5, false});
+        service.start_canary("candidate-bad", 5U);
+        service.record_canary({20U, 10U, 2U, 0.5, false});
         bool failed_promotion = false;
-        try { service.deployment().promote_canary(); } catch (const InferenceError&) { failed_promotion = true; }
-        require(failed_promotion && service.deployment().status().active_release_id == "candidate-good", "failed canary was promoted");
+        try { service.promote_canary(); } catch (const InferenceError&) { failed_promotion = true; }
+        require(failed_promotion && service.deployment_status().active_release_id == "candidate-good", "failed canary was promoted");
         return "{\"shadow_requests\":40,\"good_canary_promoted\":true,\"failed_canary_blocked\":true,\"user_exposure_before_promotion\":false}";
     }));
 
     checks.push_back(run_check("rollback_and_release_identity", [&]() {
         auto plane = build_knowledge_plane();
         InferenceService service({}, &plane);
-        service.deployment().register_release({"candidate", "model-candidate", "adapter-candidate", "tokenizer-stage10-v1", "lexical-v1", "digest-candidate", ModelRoute::Cct});
-        service.deployment().activate("candidate");
-        require(service.deployment().status().rollback_available && service.deployment().status().active_release_id == "candidate",
+        service.register_release({"candidate", "model-candidate", "adapter-candidate", "tokenizer-stage10-v1", "lexical-v1", "digest-candidate", ModelRoute::Cct});
+        service.activate_release("candidate");
+        require(service.deployment_status().rollback_available && service.deployment_status().active_release_id == "candidate",
                 "candidate activation did not retain prior valid release");
-        const auto rollback_ms = service.deployment().rollback();
-        require(rollback_ms <= 600000.0 && service.deployment().status().active_release_id == "stage16-default" &&
-                    service.deployment().status().rollback_available,
+        const auto rollback_ms = service.rollback_release();
+        require(rollback_ms <= 600000.0 && service.deployment_status().active_release_id == "stage16-default" &&
+                    service.deployment_status().rollback_available,
                 "rollback did not restore prior release within target");
         return "{\"rollback_milliseconds\":" + std::to_string(rollback_ms) + ",\"target_milliseconds\":600000,\"prior_valid_restored\":true}";
     }) );

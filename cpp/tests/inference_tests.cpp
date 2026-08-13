@@ -1,7 +1,11 @@
 #include "cct/inference.hpp"
+#include "cct/nlp_trainer.hpp"
+#include "cct/tokenizer.hpp"
 
 #include <algorithm>
 #include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -65,13 +69,96 @@ InferenceService service_with_knowledge(KnowledgePlane& plane) {
     return service;
 }
 
+void test_checkpoint_backend_generation_and_streaming() {
+    const auto root = std::filesystem::temp_directory_path() / "cct-inference-checkpoint-test";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root);
+    TokenizerConfig tokenizer_config;
+    tokenizer_config.tokenizer_version = "tokenizer-stage10-v1";
+    tokenizer_config.candidate = TokenizerCandidate::Byte;
+    tokenizer_config.include_bos_eos = false;
+    const auto tokenizer = Tokenizer::build(tokenizer_config, {TokenizerTrainingRecord{"fixture", "alpha beta", true, false}});
+    const auto tokenizer_path = root / "tokenizer.snapshot";
+    {
+        std::ofstream output(tokenizer_path, std::ios::binary | std::ios::trunc);
+        require(static_cast<bool>(output), "could not create checkpoint tokenizer snapshot");
+        output << tokenizer.serialize_snapshot();
+    }
+    const auto vocabulary_size = static_cast<std::size_t>(tokenizer.vocabulary().back().id) + 1U;
+    const NlpModelConfig model_config{NlpModelKind::Track1CctRecurrence, vocabulary_size, 4U, 4U, 16U, 7U};
+    NlpOptimizerConfig optimizer;
+    optimizer.total_steps = 1U;
+    NlpTrainer trainer(model_config, optimizer, tokenizer.snapshot_hash(), "inference-fixture-dataset");
+    auto parameters = trainer.model().parameter_vector();
+    const auto recurrent_offset = vocabulary_size * model_config.embedding_dim;
+    const auto head_offset = recurrent_offset + 4U * model_config.hidden_dim * model_config.embedding_dim + 3U * model_config.hidden_dim;
+    const auto bias_offset = head_offset + vocabulary_size * model_config.hidden_dim;
+    const auto token_a = static_cast<TokenId>(Tokenizer::kByteFirstId + static_cast<unsigned int>('a'));
+    const auto token_b = static_cast<TokenId>(Tokenizer::kByteFirstId + static_cast<unsigned int>('b'));
+    parameters.assign(parameters.size(), 0.0);
+    parameters[bias_offset + token_a] = 10.0;
+    parameters[bias_offset + Tokenizer::kEosId] = -10.0;
+    trainer.model().set_parameter_vector(parameters);
+    const auto checkpoint_a = root / "model-a.checkpoint";
+    trainer.save_checkpoint(checkpoint_a.string());
+
+    InferenceConfig config;
+    config.backend_mode = InferenceBackendMode::Checkpoint;
+    config.model_checkpoint_path = checkpoint_a.string();
+    config.tokenizer_snapshot_path = tokenizer_path.string();
+    config.tokenizer_version = tokenizer.version();
+    config.model_version = "checkpoint-model-a";
+    config.maximum_input_tokens = 16U;
+    config.maximum_output_tokens = 4U;
+    InferenceService service(config);
+    auto first_request = request("checkpoint-generation");
+    first_request.input = "alpha";
+    const auto first = service.handle(first_request, auth());
+    require(first.error_code.empty() && first.backend_identity.find("checkpoint-backed-") == 0U && !first.output.empty() &&
+                first.output.find('a') != std::string::npos && first.latency.first_token_milliseconds >= 0.0,
+            "checkpoint backend did not generate a decoded model response");
+    auto stream_request = first_request;
+    stream_request.request_id = "checkpoint-stream";
+    stream_request.trace_id = "trace-checkpoint-stream";
+    const auto streamed = service.execute_stream(stream_request, auth(), 4U, false);
+    require(!streamed.cancelled && streamed.resources_released && !streamed.events.empty() &&
+                streamed.events.back().type == StreamEventType::Completed &&
+                std::count_if(streamed.events.begin(), streamed.events.end(), [](const auto& event) { return event.type == StreamEventType::Token; }) > 1U,
+            "checkpoint stream did not emit incremental token events");
+    auto cancelled_request = first_request;
+    cancelled_request.request_id = "checkpoint-cancel";
+    cancelled_request.trace_id = "trace-checkpoint-cancel";
+    const auto cancelled = service.execute_stream(cancelled_request, auth(), 4U, true);
+    std::string cancellation_events;
+    for (const auto& event : cancelled.events) cancellation_events += stream_event_type_name(event.type) + ":" + event.payload + ";";
+    require(cancelled.cancelled && cancelled.resources_released && !cancelled.events.empty() && cancelled.events.front().type == StreamEventType::Token &&
+                cancelled.events.back().type == StreamEventType::Cancelled,
+            "checkpoint cancellation did not stop after the first emitted token: " + cancellation_events);
+
+    parameters.assign(parameters.size(), 0.0);
+    parameters[bias_offset + token_b] = 10.0;
+    parameters[bias_offset + Tokenizer::kEosId] = -10.0;
+    trainer.model().set_parameter_vector(parameters);
+    const auto checkpoint_b = root / "model-b.checkpoint";
+    trainer.save_checkpoint(checkpoint_b.string());
+    config.model_checkpoint_path = checkpoint_b.string();
+    config.model_version = "checkpoint-model-b";
+    InferenceService changed_service(config);
+    auto changed_request = first_request;
+    changed_request.request_id = "checkpoint-parameter-change";
+    changed_request.trace_id = "trace-checkpoint-parameter-change";
+    const auto changed = changed_service.handle(changed_request, auth());
+    require(changed.error_code.empty() && changed.output != first.output && changed.backend_identity.find("checkpoint-backed-") == 0U,
+            "changing checkpoint parameters did not change model output");
+}
+
 void test_versioned_api_auth_and_policy() {
     KnowledgePlane plane;
     auto service = service_with_knowledge(plane);
     auto valid = request("api-valid");
     const auto response = service.handle(valid, auth());
     require(response.schema_version == "cct-response-v1" && response.request_id == valid.request_id && !response.output.empty() &&
-                response.policy_decision == Decision::Allow && response.backend_identity == "native-c++20-cct" && response.trace_id == valid.trace_id,
+                response.policy_decision == Decision::Allow && response.backend_identity == "fixture-template-cct" && response.trace_id == valid.trace_id,
             "valid versioned API request did not produce canonical response");
     auto unauthenticated = valid;
     const auto denied = service.handle(unauthenticated, AuthContext{});
@@ -194,14 +281,14 @@ void test_state_cache_isolation_and_version_fail_closed() {
 void test_model_routing_and_dependency_mismatch() {
     KnowledgePlane plane;
     auto service = service_with_knowledge(plane);
-    service.deployment().register_release({"hybrid-release", "model-hybrid-v1", "adapter-hybrid-v1", "tokenizer-stage10-v1", "lexical-v1", "digest-hybrid", ModelRoute::Hybrid});
-    service.deployment().register_release({"transformer-release", "model-transformer-v1", "adapter-transformer-v1", "tokenizer-stage10-v1", "lexical-v1", "digest-transformer", ModelRoute::Transformer});
+    service.register_release({"hybrid-release", "model-hybrid-v1", "adapter-hybrid-v1", "tokenizer-stage10-v1", "lexical-v1", "digest-hybrid", ModelRoute::Hybrid});
+    service.register_release({"transformer-release", "model-transformer-v1", "adapter-transformer-v1", "tokenizer-stage10-v1", "lexical-v1", "digest-transformer", ModelRoute::Transformer});
     auto hybrid = request("route-hybrid");
     hybrid.model_version = "model-hybrid-v1";
     hybrid.adapter_version = "adapter-hybrid-v1";
     hybrid.retrieval_policy = "none";
     const auto hybrid_response = service.handle(hybrid, auth());
-    require(hybrid_response.backend_identity == "native-c++20-hybrid" && hybrid_response.model_version == "model-hybrid-v1",
+    require(hybrid_response.backend_identity == "fixture-template-hybrid" && hybrid_response.model_version == "model-hybrid-v1",
             "hybrid model route did not preserve release identity");
     auto unknown = request("route-unknown");
     unknown.model_version = "model-unknown";
@@ -213,7 +300,38 @@ void test_model_routing_and_dependency_mismatch() {
     transformer.adapter_version = "adapter-transformer-v1";
     transformer.retrieval_policy = "none";
     const auto transformer_response = service.handle(transformer, auth());
-    require(transformer_response.backend_identity == "native-c++20-transformer-control", "transformer control route was not observable");
+    require(transformer_response.backend_identity == "fixture-template-transformer-control", "transformer control route was not observable");
+}
+
+void test_concurrent_callers_cache_bound_and_state_accounting() {
+    InferenceConfig config;
+    config.maximum_cache_entries = 2U;
+    KnowledgePlane plane;
+    plane.ingest(knowledge_record("policy", "tenant-a", "The retention policy is seven days."));
+    plane.ingest(knowledge_record("beta-policy", "tenant-b", "Tenant beta retention policy is thirty days."));
+    InferenceService service(config, &plane);
+    service.set_slo_thresholds({1500.0, 150.0, 0.95, 0.2, 600000.0});
+    std::vector<std::thread> workers;
+    for (std::size_t worker = 0U; worker < 4U; ++worker) {
+        workers.emplace_back([&service, worker]() {
+            for (std::size_t index = 0U; index < 10U; ++index) {
+                auto item = request("concurrent-" + std::to_string(worker) + "-" + std::to_string(index), "tenant-a",
+                                     "concurrent-session-" + std::to_string(worker) + "-" + std::to_string(index));
+                item.input = "concurrent input " + std::to_string(worker) + " " + std::to_string(index);
+                static_cast<void>(service.handle(item, auth()));
+            }
+        });
+    }
+    for (auto& worker : workers) worker.join();
+    const auto metrics = service.metrics();
+    require(metrics.submitted_requests == 40U && metrics.successful_requests == 40U && metrics.rejected_requests == 0U,
+            "concurrent callers lost or duplicated accepted requests");
+    require(metrics.cache_evictions > 0U, "cache entry bound did not evict under concurrent workload");
+    require(metrics.total_state_bytes == service.state_metrics().bytes_in_use, "active state byte accounting drifted");
+    const auto before_reset = metrics.total_state_bytes;
+    service.reset_state("tenant-a", "tenant-a-user", "concurrent-session-0-0");
+    const auto after_reset = service.metrics().total_state_bytes;
+    require(after_reset < before_reset && after_reset == service.state_metrics().bytes_in_use, "reset did not recompute active state bytes");
 }
 
 void test_faults_circuit_and_slo_observability() {
@@ -241,8 +359,9 @@ void test_faults_circuit_and_slo_observability() {
     const auto response = service.handle(recovered, auth());
     require(response.error_code.empty() && service.healthy(), "circuit did not recover after reset interval");
     const auto slo = service.evaluate_slo();
-    require(slo.considered_requests > 0U && slo.total_p95_milliseconds >= 0.0 && slo.total_p99_milliseconds >= slo.total_p95_milliseconds &&
-                slo.throughput_requests_per_second >= 0.0 && !service.audit().empty(),
+    require(slo.considered_requests > 0U && slo.successful_requests > 0U && slo.first_token_p95_milliseconds >= 0.0 &&
+                slo.first_token_p95_milliseconds <= 1500.0 && slo.total_p95_milliseconds >= 0.0 && slo.total_p99_milliseconds >= slo.total_p95_milliseconds &&
+                slo.throughput_requests_per_second >= 0.0 && slo.throughput_tokens_per_second >= 0.0 && !service.audit().empty(),
             "SLO percentile, throughput, or audit metrics were incomplete");
     for (const auto& record : service.audit()) require(record.sensitive_data_redacted && record.input_digest.find("retention policy") == std::string::npos,
                                                          "sensitive input was written to service audit");
@@ -252,11 +371,13 @@ void test_faults_circuit_and_slo_observability() {
 
 int main() {
     const std::vector<std::pair<std::string, void (*)()>> tests{
+        {"checkpoint_backend_generation_and_streaming", test_checkpoint_backend_generation_and_streaming},
         {"versioned_api_auth_and_policy", test_versioned_api_auth_and_policy},
         {"dynamic_batch_and_deadlines", test_dynamic_batch_and_deadlines},
         {"streaming_cancellation_backpressure_and_pending_cancel", test_streaming_cancellation_backpressure_and_pending_cancel},
         {"retrieval_verification_and_abstention", test_retrieval_verification_and_abstention},
         {"state_cache_isolation_and_version_fail_closed", test_state_cache_isolation_and_version_fail_closed},
+        {"concurrent_callers_cache_bound_and_state_accounting", test_concurrent_callers_cache_bound_and_state_accounting},
         {"model_routing_and_dependency_mismatch", test_model_routing_and_dependency_mismatch},
         {"faults_circuit_and_slo_observability", test_faults_circuit_and_slo_observability}};
     std::size_t passed = 0U;

@@ -115,6 +115,7 @@ public:
     void set_parameter_vector(const std::vector<double>& values);
 
     NlpGradientResult loss_and_gradients(const NlpSequence& sequence) const;
+    std::vector<double> next_logits(const std::vector<TokenId>& context) const;
     NlpEvaluation evaluate(const std::vector<NlpSequence>& sequences) const;
     double loss_only(const NlpSequence& sequence) const;
     void apply_gradient(const std::vector<double>& gradients, const NlpOptimizerConfig& optimizer,

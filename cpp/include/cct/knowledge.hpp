@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -16,6 +17,8 @@ enum class RetrievalMode : std::uint8_t {
     Vector = 1,
     Hybrid = 2
 };
+
+using KnowledgeEmbeddingProvider = std::function<std::vector<double>(const std::string&)>;
 
 enum class KnowledgeState : std::uint8_t {
     Active = 0,
@@ -86,6 +89,12 @@ struct KnowledgeIndexConfig {
     double minimum_quality = 0.0;
     double minimum_confidence = 0.0;
     std::size_t maximum_hits = 8;
+    std::size_t maximum_snapshot_bytes = 64U * 1024U * 1024U;
+    std::size_t maximum_records = 1'000'000U;
+    std::size_t maximum_roles_per_record = 4096U;
+    std::size_t maximum_spans_per_record = 8192U;
+    std::size_t maximum_relations_per_record = 8192U;
+    std::string embedding_backend = "deterministic-hash-baseline-v1";
 };
 
 struct KnowledgeQuery {
@@ -201,7 +210,7 @@ struct GroundingReviewSummary {
 
 class KnowledgePlane {
 public:
-    explicit KnowledgePlane(KnowledgeIndexConfig config = {});
+    explicit KnowledgePlane(KnowledgeIndexConfig config = {}, KnowledgeEmbeddingProvider embedding_provider = {});
 
     const KnowledgeIndexConfig& config() const noexcept { return config_; }
     const std::vector<KnowledgeRecord>& records() const noexcept { return records_; }
@@ -223,6 +232,8 @@ public:
 
     std::string serialize_snapshot() const;
     static KnowledgePlane deserialize_snapshot(const std::string& snapshot);
+    void save_snapshot(const std::string& path) const;
+    static KnowledgePlane load_snapshot(const std::string& path);
     bool contains_active(const std::string& knowledge_id) const;
     bool can_access(const KnowledgeRecord& record, const KnowledgeQuery& query) const;
 
@@ -241,7 +252,8 @@ private:
     bool is_stale(const KnowledgeRecord& record, std::int64_t valid_at) const;
     static std::vector<std::string> terms(const std::string& text);
     static std::string join_terms(const std::vector<std::string>& terms);
-    static bool claim_supported(const KnowledgeClaim& claim, const KnowledgeHit& hit);
+    static bool claim_supported(const KnowledgeClaim& claim, const std::string& evidence_text);
+    KnowledgeEmbeddingProvider embedding_provider_;
 };
 
 }  // namespace cct

@@ -347,9 +347,11 @@ The corrected implementation is in `cpp/src/sequence.cpp`, with permanent covera
 
 ## MEMORY-001 — Memory checksums are not cryptographic integrity or authenticity protection
 
-**Priority:** P1. **Status:** `[ ] OPEN`.
+**Priority:** P1. **Status:** `[x] FIXED`.
 
-**Evidence:** `MemoryEncoder::content_checksum()` in `cpp/src/memory.cpp:107-126` uses a custom 64-bit mix hash. The event chain also binds only the record checksum, IDs, versions, and reason at lines 213–224.
+**Evidence:** `MemoryRecord` and `MemoryEvent` now carry SHA-256 content/event digests. V2 snapshots persist those digests, and V1 deserialization recomputes and verifies the legacy chain before migration. `memory_tests` covers tamper rejection, digest stability, and legacy migration.
+
+**Historical evidence:** `MemoryEncoder::content_checksum()` in `cpp/src/memory.cpp:107-126` uses a custom 64-bit mix hash. The event chain also binds only the record checksum, IDs, versions, and reason at lines 213–224.
 
 **Impact:** This is useful for accidental corruption detection but not collision-resistant tamper evidence. There is no key or external trust root.
 
@@ -357,7 +359,7 @@ The corrected implementation is in `cpp/src/sequence.cpp`, with permanent covera
 
 ## MEMORY-002 — Memory retrieval is a linear scan and the embedding is deterministic hashing
 
-**Priority:** P1. **Status:** `[ ] OPEN`.
+**Priority:** P1. **Status:** `[ ] OPEN — baseline limitation`.
 
 **Evidence:** `PersistentMemory::retrieve()` scans `active_` or every historical version at `cpp/src/memory.cpp:403-446`. `MemoryEncoder::encode()` creates a deterministic hash-derived vector from record content and metadata at lines 129–140.
 
@@ -367,9 +369,11 @@ The corrected implementation is in `cpp/src/sequence.cpp`, with permanent covera
 
 ## MEMORY-003 — Novelty threshold and immediate-deletion configuration are not effective controls
 
-**Priority:** P2. **Status:** `[ ] OPEN`.
+**Priority:** P2. **Status:** `[x] FIXED`.
 
-**Evidence:** `MemoryWriteController` stores `novelty_threshold_` but `decide()` never uses it at `cpp/src/memory.cpp:143-167`. `PersistentMemory::delete_memory()` always appends a tombstone, while `MemoryConfig::immediate_deletion` is not used in the shown mutation path.
+**Evidence:** `MemoryWriteController` now applies `novelty_threshold`; `PersistentMemory::delete_memory()` honors `immediate_deletion`, while deferred deletion is processed explicitly. `memory_tests` verifies behavior differences for novelty and deletion policy.
+
+**Historical evidence:** `MemoryWriteController` stores `novelty_threshold_` but `decide()` never uses it at `cpp/src/memory.cpp:143-167`. `PersistentMemory::delete_memory()` always appends a tombstone, while `MemoryConfig::immediate_deletion` is not used in the shown mutation path.
 
 **Impact:** Configuration advertises controls that do not change behavior. Operators can believe novelty or immediate deletion is enforced when it is not.
 
@@ -377,9 +381,11 @@ The corrected implementation is in `cpp/src/sequence.cpp`, with permanent covera
 
 ## MEMORY-004 — Snapshot writes are not atomic or durable
 
-**Priority:** P1. **Status:** `[ ] OPEN`.
+**Priority:** P1. **Status:** `[x] FIXED`.
 
-**Evidence:** `save_snapshot()` writes directly to the target path at `cpp/src/memory.cpp:607-611`; causal and knowledge snapshots use the same direct-stream pattern.
+**Evidence:** Memory snapshot publication uses an exclusive temporary file, complete write, `fsync`, atomic rename, and parent-directory `fsync`; the memory regression exercises publication and reload.
+
+**Historical evidence:** `save_snapshot()` previously wrote directly to the target path at `cpp/src/memory.cpp:607-611`; causal and knowledge snapshots use the same direct-stream pattern.
 
 **Impact:** Process interruption can leave a truncated snapshot at the canonical path. A later load can fail or, if truncation remains syntactically plausible, restore incomplete state.
 
@@ -387,7 +393,7 @@ The corrected implementation is in `cpp/src/sequence.cpp`, with permanent covera
 
 ## KNOW-001 — Knowledge embeddings and ranking are heuristic bag-of-words features
 
-**Priority:** P1. **Status:** `[ ] OPEN`.
+**Priority:** P1. **Status:** `[ ] OPEN — baseline limitation`.
 
 **Evidence:** `KnowledgePlane::embed()` hashes lowercase ASCII terms into a fixed vector at `cpp/src/knowledge.cpp:270-282`. `lexical_score()` is query-term overlap at lines 285–293. Retrieval linearly scans records at lines 321–395.
 
@@ -397,9 +403,11 @@ The corrected implementation is in `cpp/src/sequence.cpp`, with permanent covera
 
 ## KNOW-002 — Citation verification checks whole-document overlap, not cited-span support
 
-**Priority:** P1. **Status:** `[ ] OPEN`.
+**Priority:** P1. **Status:** `[x] FIXED`.
 
-**Evidence:** `claim_supported()` receives a `KnowledgeHit` and compares claim terms against `hit.content` at `cpp/src/knowledge.cpp:397-413`. `verify_answer()` maps cited span IDs to a hit at lines 415–451, but the support test does not restrict comparison to the cited span’s content range.
+**Evidence:** `verify_answer()` resolves each citation ID to the exact content substring, verifies the span SHA-256, and requires complete substantive claim-term coverage with conservative singular/plural normalization. The knowledge regression includes a whole-document distractor outside the cited span.
+
+**Historical evidence:** `claim_supported()` previously received a `KnowledgeHit` and compares claim terms against `hit.content` at `cpp/src/knowledge.cpp:397-413`. `verify_answer()` maps cited span IDs to a hit at lines 415–451, but the support test does not restrict comparison to the cited span’s content range.
 
 **Impact:** A claim can be accepted because terms occur elsewhere in the document even when the cited span does not support it. Citation precision can be overstated.
 
@@ -407,9 +415,11 @@ The corrected implementation is in `cpp/src/sequence.cpp`, with permanent covera
 
 ## KNOW-003 — Conflict detection only sees returned top-k hits
 
-**Priority:** P1. **Status:** `[ ] OPEN`.
+**Priority:** P1. **Status:** `[x] FIXED`.
 
-**Evidence:** `retrieve()` computes conflict visibility after filtering and sorting and truncates to `maximum_hits` at `cpp/src/knowledge.cpp:375-384`. `verify_answer()` detects conflicts from the supplied hits at lines 430–445.
+**Evidence:** Conflict preflight evaluates all eligible authorized records before top-k truncation and propagates `conflict_visible` into grounded-answer verification. The knowledge regression constrains top-k to one hit while requiring conflict visibility.
+
+**Historical evidence:** `retrieve()` previously computed conflict visibility after filtering and sorting and truncates to `maximum_hits` at `cpp/src/knowledge.cpp:375-384`. `verify_answer()` detects conflicts from the supplied hits at lines 430–445.
 
 **Impact:** A conflicting record filtered out by ranking or top-k truncation is invisible to the verifier. The answer can be accepted without knowing that contradictory authorized evidence exists.
 
@@ -417,9 +427,11 @@ The corrected implementation is in `cpp/src/sequence.cpp`, with permanent covera
 
 ## KNOW-004 — Snapshot parser lacks bounded counts and checked numeric conversions
 
-**Priority:** P1. **Status:** `[ ] OPEN`.
+**Priority:** P1. **Status:** `[x] FIXED`.
 
-**Evidence:** `deserialize_snapshot()` parses counts and numeric fields through `std::stoull`, `std::stod`, and `std::stoll` at `cpp/src/knowledge.cpp:479-535` without configured maximum sizes or an outer input budget.
+**Evidence:** V2 knowledge snapshots enforce byte, record, role, span, relation, content, and embedding-dimension budgets, use checked finite numeric conversions, reject malformed structure, and preserve V1 compatibility. The knowledge regression mutates the dimension field beyond its budget and verifies rejection.
+
+**Historical evidence:** `deserialize_snapshot()` previously parsed counts and numeric fields through `std::stoull`, `std::stod`, and `std::stoll` at `cpp/src/knowledge.cpp:479-535` without configured maximum sizes or an outer input budget.
 
 **Impact:** A malformed or hostile snapshot can request large allocations, trigger exceptions with weak diagnostics, or consume excessive CPU/memory.
 
@@ -431,55 +443,63 @@ The corrected implementation is in `cpp/src/sequence.cpp`, with permanent covera
 
 ## INF-001 — InferenceService does not execute a trained CCT model
 
-**Priority:** P0. **Status:** `[ ] OPEN`.
+**Priority:** P0. **Status:** `[x] FIXED`.
 
 **Evidence:** `cpp/src/inference.cpp:445-474` returns the first retrieved document as output when retrieval hits exist. Without retrieval it constructs a string such as `CCT-ASE response: <input>`. `ModelRoute` changes the prefix but does not select a model backend.
 
 **Impact:** The current service is a policy, retrieval, audit, and lifecycle harness, not a model-serving implementation. It cannot support a claim that CCT generated, reasoned over, or completed the request.
 
-**Remediation:** Define a checkpoint-backed inference interface, load model/tokenizer identity, execute bounded generation or classification, expose decoder metrics, and keep the current template path explicitly named as a fixture backend.
+**Remediation completed:** Added an explicit `InferenceBackendMode` boundary. Checkpoint mode loads the native tokenizer snapshot and `NlpTrainer` checkpoint, verifies tokenizer/model identity and vocabulary size, performs bounded greedy next-token decoding, and exposes first-token/inter-token timing. Fixture mode remains explicitly labeled `fixture-template-*`.
 
-**Required regression:** A test must prove that changing model parameters changes a model response under the same request, while the fixture backend remains separately identified.
+**Verification:** `cpp/tests/inference_tests.cpp` builds two native Track 1 checkpoints, proves parameter changes alter the same-request output, verifies decoded output and backend identity, and exercises checkpoint streaming. Stage 16 adds a real checkpoint-backed gate check.
 
 ## INF-002 — Streaming is post-hoc word splitting and cancellation is not cooperative
 
-**Priority:** P1. **Status:** `[ ] OPEN`.
+**Priority:** P1. **Status:** `[x] FIXED`.
 
 **Evidence:** `execute_stream()` calls `handle()` at `cpp/src/inference.cpp:535-550`, which completes execution and updates state before `execute_stream()` splits the final output into words at lines 555–579. `cancel_after_first` cancels after the full response has already been computed.
 
 **Impact:** First-token latency, cancellation, backpressure, and resource-release claims do not describe a true streaming model. A cancelled stream can still incur full model/retrieval work and state mutation.
 
-**Remediation:** Implement a cancellable generation iterator, propagate cancellation tokens into model/retrieval/verifier work, emit actual model token IDs or decoded tokens, and commit state only according to an explicit cancellation policy.
+**Remediation completed:** `execute_stream()` now validates and executes through a callback-driven generation path. Checkpoint decoding emits each decoded token before requesting the next model step; event budgets and client cancellation stop generation cooperatively, and cancelled generation returns before recurrent state is committed.
+
+**Verification:** Inference unit tests and Stage 16 verify incremental token events, cancellation after the first emitted token, backpressure, resource release, and no post-cancellation state commit.
 
 ## INF-003 — Queue and state service are synchronous and not thread-safe
 
-**Priority:** P1. **Status:** `[ ] OPEN`.
+**Priority:** P1. **Status:** `[x] FIXED`.
 
 **Evidence:** `pending_`, `states_`, `cache_`, `metrics_`, and `audit_` are mutable containers accessed directly by service methods. `handle()` enqueues and immediately calls `process_pending()` at `cpp/src/inference.cpp:305-311`. No mutex, worker, bounded scheduler, or persistent queue is present.
 
 **Impact:** Concurrent callers can race, queue-depth and batch behavior are not representative of a service, and a request can observe state or metrics during mutation.
 
-**Remediation:** Define thread ownership, add a worker scheduler and synchronization, separate admission from execution, record actual enqueue time, and test concurrent tenants, cancellation, shutdown, and backpressure.
+**Remediation completed:** Public queue, execution, state, cache, audit, metrics, fault, and deployment-wrapper methods are guarded by a recursive mutex to support nested admission/execution calls safely. Admission remains explicitly separate from `process_pending()`, and monotonic enqueue timestamps are propagated into queue latency.
+
+**Verification:** The inference suite runs 40 concurrent callers against one service and asserts exact accepted/successful counts, tenant/session isolation, bounded cache eviction, and state-byte consistency. Stage 16 retains queue-depth, batch-fairness, cancellation, and resource-exhaustion checks.
 
 ## INF-004 — SLO accounting uses proxy and inconsistent denominators
 
-**Priority:** P1. **Status:** `[ ] OPEN`.
+**Priority:** P1. **Status:** `[x] FIXED`.
 
 **Evidence:** `evaluate_slo()` uses submitted requests as the denominator and completed requests as successful at `cpp/src/inference.cpp:634-640`. Abstentions can count as successful completions. Throughput uses total p99 latency as if it were total workload duration at lines 655–657. The pass condition compares `total_p95_milliseconds` to `first_token_p95_milliseconds` at lines 658–659. Queue latency is not measured from actual enqueue-to-start time.
 
 **Impact:** Availability, error rate, throughput, and first-token SLO results can pass while the user-visible behavior violates the intended SLO.
 
-**Remediation:** Define separate success, abstention, rejection, timeout, and dependency-failure denominators. Record actual first-token, inter-token, total, queue, and wall-clock window metrics. Compare each metric with its matching threshold.
+**Remediation completed:** Service metrics now distinguish accepted, successful, abstained, rejected, timed-out, and cancelled outcomes. First-token and inter-token latencies are recorded from decoder callbacks, queue latency uses monotonic enqueue-to-start time, and throughput uses the observed monotonic measurement window. SLO pass/fail compares first-token and inter-token values to their matching thresholds while retaining total latency diagnostics.
+
+**Verification:** Inference and Stage 16 gates assert explicit outcome counts, measured first-token percentile, monotonic queue percentiles, positive wall-clock request/token throughput, and matching-threshold SLO passage.
 
 ## INF-005 — Session state and cache accounting are semantically incomplete
 
-**Priority:** P1. **Status:** `[ ] OPEN`.
+**Priority:** P1. **Status:** `[x] FIXED`.
 
 **Evidence:** `state_for()` uses a digest and byte estimate rather than the model’s actual recurrent state at `cpp/src/inference.cpp:314-340`. `update_state()` updates a digest and increments cumulative `metrics_.total_state_bytes` at lines 342–356. `reset_state()` removes state and cache but does not recompute all state metrics at lines 593–606. A cache hit returns before `update_state()` at lines 373–390.
 
 **Impact:** Repeated identical inputs can bypass state evolution, total-state metrics grow cumulatively rather than reflecting current usage, and reset/eviction metrics can be stale. State quotas do not bound actual model state.
 
-**Remediation:** Separate model state from transcript metadata, define cache interaction with state transitions, recalculate active metrics after mutation, add bounded cache capacity, and test repeated input, reset, eviction, version change, and quota behavior.
+**Remediation completed:** Runtime state now separates transcript digest from bounded checkpoint-model token context; successful checkpoint generation commits the retained context, while cancelled generation does not. Fixture response caching is bounded by entry count and response bytes, cache hits update state metadata, and reset/eviction recompute active state and cache accounting.
+
+**Verification:** Inference tests cover repeated sessions, checkpoint context reuse, reset, TTL eviction, concurrent bounded-cache eviction, tenant isolation, quotas, and current-byte equality between service and state metrics.
 
 ## INF-006 — Hard-coded policy and release metadata bypass configuration intent
 
@@ -493,9 +513,11 @@ The corrected implementation is in `cpp/src/sequence.cpp`, with permanent covera
 
 ## INF-007 — Cache is unbounded by entry count and lacks persistence/eviction evidence
 
-**Priority:** P2. **Status:** `[ ] OPEN`.
+**Priority:** P2. **Status:** `[x] FIXED`.
 
-**Evidence:** Successful responses are appended to `cache_` at `cpp/src/inference.cpp:494-496`. Eviction is time-based in `evict_expired_state()` but there is no maximum cache-entry count, size budget, shard policy, or durable cache contract.
+**Evidence:** Fixture and checkpoint response caches enforce configured entry-count and response-byte budgets, evict deterministically, and expose active-byte metrics. Inference tests exercise byte-bound and concurrent eviction behavior, and Stage 16 checks the resulting SLO evidence.
+
+**Historical evidence:** Successful responses were previously appended to `cache_` at `cpp/src/inference.cpp:494-496` without a hard entry or byte budget.
 
 **Impact:** Long-running processes can grow memory without a hard bound even when individual state quotas are configured.
 
@@ -667,8 +689,10 @@ The corrected implementation is in `cpp/src/sequence.cpp`, with permanent covera
 - [ ] Fix `INF-002`, `INF-003`, `INF-004`, and `INF-005` before any concurrency or streaming claim.
 - [x] Fix `TRACK1-002`, `TRACK1-003`, and `TRACK1-005` before full-source production acquisition.
 - [x] Fix `TRACK1-004` by publishing a manifest-bound mirror/upstream source attestation.
-- [ ] Fix `KNOW-001`, `KNOW-002`, and `KNOW-003` before factual-grounding claims.
-- [ ] Fix `MEMORY-001`, `MEMORY-004`, `RELEASE-001`, and `RELEASE-002` before persistence or deployment claims.
+- [ ] Resolve `KNOW-001` by adding a production semantic embedding/index backend; the deterministic provider remains an explicit baseline.
+- [x] Fix `KNOW-002` and `KNOW-003` before factual-grounding claims; the exact-span and all-eligible-conflict regressions pass.
+- [x] Fix `MEMORY-001`, `MEMORY-003`, and `MEMORY-004`; `MEMORY-002` remains a measured linear-scan baseline limitation.
+- [ ] Fix `RELEASE-001` and `RELEASE-002` before deployment claims.
 - [ ] Add parser fuzzing and real-artifact black-box gates under `TEST-001` and `TEST-003`.
 - [ ] Reconcile all status and specification files under `DOC-001`.
 

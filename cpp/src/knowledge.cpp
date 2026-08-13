@@ -1,6 +1,10 @@
 #include "cct/knowledge.hpp"
 
 #include <algorithm>
+#include <cerrno>
+#include <filesystem>
+#include <fcntl.h>
+#include <fstream>
 #include <chrono>
 #include <cmath>
 #include <cctype>
@@ -9,6 +13,7 @@
 #include <set>
 #include <sstream>
 #include <utility>
+#include <unistd.h>
 
 namespace cct {
 namespace {
@@ -62,6 +67,46 @@ std::string field(const std::vector<std::string>& fields, const std::size_t inde
 }
 
 std::string bool_text(const bool value) { return value ? "1" : "0"; }
+
+void atomic_write_file(const std::string& path, const std::string& content) {
+    const std::filesystem::path target(path);
+    const auto parent = target.parent_path().empty() ? std::filesystem::path(".") : target.parent_path();
+    std::error_code directory_error;
+    std::filesystem::create_directories(parent, directory_error);
+    require(!directory_error, "could not create knowledge snapshot parent directory");
+    const auto template_path = (parent / (target.filename().string() + ".tmp.XXXXXX")).string();
+    std::vector<char> template_bytes(template_path.begin(), template_path.end());
+    template_bytes.push_back('\0');
+    const auto descriptor = ::mkstemp(template_bytes.data());
+    require(descriptor >= 0, "could not create knowledge snapshot temporary file");
+    const auto temporary_path = std::string(template_bytes.data());
+    auto cleanup = [&]() {
+        ::close(descriptor);
+        static_cast<void>(::unlink(temporary_path.c_str()));
+    };
+    std::size_t written = 0U;
+    while (written < content.size()) {
+        const auto count = ::write(descriptor, content.data() + written, content.size() - written);
+        if (count <= 0) {
+            cleanup();
+            throw KnowledgeError("could not write knowledge snapshot temporary file");
+        }
+        written += static_cast<std::size_t>(count);
+    }
+    if (::fsync(descriptor) != 0 || ::close(descriptor) != 0) {
+        static_cast<void>(::unlink(temporary_path.c_str()));
+        throw KnowledgeError("could not durably flush knowledge snapshot temporary file");
+    }
+    if (::rename(temporary_path.c_str(), target.c_str()) != 0) {
+        static_cast<void>(::unlink(temporary_path.c_str()));
+        throw KnowledgeError("could not atomically publish knowledge snapshot");
+    }
+    const auto directory_descriptor = ::open(parent.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    require(directory_descriptor >= 0, "could not open knowledge snapshot parent directory");
+    const auto directory_sync = ::fsync(directory_descriptor);
+    const auto directory_close = ::close(directory_descriptor);
+    require(directory_sync == 0 && directory_close == 0, "could not durably publish knowledge snapshot directory entry");
+}
 
 bool parse_bool(const std::string& value) {
     require(value == "0" || value == "1", "invalid serialized knowledge boolean");
@@ -121,8 +166,42 @@ std::string config_line(const KnowledgeIndexConfig& config) {
     output << "C|" << hex_encode(config.embedding_version) << '|' << hex_encode(config.lexical_index_version) << '|'
            << hex_encode(config.ranking_version) << '|' << hex_encode(config.transformation_version) << '|'
            << config.embedding_dimension << '|' << std::setprecision(17) << config.lexical_weight << '|' << config.vector_weight << '|'
-           << config.minimum_quality << '|' << config.minimum_confidence << '|' << config.maximum_hits << '\n';
+           << config.minimum_quality << '|' << config.minimum_confidence << '|' << config.maximum_hits << '|'
+           << hex_encode(config.embedding_backend) << '|' << config.maximum_snapshot_bytes << '|' << config.maximum_records << '|'
+           << config.maximum_roles_per_record << '|' << config.maximum_spans_per_record << '|' << config.maximum_relations_per_record << '\n';
     return output.str();
+}
+
+std::size_t parse_size_bounded(const std::string& value, const std::size_t maximum, const std::string& field_name) {
+    try {
+        const auto parsed = std::stoull(value);
+        require(parsed <= maximum, field_name + " exceeds configured budget");
+        return static_cast<std::size_t>(parsed);
+    } catch (const KnowledgeError&) {
+        throw;
+    } catch (const std::exception&) {
+        throw KnowledgeError("invalid numeric knowledge field: " + field_name);
+    }
+}
+
+double parse_double_finite(const std::string& value, const std::string& field_name) {
+    try {
+        const auto parsed = std::stod(value);
+        require(std::isfinite(parsed), field_name + " is non-finite");
+        return parsed;
+    } catch (const KnowledgeError&) {
+        throw;
+    } catch (const std::exception&) {
+        throw KnowledgeError("invalid floating-point knowledge field: " + field_name);
+    }
+}
+
+std::int64_t parse_time_checked(const std::string& value, const std::string& field_name) {
+    try {
+        return std::stoll(value);
+    } catch (const std::exception&) {
+        throw KnowledgeError("invalid integer knowledge field: " + field_name);
+    }
 }
 
 std::string lower_ascii(const std::string& value) {
@@ -159,10 +238,13 @@ bool KnowledgeAccessPolicy::allows(const std::string& query_tenant, const std::s
     return std::find(allowed_roles.begin(), allowed_roles.end(), query_role) != allowed_roles.end();
 }
 
-KnowledgePlane::KnowledgePlane(KnowledgeIndexConfig config) : config_(std::move(config)) {
+KnowledgePlane::KnowledgePlane(KnowledgeIndexConfig config, KnowledgeEmbeddingProvider embedding_provider)
+    : config_(std::move(config)), embedding_provider_(std::move(embedding_provider)) {
     require(!config_.embedding_version.empty() && !config_.lexical_index_version.empty() && !config_.ranking_version.empty() &&
-                !config_.transformation_version.empty() && config_.embedding_dimension > 0U && config_.lexical_weight >= 0.0 &&
-                config_.vector_weight >= 0.0 && config_.lexical_weight + config_.vector_weight > 0.0 && config_.maximum_hits > 0U,
+                !config_.transformation_version.empty() && !config_.embedding_backend.empty() && config_.embedding_dimension > 0U &&
+                config_.lexical_weight >= 0.0 && config_.vector_weight >= 0.0 && config_.lexical_weight + config_.vector_weight > 0.0 &&
+                config_.maximum_hits > 0U && config_.maximum_snapshot_bytes > 0U && config_.maximum_records > 0U &&
+                config_.maximum_roles_per_record > 0U && config_.maximum_spans_per_record > 0U && config_.maximum_relations_per_record > 0U,
             "invalid knowledge index configuration");
 }
 
@@ -268,6 +350,12 @@ std::string KnowledgePlane::join_terms(const std::vector<std::string>& values) {
 }
 
 std::vector<double> KnowledgePlane::embed(const std::string& text) const {
+    if (embedding_provider_) {
+        const auto output = embedding_provider_(text);
+        require(output.size() == config_.embedding_dimension, "knowledge provider embedding dimension mismatch");
+        for (const auto value : output) require(std::isfinite(value), "knowledge provider embedding is non-finite");
+        return output;
+    }
     std::vector<double> output(config_.embedding_dimension, 0.0);
     for (const auto& term : terms(text)) {
         std::uint64_t hash = 1469598103934665603ULL;
@@ -394,22 +482,33 @@ std::vector<KnowledgeHit> KnowledgePlane::retrieve(const KnowledgeQuery& query) 
     return hits;
 }
 
-bool KnowledgePlane::claim_supported(const KnowledgeClaim& claim, const KnowledgeHit& hit) {
+bool KnowledgePlane::claim_supported(const KnowledgeClaim& claim, const std::string& evidence_text) {
     const auto stop_word = [](const std::string& term) {
         static const std::set<std::string> stop_words{"a", "an", "and", "are", "by", "do", "does", "for", "from", "has", "i", "in", "is", "it", "of", "on", "that", "the", "this", "to", "what", "with", "will"};
         return stop_words.contains(term);
     };
     const auto all_claim_terms = terms(claim.text);
-    const auto all_evidence_terms = terms(hit.content);
+    const auto all_evidence_terms = terms(evidence_text);
     std::vector<std::string> claim_terms;
     std::vector<std::string> evidence_terms;
     for (const auto& term : all_claim_terms) if (!stop_word(term)) claim_terms.push_back(term);
     for (const auto& term : all_evidence_terms) if (!stop_word(term)) evidence_terms.push_back(term);
     if (claim_terms.empty() || evidence_terms.empty()) return false;
-    std::set<std::string> evidence(evidence_terms.begin(), evidence_terms.end());
+    const auto equivalent_term = [](const std::string& left, const std::string& right) {
+        if (left == right) return true;
+        if (left.size() > 3U && left.back() == 's' && left.substr(0U, left.size() - 1U) == right) return true;
+        if (right.size() > 3U && right.back() == 's' && right.substr(0U, right.size() - 1U) == left) return true;
+        return false;
+    };
     std::size_t matches = 0U;
-    for (const auto& term : claim_terms) if (evidence.contains(term)) ++matches;
-    return matches * 3U >= claim_terms.size() * 2U;
+    for (const auto& claim_term : claim_terms) {
+        if (std::any_of(evidence_terms.begin(), evidence_terms.end(), [&](const std::string& evidence_term) {
+                return equivalent_term(claim_term, evidence_term);
+            })) {
+            ++matches;
+        }
+    }
+    return matches == claim_terms.size();
 }
 
 VerifiedAnswer KnowledgePlane::verify_answer(const GroundedAnswerRequest& request, const std::vector<KnowledgeHit>& hits) const {
@@ -419,23 +518,26 @@ VerifiedAnswer KnowledgePlane::verify_answer(const GroundedAnswerRequest& reques
     result.query_id = request.query_id;
     result.mode = request.mode;
     result.claim_count = request.claims.size();
-    std::set<std::string> span_ids;
-    std::map<std::string, const KnowledgeHit*> spans;
+    struct CitedSpan {
+        std::string text;
+        std::string source_risk;
+    };
+    std::map<std::string, CitedSpan> spans;
     for (const auto& hit : hits) {
         for (const auto& span : hit.citation_spans) {
-            span_ids.insert(span.span_id);
-            spans[span.span_id] = &hit;
+            if (span.start >= span.end || span.end > hit.content.size()) continue;
+            const auto text = hit.content.substr(span.start, span.end - span.start);
+            if (GovernedCorpus::content_sha256(text) != span.span_hash) continue;
+            spans[span.span_id] = {text, hit.source_risk};
         }
     }
-    std::map<std::string, std::size_t> conflicts;
-    for (const auto& hit : hits) if (hit.conflict_visible) ++conflicts[hit.conflict_group];
-    result.conflict_detected = std::any_of(conflicts.begin(), conflicts.end(), [](const auto& item) { return item.second > 1U; });
+    result.conflict_detected = std::any_of(hits.begin(), hits.end(), [](const auto& hit) { return hit.conflict_visible; });
     for (const auto& claim : request.claims) {
         if (!claim.citation_span_ids.empty()) ++result.cited_claim_count;
         bool supported = false;
         for (const auto& span_id : claim.citation_span_ids) {
             const auto found = spans.find(span_id);
-            if (found != spans.end() && found->second != nullptr && found->second->source_risk != "poisoned" && claim_supported(claim, *found->second)) supported = true;
+            if (found != spans.end() && found->second.source_risk != "poisoned" && claim_supported(claim, found->second.text)) supported = true;
         }
         if (supported) ++result.supported_claim_count;
     }
@@ -471,51 +573,72 @@ GroundingReviewSummary KnowledgePlane::review_grounded_answers(const std::vector
 
 std::string KnowledgePlane::serialize_snapshot() const {
     std::ostringstream output;
-    output << "CCT_KNOWLEDGE_SNAPSHOT_V1\n" << config_line(config_);
+    output << "CCT_KNOWLEDGE_SNAPSHOT_V2\n" << config_line(config_);
     for (const auto& record : records_) output << record_line(record);
     return output.str();
 }
 
 KnowledgePlane KnowledgePlane::deserialize_snapshot(const std::string& snapshot) {
+    require(snapshot.size() <= 64U * 1024U * 1024U, "knowledge snapshot exceeds byte budget");
     std::istringstream input(snapshot);
     std::string line;
-    require(std::getline(input, line) && line == "CCT_KNOWLEDGE_SNAPSHOT_V1", "unsupported knowledge snapshot version");
+    require(static_cast<bool>(std::getline(input, line)), "knowledge snapshot has no header");
+    const bool version_one = line == "CCT_KNOWLEDGE_SNAPSHOT_V1";
+    const bool version_two = line == "CCT_KNOWLEDGE_SNAPSHOT_V2";
+    require(version_one || version_two, "unsupported knowledge snapshot version");
     require(static_cast<bool>(std::getline(input, line)), "knowledge snapshot has no configuration");
     const auto config_fields = split(line, '|');
-    require(config_fields.size() == 11U && config_fields[0] == "C", "malformed knowledge snapshot configuration");
+    require(config_fields[0] == "C" && ((version_one && config_fields.size() == 11U) || (version_two && config_fields.size() == 17U)),
+            "malformed knowledge snapshot configuration");
     KnowledgeIndexConfig config;
     config.embedding_version = hex_decode(config_fields[1]); config.lexical_index_version = hex_decode(config_fields[2]);
     config.ranking_version = hex_decode(config_fields[3]); config.transformation_version = hex_decode(config_fields[4]);
-    config.embedding_dimension = static_cast<std::size_t>(std::stoull(config_fields[5])); config.lexical_weight = std::stod(config_fields[6]);
-    config.vector_weight = std::stod(config_fields[7]); config.minimum_quality = std::stod(config_fields[8]);
-    config.minimum_confidence = std::stod(config_fields[9]); config.maximum_hits = static_cast<std::size_t>(std::stoull(config_fields[10]));
+    config.embedding_dimension = parse_size_bounded(config_fields[5], 4096U, "embedding_dimension");
+    config.lexical_weight = parse_double_finite(config_fields[6], "lexical_weight");
+    config.vector_weight = parse_double_finite(config_fields[7], "vector_weight");
+    config.minimum_quality = parse_double_finite(config_fields[8], "minimum_quality");
+    config.minimum_confidence = parse_double_finite(config_fields[9], "minimum_confidence");
+    config.maximum_hits = parse_size_bounded(config_fields[10], 100000U, "maximum_hits");
+    if (version_two) {
+        config.embedding_backend = hex_decode(config_fields[11]);
+        config.maximum_snapshot_bytes = parse_size_bounded(config_fields[12], 256U * 1024U * 1024U, "maximum_snapshot_bytes");
+        config.maximum_records = parse_size_bounded(config_fields[13], 10'000'000U, "maximum_records");
+        config.maximum_roles_per_record = parse_size_bounded(config_fields[14], 1'000'000U, "maximum_roles_per_record");
+        config.maximum_spans_per_record = parse_size_bounded(config_fields[15], 1'000'000U, "maximum_spans_per_record");
+        config.maximum_relations_per_record = parse_size_bounded(config_fields[16], 1'000'000U, "maximum_relations_per_record");
+    }
+    require(snapshot.size() <= config.maximum_snapshot_bytes, "knowledge snapshot exceeds configured byte budget");
     KnowledgePlane plane(config);
+    std::size_t record_count = 0U;
+    constexpr std::size_t maximum_content_bytes = 16U * 1024U * 1024U;
     while (std::getline(input, line)) {
         if (line.empty()) continue;
         const auto parts = split(line, '|');
         require(parts.size() >= 2U && parts[0] == "R", "unknown knowledge snapshot record");
+        require(++record_count <= config.maximum_records, "knowledge snapshot record count exceeds budget");
         const std::vector<std::string> values(parts.begin() + 1, parts.end());
         KnowledgeRecord record;
         std::size_t index = 0U;
         record.knowledge_id = field(values, index++); record.tenant_id = field(values, index++); record.document_id = field(values, index++);
         record.document_version = static_cast<std::uint64_t>(std::stoull(field(values, index++))); record.source_uri_or_reference = field(values, index++);
-        record.content = field(values, index++); record.content_hash = field(values, index++); record.embedding_version = field(values, index++);
-        record.lexical_index_version = field(values, index++); record.created_at = std::stoll(field(values, index++)); record.valid_from = std::stoll(field(values, index++));
+        record.content = field(values, index++); require(record.content.size() <= maximum_content_bytes, "knowledge content exceeds snapshot budget");
+        record.content_hash = field(values, index++); record.embedding_version = field(values, index++);
+        record.lexical_index_version = field(values, index++); record.created_at = parse_time_checked(field(values, index++), "created_at"); record.valid_from = parse_time_checked(field(values, index++), "valid_from");
         record.valid_until = parse_optional_time(field(values, index++)); record.access_policy.tenant_id = field(values, index++);
         record.access_policy.public_read = parse_bool(field(values, index++));
-        const auto role_count = static_cast<std::size_t>(std::stoull(field(values, index++)));
+        const auto role_count = parse_size_bounded(field(values, index++), config.maximum_roles_per_record, "knowledge role count");
         for (std::size_t role = 0U; role < role_count; ++role) record.access_policy.allowed_roles.push_back(field(values, index++));
         record.provenance = field(values, index++);
-        const auto span_count = static_cast<std::size_t>(std::stoull(field(values, index++)));
+        const auto span_count = parse_size_bounded(field(values, index++), config.maximum_spans_per_record, "knowledge citation span count");
         for (std::size_t span = 0U; span < span_count; ++span) {
             KnowledgeCitationSpan citation;
-            citation.span_id = field(values, index++); citation.start = static_cast<std::size_t>(std::stoull(field(values, index++)));
-            citation.end = static_cast<std::size_t>(std::stoull(field(values, index++))); citation.span_hash = field(values, index++);
+            citation.span_id = field(values, index++); citation.start = parse_size_bounded(field(values, index++), maximum_content_bytes, "knowledge citation start");
+            citation.end = parse_size_bounded(field(values, index++), maximum_content_bytes, "knowledge citation end"); citation.span_hash = field(values, index++);
             record.citation_spans.push_back(std::move(citation));
         }
-        record.quality.quality = std::stod(field(values, index++)); record.quality.confidence = std::stod(field(values, index++));
+        record.quality.quality = parse_double_finite(field(values, index++), "knowledge quality"); record.quality.confidence = parse_double_finite(field(values, index++), "knowledge confidence");
         record.quality.source_risk = field(values, index++);
-        const auto relation_count = static_cast<std::size_t>(std::stoull(field(values, index++)));
+        const auto relation_count = parse_size_bounded(field(values, index++), config.maximum_relations_per_record, "knowledge relation count");
         for (std::size_t relation = 0U; relation < relation_count; ++relation) record.supersedes_or_conflicts.push_back(field(values, index++));
         const auto state = field(values, index++);
         if (state == "active") record.retention_and_deletion_state = KnowledgeState::Active;
@@ -532,6 +655,22 @@ KnowledgePlane KnowledgePlane::deserialize_snapshot(const std::string& snapshot)
     }
     plane.rebuild();
     return plane;
+}
+
+void KnowledgePlane::save_snapshot(const std::string& path) const {
+    atomic_write_file(path, serialize_snapshot());
+}
+
+KnowledgePlane KnowledgePlane::load_snapshot(const std::string& path) {
+    constexpr std::uintmax_t maximum_file_bytes = 256U * 1024U * 1024U;
+    std::error_code size_error;
+    const auto size = std::filesystem::file_size(path, size_error);
+    require(!size_error && size <= maximum_file_bytes, "knowledge snapshot file exceeds byte budget");
+    std::ifstream stream(path);
+    require(static_cast<bool>(stream), "could not read knowledge snapshot");
+    std::ostringstream content;
+    content << stream.rdbuf();
+    return deserialize_snapshot(content.str());
 }
 
 bool KnowledgePlane::contains_active(const std::string& knowledge_id) const {

@@ -606,6 +606,19 @@ NlpGradientResult NextTokenModel::loss_and_gradients(const NlpSequence& sequence
     return {base_loss, static_cast<std::size_t>(target_count(sequence)), vector_norm(gradients), std::move(gradients)};
 }
 
+std::vector<double> NextTokenModel::next_logits(const std::vector<TokenId>& context) const {
+    require(!context.empty() && context.size() <= config_.context_length, "NLP inference context length is invalid");
+    for (const auto id : context) require(id < config_.vocabulary_size, "NLP inference token ID is out of range");
+    NlpSequence sequence;
+    sequence.input_ids = context;
+    sequence.target_ids.assign(context.size(), Tokenizer::kPadId);
+    sequence.loss_mask.assign(context.size(), 0U);
+    const auto logits = model_forward(parameters_, config_, sequence);
+    require(!logits.empty() && logits.back().size() == config_.vocabulary_size, "NLP inference logits shape is invalid");
+    require_finite(logits.back(), "NLP inference logits became non-finite");
+    return logits.back();
+}
+
 double NextTokenModel::loss_only(const NlpSequence& sequence) const {
     validate_sequence(sequence);
     const auto logits = model_forward(parameters_, config_, sequence);

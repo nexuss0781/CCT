@@ -46,6 +46,7 @@ struct MemoryRecord {
     RetentionClass retention = RetentionClass::Standard;
     std::string conflict_group;
     std::uint64_t checksum = 0;
+    std::string checksum_digest;
 };
 
 struct MemoryConfig {
@@ -54,6 +55,8 @@ struct MemoryConfig {
     double minimum_confidence = 0.0;
     std::uint64_t chain_seed = 1469598103934665603ULL;
     bool immediate_deletion = true;
+    double novelty_threshold = 0.0;
+    double quarantine_threshold = 0.05;
 };
 
 struct MemoryQuery {
@@ -81,6 +84,7 @@ struct MemoryHit {
     MemoryStatus status = MemoryStatus::Active;
     std::string conflict_group;
     std::uint64_t checksum = 0;
+    std::string checksum_digest;
 };
 
 struct MemoryEvent {
@@ -92,6 +96,8 @@ struct MemoryEvent {
     std::string reason;
     std::uint64_t previous_event_checksum = 0;
     std::uint64_t event_checksum = 0;
+    std::string previous_event_digest;
+    std::string event_digest;
 };
 
 struct MemoryDecision {
@@ -127,6 +133,7 @@ public:
     std::uint32_t schema_version() const noexcept { return schema_version_; }
     std::vector<double> encode(const MemoryRecord& record) const;
     std::uint64_t content_checksum(const MemoryRecord& record) const;
+    std::string content_digest(const MemoryRecord& record) const;
 
 private:
     std::size_t embedding_dim_;
@@ -157,6 +164,7 @@ public:
     MemoryDecision delete_memory(MemoryId memory_id, const std::string& reason = "user_delete");
     MemoryDecision quarantine(MemoryId memory_id, const std::string& reason = "policy_quarantine");
     std::size_t expire(LogicalTime now, const std::string& reason = "validity_expired");
+    std::size_t process_deferred_deletions(const std::string& reason = "deferred_delete");
     std::size_t enforce_capacity(const std::string& reason = "capacity_policy");
     MemoryDecision write_event(const CausalEvent& event, const std::vector<double>& embedding,
                                MemoryId memory_id, const std::string& reason = "causal_event");
@@ -198,10 +206,13 @@ private:
     void apply_event(const MemoryEvent& event, bool validate_chain);
     MemoryEvent make_event(MemoryEventType type, const MemoryRecord& record, MemoryId target_id,
                            std::uint64_t previous_version, const std::string& reason) const;
+    MemoryDecision delete_memory_now(MemoryId memory_id, const std::string& reason);
     std::uint64_t event_checksum(const MemoryEvent& event) const;
+    std::string event_digest(const MemoryEvent& event) const;
     bool valid_at(const MemoryRecord& record, const MemoryQuery& query) const;
     double cosine_similarity(const std::vector<double>& left, const std::vector<double>& right) const;
     void reset_state();
+    std::vector<MemoryId> deferred_deletions_;
 };
 
 }  // namespace cct
