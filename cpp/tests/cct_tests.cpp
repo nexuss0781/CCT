@@ -182,6 +182,98 @@ void test_stability_and_boundaries() {
     }
 }
 
+void test_global_stability_domain_and_semantics() {
+    auto periodic = config(32, 0.05, Method::Leapfrog);
+    periodic.maximum_abs_potential = 0.25;
+    check(cct::global_stability_limit(periodic) < cct::cfl_limit(periodic),
+          "global spectral stability bound did not tighten the local CFL estimate");
+    for (const auto method : {Method::Leapfrog, Method::RK4}) {
+        for (const auto boundary : {Boundary::Periodic, Boundary::Dirichlet, Boundary::Neumann}) {
+            for (const auto& shape : {std::vector<std::size_t>{8U}, std::vector<std::size_t>{5U, 5U}}) {
+                SolverConfig boundary_config;
+                boundary_config.shape = shape;
+                boundary_config.spacing.assign(shape.size(), 1.0);
+                boundary_config.wave_speed = 1.0;
+                boundary_config.boundary = boundary;
+                boundary_config.method = method;
+                boundary_config.maximum_abs_potential = 0.25;
+                const auto limit = std::min(cct::cfl_limit(boundary_config), cct::global_stability_limit(boundary_config));
+                boundary_config.dt = 0.8 * limit * boundary_config.cfl_safety;
+                const FiniteDifferenceSolver solver(boundary_config);
+                const auto cell_total = cct::cell_count(shape);
+                const auto trajectory = solver.rollout(solver.initialize(zeros(cell_total)),
+                                                       std::vector<std::vector<double>>(4, zeros(cell_total)), {0.25});
+                for (const auto& field : trajectory.phi) {
+                    for (const auto value : field) check(std::isfinite(value), "bounded stability-domain rollout produced a non-finite field");
+                }
+                boundary_config.dt = 1.01 * limit * boundary_config.cfl_safety;
+                bool rejected_boundary = false;
+                try { static_cast<void>(FiniteDifferenceSolver(boundary_config)); } catch (const cct::StabilityError&) { rejected_boundary = true; }
+                check(rejected_boundary, "stability-domain boundary beyond the declared limit was accepted");
+            }
+        }
+    }
+    auto bounded = config(8, 0.05, Method::Leapfrog);
+    bounded.maximum_abs_potential = 0.1;
+    const FiniteDifferenceSolver bounded_solver(bounded);
+    bool rejected = false;
+    try {
+        static_cast<void>(bounded_solver.step(bounded_solver.initialize(zeros(8)), {}, {0.2}));
+    } catch (const cct::StabilityError&) {
+        rejected = true;
+    }
+    check(rejected, "potential outside the declared global stability domain was accepted");
+    const auto periodic_field = cct::manufactured_mode({16}, {1.0}, {2});
+    const auto spectral = cct::spectral_laplacian(periodic_field, {16}, {1.0});
+    const auto finite_periodic = cct::finite_difference_laplacian(periodic_field, {16}, {1.0}, Boundary::Periodic);
+    check(max_difference(spectral, finite_periodic) < 0.2, "periodic operator implementations diverged on a resolved mode");
+    const auto finite_dirichlet = cct::finite_difference_laplacian(periodic_field, {16}, {1.0}, Boundary::Dirichlet);
+    check(max_difference(spectral, finite_dirichlet) > 1e-3, "non-periodic finite-difference semantics were mistaken for spectral semantics");
+}
+
+void test_temporal_rollout_gradients() {
+    auto solver_config = config(8, 0.05, Method::Leapfrog);
+    solver_config.maximum_abs_potential = 1.0;
+    const SpectralSolver solver(solver_config);
+    const auto initial = solver.initialize(cct::manufactured_mode({8}, {1.0}, {1}));
+    std::vector<std::vector<double>> sources(3, std::vector<double>(8, 0.0));
+    sources[0][1] = 0.1;
+    sources[1][2] = -0.08;
+    sources[2][3] = 0.06;
+    const std::vector<double> potential(8, 0.1);
+    const std::vector<std::vector<double>> targets(3, std::vector<double>(8, 0.0));
+    const auto gradients = cct::temporal_rollout_loss_gradients(solver, initial, sources, potential, targets, 1e-6);
+    auto objective = [&](const std::vector<std::vector<double>>& source_values, const std::vector<double>& potential_values) {
+        const auto trajectory = solver.rollout(initial, source_values, potential_values, false);
+        double total = 0.0;
+        for (std::size_t step = 0; step < trajectory.phi.size(); ++step) total += solver.operator_loss(trajectory.phi[step], targets[step]);
+        return total / static_cast<double>(trajectory.phi.size());
+    };
+    const auto epsilon = 1e-5;
+    check_close(gradients.loss, objective(sources, potential), 1e-8, "temporal rollout loss disagreed with direct objective");
+    for (std::size_t step = 0; step < sources.size(); ++step) {
+        for (std::size_t index = 0; index < sources[step].size(); ++index) {
+            auto plus = sources;
+            auto minus = sources;
+            plus[step][index] += epsilon;
+            minus[step][index] -= epsilon;
+            const auto numerical = (objective(plus, potential) - objective(minus, potential)) / (2.0 * epsilon);
+            check_close(gradients.source[step][index], numerical, 2e-5, "temporal source gradient disagreed with full rollout objective");
+        }
+    }
+    for (std::size_t index = 0; index < potential.size(); ++index) {
+        auto plus = potential;
+        auto minus = potential;
+        plus[index] += epsilon;
+        minus[index] -= epsilon;
+        const auto numerical = (objective(sources, plus) - objective(sources, minus)) / (2.0 * epsilon);
+        check_close(gradients.potential[index], numerical, 2e-5, "temporal potential gradient disagreed with full rollout objective");
+    }
+    const auto one_step = cct::leapfrog_operator_loss_gradients(solver, initial, sources.front(), potential, targets.front());
+    check(max_difference(one_step.source, gradients.source.front()) > 1e-8,
+          "one-step gradient helper was incorrectly presented as the full temporal gradient");
+}
+
 void test_gradients_and_bounded_potential() {
     const auto solver = SpectralSolver(config(8, 0.05, Method::Leapfrog));
     const auto phi0 = cct::manufactured_mode({8}, {1.0}, {1});
@@ -261,6 +353,8 @@ int main() {
         {"convergence", test_convergence},
         {"energy_stability", test_energy_stability},
         {"stability_and_boundaries", test_stability_and_boundaries},
+        {"global_stability_domain_and_semantics", test_global_stability_domain_and_semantics},
+        {"temporal_rollout_gradients", test_temporal_rollout_gradients},
         {"gradients_and_bounded_potential", test_gradients_and_bounded_potential},
         {"serialization_loss_determinism", test_serialization_loss_and_determinism},
         {"performance", test_performance},

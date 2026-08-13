@@ -29,6 +29,14 @@ void require_dimension(std::size_t actual, std::size_t expected, const char* nam
     if (actual != expected) throw SequenceError(std::string(name) + " dimension mismatch");
 }
 
+std::vector<double> parameter_slice(const std::vector<double>& parameters, const std::size_t begin, const std::size_t end) {
+    using DifferenceType = std::vector<double>::difference_type;
+    require_dimension(begin <= end && end <= parameters.size(), true, "parameter slice");
+    require_dimension(end <= static_cast<std::size_t>(std::numeric_limits<DifferenceType>::max()), true, "parameter offset");
+    return std::vector<double>(parameters.begin() + static_cast<DifferenceType>(begin),
+                              parameters.begin() + static_cast<DifferenceType>(end));
+}
+
 }  // namespace
 
 MatchedBaseline::MatchedBaseline(BaselineKind kind, BaselineConfig config)
@@ -90,20 +98,14 @@ std::vector<double> MatchedBaseline::dense_forward_step(
     const auto v_offset = 2 * hidden * input;
     const auto output_offset = v_offset + hidden * input;
     const auto bias_offset = output_offset + output * hidden;
-    const std::vector<double> query = matvec(std::vector<double>(parameters_.begin() + q_offset,
-                                                                  parameters_.begin() + k_offset),
-                                             hidden, input, inputs[time]);
+    const std::vector<double> query = matvec(parameter_slice(parameters_, q_offset, k_offset), hidden, input, inputs[time]);
     std::vector<std::vector<double>> keys;
     std::vector<std::vector<double>> values;
     keys.reserve(time + 1);
     values.reserve(time + 1);
     for (std::size_t position = 0; position <= time; ++position) {
-        keys.push_back(matvec(std::vector<double>(parameters_.begin() + k_offset,
-                                                  parameters_.begin() + v_offset),
-                              hidden, input, inputs[position]));
-        values.push_back(matvec(std::vector<double>(parameters_.begin() + v_offset,
-                                                   parameters_.begin() + output_offset),
-                                hidden, input, inputs[position]));
+        keys.push_back(matvec(parameter_slice(parameters_, k_offset, v_offset), hidden, input, inputs[position]));
+        values.push_back(matvec(parameter_slice(parameters_, v_offset, output_offset), hidden, input, inputs[position]));
     }
     std::vector<double> scores(time + 1, 0.0);
     double maximum = -std::numeric_limits<double>::infinity();
@@ -121,9 +123,7 @@ std::vector<double> MatchedBaseline::dense_forward_step(
     for (std::size_t position = 0; position <= time; ++position) {
         for (std::size_t index = 0; index < hidden; ++index) context[index] += scores[position] / denominator * values[position][index];
     }
-    auto result = matvec(std::vector<double>(parameters_.begin() + output_offset,
-                                              parameters_.begin() + bias_offset),
-                         output, hidden, context);
+    auto result = matvec(parameter_slice(parameters_, output_offset, bias_offset), output, hidden, context);
     for (std::size_t index = 0; index < output; ++index) result[index] += parameters_[bias_offset + index];
     return result;
 }
@@ -146,29 +146,22 @@ std::vector<double> MatchedBaseline::gru_forward_step(const std::vector<double>&
     const auto output_offset = n_bias + hidden;
     const auto output_bias = output_offset + output * hidden;
     const auto z = [&]() {
-        auto result = matvec(std::vector<double>(parameters_.begin() + z_input,
-                                                 parameters_.begin() + z_hidden), hidden, input_dim, input);
-        const auto recurrent = matvec(std::vector<double>(parameters_.begin() + z_hidden,
-                                                          parameters_.begin() + z_bias), hidden, hidden, hidden_state);
+        auto result = matvec(parameter_slice(parameters_, z_input, z_hidden), hidden, input_dim, input);
+        const auto recurrent = matvec(parameter_slice(parameters_, z_hidden, z_bias), hidden, hidden, hidden_state);
         for (std::size_t index = 0; index < hidden; ++index) result[index] = sigmoid(result[index] + recurrent[index] + parameters_[z_bias + index]);
         return result;
     }();
     const auto r = [&]() {
-        auto result = matvec(std::vector<double>(parameters_.begin() + r_input,
-                                                 parameters_.begin() + r_hidden), hidden, input_dim, input);
-        const auto recurrent = matvec(std::vector<double>(parameters_.begin() + r_hidden,
-                                                          parameters_.begin() + r_bias), hidden, hidden, hidden_state);
+        auto result = matvec(parameter_slice(parameters_, r_input, r_hidden), hidden, input_dim, input);
+        const auto recurrent = matvec(parameter_slice(parameters_, r_hidden, r_bias), hidden, hidden, hidden_state);
         for (std::size_t index = 0; index < hidden; ++index) result[index] = sigmoid(result[index] + recurrent[index] + parameters_[r_bias + index]);
         return result;
     }();
-    auto candidate = matvec(std::vector<double>(parameters_.begin() + n_input,
-                                                parameters_.begin() + n_hidden), hidden, input_dim, input);
-    const auto recurrent = matvec(std::vector<double>(parameters_.begin() + n_hidden,
-                                                      parameters_.begin() + n_bias), hidden, hidden, hidden_state);
+    auto candidate = matvec(parameter_slice(parameters_, n_input, n_hidden), hidden, input_dim, input);
+    const auto recurrent = matvec(parameter_slice(parameters_, n_hidden, n_bias), hidden, hidden, hidden_state);
     for (std::size_t index = 0; index < hidden; ++index) candidate[index] = std::tanh(candidate[index] + r[index] * recurrent[index] + parameters_[n_bias + index]);
     for (std::size_t index = 0; index < hidden; ++index) hidden_state[index] = z[index] * hidden_state[index] + (1.0 - z[index]) * candidate[index];
-    auto result = matvec(std::vector<double>(parameters_.begin() + output_offset,
-                                              parameters_.begin() + output_bias), output, hidden, hidden_state);
+    auto result = matvec(parameter_slice(parameters_, output_offset, output_bias), output, hidden, hidden_state);
     for (std::size_t index = 0; index < output; ++index) result[index] += parameters_[output_bias + index];
     return result;
 }
@@ -181,11 +174,9 @@ std::vector<double> MatchedBaseline::ssm_forward_step(const std::vector<double>&
     const auto input_offset = hidden;
     const auto output_offset = input_offset + hidden * input_dim;
     const auto bias_offset = output_offset + output * hidden;
-    const auto input_effect = matvec(std::vector<double>(parameters_.begin() + input_offset,
-                                                         parameters_.begin() + output_offset), hidden, input_dim, input);
+    const auto input_effect = matvec(parameter_slice(parameters_, input_offset, output_offset), hidden, input_dim, input);
     for (std::size_t index = 0; index < hidden; ++index) hidden_state[index] = (0.999 * sigmoid(parameters_[index])) * hidden_state[index] + input_effect[index];
-    auto result = matvec(std::vector<double>(parameters_.begin() + output_offset,
-                                              parameters_.begin() + bias_offset), output, hidden, hidden_state);
+    auto result = matvec(parameter_slice(parameters_, output_offset, bias_offset), output, hidden, hidden_state);
     for (std::size_t index = 0; index < output; ++index) result[index] += parameters_[bias_offset + index];
     return result;
 }

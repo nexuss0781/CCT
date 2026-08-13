@@ -113,7 +113,8 @@ int run_process(const std::vector<std::string>& arguments, const std::filesystem
 
 std::string json_escape(const std::string& value) {
     std::ostringstream output;
-    for (const unsigned char character : value) {
+    for (const char raw_character : value) {
+        const auto character = static_cast<unsigned char>(raw_character);
         if (character == '"' || character == '\\') output << '\\';
         if (character == '\n') output << "\\n";
         else if (character == '\r') output << "\\r";
@@ -620,7 +621,8 @@ std::uint64_t stable_key(const std::string& id, const std::uint64_t seed) {
 std::string manifest_body(const Track1Manifest& manifest) {
     std::ostringstream output;
     output << "{\"manifest_version\":\"" << json_escape(manifest.manifest_version) << "\",\"tokenizer_snapshot\":\""
-           << json_escape(manifest.tokenizer_snapshot) << "\",\"selection_policy\":\"" << json_escape(manifest.selection_policy)
+           << json_escape(manifest.tokenizer_snapshot) << "\",\"pretrain_token_count_mode\":\"" << json_escape(manifest.pretrain_token_count_mode)
+           << "\",\"selection_policy\":\"" << json_escape(manifest.selection_policy)
            << "\",\"selection_seed\":" << manifest.selection_seed << ",\"pretrain_train_tokens\":" << manifest.pretrain_train_tokens
            << ",\"pretrain_validation_tokens\":" << manifest.pretrain_validation_tokens << ",\"pretrain_test_tokens\":" << manifest.pretrain_test_tokens
            << ",\"sft_train_examples\":" << manifest.sft_train_examples << ",\"sft_evaluation_examples\":" << manifest.sft_evaluation_examples
@@ -673,7 +675,7 @@ void sort_candidates(std::vector<Candidate>& candidates) {
     });
 }
 
-const Track1Source& source_at(const std::vector<Track1Source>& sources, const std::string& id) {
+Track1Source& source_at(std::vector<Track1Source>& sources, const std::string& id) {
     const auto found = std::find_if(sources.begin(), sources.end(), [&](const auto& source) { return source.source_id == id; });
     require(found != sources.end(), "Track 1 source is missing: " + id);
     return *found;
@@ -708,14 +710,14 @@ Track1Pipeline::Track1Pipeline(Track1Config config) : config_(std::move(config))
         {"wikitext2_pretrain_validation", "wikitext-2-raw/wiki.valid.raw"},
         {"wikitext2_pretrain_test", "wikitext-2-raw/wiki.test.raw"}}};
     for (const auto& [source_id, archive_member] : wikitext_members) {
-        auto& source = const_cast<Track1Source&>(source_at(manifest_.sources, source_id));
+        auto& source = source_at(manifest_.sources, source_id);
         source.upstream_dataset_id = "Salesforce/wikitext";
         source.acquisition_type = "hf_zip_member";
         source.raw_file_url = "https://huggingface.co/datasets/ggml-org/ci/resolve/927b3642933080f1b0e811e2f916e14c292992f9/wikitext-2-raw-v1.zip?download=true";
         source.archive_member = archive_member;
     }
-    auto& squad_train = const_cast<Track1Source&>(source_at(manifest_.sources, "squad2_sft_train_source"));
-    auto& squad_final = const_cast<Track1Source&>(source_at(manifest_.sources, "squad2_final_test_source"));
+    auto& squad_train = source_at(manifest_.sources, "squad2_sft_train_source");
+    auto& squad_final = source_at(manifest_.sources, "squad2_final_test_source");
     squad_train.upstream_dataset_id = "rajpurkar/squad_v2";
     squad_final.upstream_dataset_id = "rajpurkar/squad_v2";
     squad_train.acquisition_type = "hf_gem_flat_file";
@@ -733,7 +735,7 @@ void Track1Pipeline::prepare_wikitext() {
     const std::vector<std::pair<Track1Split, std::string>> split_paths{
         {Track1Split::PretrainTrain, "wikitext2_pretrain_train"}, {Track1Split::PretrainValidation, "wikitext2_pretrain_validation"}, {Track1Split::PretrainTest, "wikitext2_pretrain_test"}};
     for (const auto& [split, source_id] : split_paths) {
-        auto& source = const_cast<Track1Source&>(source_at(manifest_.sources, source_id));
+        auto& source = source_at(manifest_.sources, source_id);
         const auto raw_path = std::filesystem::path(config_.output_root) / "raw" / source_path_component(source);
         const auto archive_path = std::filesystem::path(config_.output_root) / "raw" / "wikitext-2-raw-v1.zip";
         const bool use_archive = source.acquisition_type == "hf_zip_member" &&
@@ -747,10 +749,14 @@ void Track1Pipeline::prepare_wikitext() {
             ++report_.source_rows;
             const auto cap = split == Track1Split::PretrainTrain ? config_.pretrain_token_cap : std::numeric_limits<std::size_t>::max();
             if (tokens >= cap) return;
+            // Track 1 V1 uses the byte-fallback tokenizer: each retained byte and the line delimiter are one token.
             const auto take = std::min(text.size(), cap - tokens);
             prepared.write(text.data(), static_cast<std::streamsize>(take));
-            prepared.put('\n');
             tokens += take;
+            if (tokens < cap) {
+                prepared.put('\n');
+                ++tokens;
+            }
             ++rows;
         };
         if (use_archive) {
@@ -788,8 +794,8 @@ void Track1Pipeline::prepare_wikitext() {
 }
 
 void Track1Pipeline::prepare_squad() {
-    auto& train_source = const_cast<Track1Source&>(source_at(manifest_.sources, "squad2_sft_train_source"));
-    auto& final_source = const_cast<Track1Source&>(source_at(manifest_.sources, "squad2_final_test_source"));
+    auto& train_source = source_at(manifest_.sources, "squad2_sft_train_source");
+    auto& final_source = source_at(manifest_.sources, "squad2_final_test_source");
     std::vector<Candidate> answerable;
     std::vector<Candidate> unanswerable;
     require(config_.squad_train_row_offset < train_source.total_rows && config_.squad_final_test_row_offset < final_source.total_rows,
@@ -977,7 +983,9 @@ std::string Track1Pipeline::serialize_report() const {
 
 std::string Track1Pipeline::serialize_evaluation_contract() const {
     std::ostringstream output;
-    output << "{\"metric_version\":\"" << evaluation_contract_.metric_version << "\",\"pretrain_metrics\":" << json_array(evaluation_contract_.pretrain_metrics)
+    output << "{\"metric_version\":\"" << evaluation_contract_.metric_version << "\",\"pretrain_task\":\"" << evaluation_contract_.pretrain_task
+           << "\",\"pretrain_evaluation_scope\":\"" << evaluation_contract_.pretrain_evaluation_scope << "\",\"qa_task\":\"" << evaluation_contract_.qa_task
+           << "\",\"pretrain_metrics\":" << json_array(evaluation_contract_.pretrain_metrics)
            << ",\"qa_metrics\":" << json_array(evaluation_contract_.qa_metrics) << ",\"required_slices\":" << json_array(evaluation_contract_.required_slices)
            << ",\"forbidden_behaviors\":" << json_array(evaluation_contract_.forbidden_behaviors) << "}\n";
     return output.str();

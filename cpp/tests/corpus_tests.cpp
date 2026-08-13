@@ -1,6 +1,8 @@
 #include "cct/corpus.hpp"
 
 #include <algorithm>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -45,7 +47,8 @@ void test_real_source_ingestion_and_labels() {
     require(book.content_hash.size() == 64 && book.normalized_hash.size() == 64 && !book.transformation_chain.empty(),
             "real source hashes or transformation lineage are incomplete");
     require(book.language_and_domain_labels.size() >= 2 && code.language_and_domain_labels.size() >= 2 &&
-                std::find(code.language_and_domain_labels.begin(), code.language_and_domain_labels.end(), "code") != code.language_and_domain_labels.end(),
+                std::find(code.language_and_domain_labels.begin(), code.language_and_domain_labels.end(), "code") != code.language_and_domain_labels.end() &&
+                std::find(code.language_and_domain_labels.begin(), code.language_and_domain_labels.end(), "code_candidate") != code.language_and_domain_labels.end(),
             "language/domain labels were not assigned");
     require(corpus.training_records().size() == 2 && corpus.evaluation_records().size() == 1, "split isolation changed real records");
 }
@@ -60,6 +63,7 @@ void test_rights_privacy_and_quality_fail_closed() {
     const auto pii = corpus.ingest("pii-record", "pg1342", pii_content, CorpusSplit::Train, CorpusDataClass::GeneralText);
     require(pii.decision == CorpusDecision::Quarantine && pii.pii_detected && pii.redacted && pii.content.empty() &&
                 pii.normalized_content == "[redacted]" && pii.content_hash == GovernedCorpus::content_sha256(pii_content) &&
+                std::find(pii.language_and_domain_labels.begin(), pii.language_and_domain_labels.end(), "pii_candidate") != pii.language_and_domain_labels.end() &&
                 std::find(pii.reason_codes.begin(), pii.reason_codes.end(), "raw_content_purged") != pii.reason_codes.end(),
             "PII record retained raw content or lost its quarantine digest");
     const auto serialized = corpus.serialize();
@@ -95,6 +99,11 @@ void test_exact_near_duplicate_and_contamination() {
     register_real_sources(corpus);
     const std::string base = "the governed corpus records source provenance and quality labels for every accepted training document";
     const auto first = corpus.ingest("base", "pg1342", base, CorpusSplit::Train, CorpusDataClass::GeneralText);
+    const auto cross_split = corpus.ingest("cross-split", "pg1342", base, CorpusSplit::Validation, CorpusDataClass::GeneralText);
+    require(cross_split.decision == CorpusDecision::Reject &&
+                std::find(cross_split.reason_codes.begin(), cross_split.reason_codes.end(), "split_contamination") != cross_split.reason_codes.end(),
+            "cross-split contamination was not rejected with an explicit reason");
+    require(corpus.detect_contamination(base, CorpusSplit::Validation), "candidate split contamination query missed the training record");
     const auto exact = corpus.ingest("exact", "pg1342", "THE GOVERNED CORPUS records source provenance and quality labels for every accepted training document", CorpusSplit::Train, CorpusDataClass::GeneralText);
     const auto near = corpus.ingest("near", "pg1342", "the governed corpus records source provenance and quality labels for every accepted training document today", CorpusSplit::Train, CorpusDataClass::GeneralText);
     require(first.decision == CorpusDecision::Accept && exact.decision == CorpusDecision::Reject && near.decision == CorpusDecision::Reject,
@@ -124,6 +133,23 @@ void test_shards_resume_and_deletion() {
     require(corpus.audit().size() >= 4, "ingest and deletion lineage is incomplete");
 }
 
+void test_utf8_boundary_safe_file_truncation() {
+    GovernedCorpus corpus;
+    register_real_sources(corpus);
+    const auto path = std::filesystem::temp_directory_path() / "cct-corpus-utf8-boundary.txt";
+    {
+        std::ofstream output(path, std::ios::binary | std::ios::trunc);
+        require(static_cast<bool>(output), "could not create UTF-8 truncation fixture");
+        output << "alpha beta \xE2\x82\xAC omega";
+    }
+    const auto record = corpus.ingest_file("utf8-boundary", "pg1342", path.string(), CorpusSplit::Train,
+                                           CorpusDataClass::GeneralText, 12U);
+    std::error_code remove_error;
+    std::filesystem::remove(path, remove_error);
+    require(record.content == "alpha beta ", "UTF-8 truncation did not stop before a partial code point");
+    require(record.content.find(static_cast<char>(0xE2)) == std::string::npos, "truncated UTF-8 lead byte was retained");
+}
+
 void test_manifest_and_source_fail_closed() {
     GovernedCorpus corpus;
     bool rejected = false;
@@ -151,6 +177,7 @@ int main() {
         {"exact_near_duplicate_and_contamination", test_exact_near_duplicate_and_contamination},
         {"shards_resume_and_deletion", test_shards_resume_and_deletion},
         {"manifest_and_source_fail_closed", test_manifest_and_source_fail_closed},
+        {"utf8_boundary_safe_file_truncation", test_utf8_boundary_safe_file_truncation},
     };
     std::size_t passed = 0;
     for (const auto& [name, test] : tests) {

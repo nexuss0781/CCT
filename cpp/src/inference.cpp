@@ -30,7 +30,8 @@ double monotonic_milliseconds() {
 std::size_t token_count(const std::string& value) {
     std::size_t count = 0U;
     bool in_token = false;
-    for (const unsigned char character : value) {
+    for (const char raw_character : value) {
+        const auto character = static_cast<unsigned char>(raw_character);
         const bool separator = character == ' ' || character == '\n' || character == '\r' || character == '\t';
         if (!separator && !in_token) {
             ++count;
@@ -183,6 +184,8 @@ void DeploymentController::register_release(const DeploymentRelease& release) {
     require(!release.release_id.empty() && !release.model_version.empty() && !release.adapter_version.empty() &&
                 !release.tokenizer_version.empty() && !release.knowledge_index_version.empty() && !release.artifact_digest.empty(),
             "deployment release identity is incomplete");
+    require(release.model_artifact_path.empty() == release.tokenizer_artifact_path.empty(),
+            "deployment release artifact paths must be supplied together");
     require(!has_release(release.release_id), "duplicate deployment release");
     releases_.push_back(release);
 }
@@ -280,16 +283,17 @@ InferenceService::InferenceService(InferenceConfig config, KnowledgePlane* knowl
                 config_.maximum_queue_depth > 0U && config_.maximum_state_bytes_per_session > 0U && config_.maximum_state_bytes_per_tenant > 0U &&
                 config_.maximum_cache_entries > 0U && config_.maximum_cache_bytes > 0U,
             "inference configuration contains zero limits");
-    require(config_.circuit_failure_threshold > 0U, "circuit failure threshold must be positive");
+    require(config_.circuit_failure_threshold > 0U && !config_.default_release_id.empty() && !config_.default_release_digest.empty(),
+            "inference release configuration is incomplete");
     if (config_.backend_mode == InferenceBackendMode::Checkpoint) {
         require(!config_.model_checkpoint_path.empty() && !config_.tokenizer_snapshot_path.empty(),
                 "checkpoint inference requires model and tokenizer artifact paths");
         backend_ = std::make_shared<CheckpointInferenceBackend>(config_.model_checkpoint_path, config_.tokenizer_snapshot_path,
                                                                  config_.tokenizer_version);
     }
-    deployment_.register_release({"stage16-default", config_.model_version, config_.adapter_version, config_.tokenizer_version,
-                                  config_.knowledge_index_version, digest("stage16-default-release"), ModelRoute::Cct});
-    deployment_.activate("stage16-default");
+    deployment_.register_release({config_.default_release_id, config_.model_version, config_.adapter_version, config_.tokenizer_version,
+                                  config_.knowledge_index_version, config_.default_release_digest, ModelRoute::Cct, {}, {}});
+    deployment_.activate(config_.default_release_id);
 }
 
 InferenceService::InferenceService(InferenceService&& other) noexcept
@@ -349,7 +353,35 @@ void InferenceService::register_release(const DeploymentRelease& release) {
 
 void InferenceService::activate_release(const std::string& release_id) {
     std::lock_guard<std::recursive_mutex> guard(mutex_);
+    const auto& selected = deployment_.release(release_id);
+    std::shared_ptr<InferenceBackend> candidate = backend_;
+    if (!selected.model_artifact_path.empty()) {
+        const auto serialized_checkpoint = read_file(selected.model_artifact_path);
+        require(nlp_checkpoint_hash(serialized_checkpoint) == selected.artifact_digest,
+                "deployment release checkpoint digest does not match its approved artifact digest");
+        candidate = std::make_shared<CheckpointInferenceBackend>(selected.model_artifact_path, selected.tokenizer_artifact_path,
+                                                                 selected.tokenizer_version);
+    }
     deployment_.activate(release_id);
+    const bool backend_changed = candidate != backend_;
+    backend_ = std::move(candidate);
+    config_.model_version = selected.model_version;
+    config_.adapter_version = selected.adapter_version;
+    config_.tokenizer_version = selected.tokenizer_version;
+    config_.knowledge_index_version = selected.knowledge_index_version;
+    if (!selected.model_artifact_path.empty()) {
+        config_.backend_mode = InferenceBackendMode::Checkpoint;
+        config_.model_checkpoint_path = selected.model_artifact_path;
+        config_.tokenizer_snapshot_path = selected.tokenizer_artifact_path;
+    }
+    if (backend_changed) {
+        states_.clear();
+        cache_.clear();
+        cache_bytes_ = 0U;
+        state_metrics_.active_sessions = 0U;
+        state_metrics_.active_tenants = 0U;
+        state_metrics_.bytes_in_use = 0U;
+    }
 }
 
 void InferenceService::start_canary(const std::string& release_id, const std::size_t percent) {
@@ -527,8 +559,12 @@ InferenceResponse InferenceService::execute(const InferenceRequest& request, con
         throw InferenceError("injected " + service_fault_name(fault_) + " fault");
     }
     const auto& release = deployment_.route_release(request);
-    const auto use_case = ProductUseCase{request.task_schema, "Stage16 bounded inference", ApplicationKind::GroundedAnswer,
-                                         {request.task_schema}, {"send_email", "submit_payment", "execute_code"}, true, "stage16-owner", "2027-12-31"};
+    require(!config_.policy_use_case_id.empty() && !config_.policy_use_case_name.empty() && !config_.policy_owner.empty() &&
+                !config_.policy_expiration.empty() && !config_.policy_allowed_outputs.empty(),
+            "inference policy configuration is incomplete");
+    const auto use_case = ProductUseCase{config_.policy_use_case_id, config_.policy_use_case_name, config_.policy_application_kind,
+                                         config_.policy_allowed_outputs, config_.policy_denied_actions, config_.policy_human_review_required,
+                                         config_.policy_owner, config_.policy_expiration};
     const PolicyRequest policy_request{request.tenant_id, use_case.id, request.task_schema, request.input, request.requests_external_action,
                                        request.requests_host_execution, request.requests_secret_access, false, false};
     const auto policy = ProductionPolicy::evaluate(policy_request, use_case);

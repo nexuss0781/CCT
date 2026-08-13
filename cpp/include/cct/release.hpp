@@ -64,7 +64,9 @@ public:
 struct ReleaseScope {
     std::string release_id;
     std::string approved_model_version;
+    std::string approved_model_artifact_path;
     std::string approved_tokenizer_version;
+    std::string approved_tokenizer_artifact_path;
     std::vector<std::string> approved_adapter_versions;
     std::string approved_retrieval_index_version;
     std::vector<std::string> approved_task_schemas;
@@ -300,9 +302,12 @@ public:
     ReleaseEvaluation evaluate_release() const;
     void mark_final_decision(ReleaseDecision decision);
     void enter_safe_degraded_mode(const std::string& reason);
+    void activate_release(InferenceService& service) const;
 
     std::string serialize_release_manifest() const;
     std::string serialize_audit() const;
+    void save_release_manifest(const std::string& path) const;
+    void save_audit(const std::string& path) const;
 
 private:
     std::int64_t (*clock_)() = nullptr;

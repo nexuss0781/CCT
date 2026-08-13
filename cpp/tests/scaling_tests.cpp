@@ -1,6 +1,7 @@
 #include "cct/scaling.hpp"
 
 #include <cmath>
+#include <fstream>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -81,6 +82,22 @@ void test_training_and_checkpoint() {
             "Stage 5 checkpoint changed evaluation metrics");
 }
 
+void test_bounded_checkpoint_loader() {
+    const auto path = "/tmp/cct_stage5_oversized_checkpoint.chk";
+    {
+        std::ofstream output(path);
+        require(static_cast<bool>(output), "could not create oversized checkpoint fixture");
+        output << "CCT_STAGE5_CHECKPOINT_V1\n0 1 1 1 7 0 0 0 8000001\n";
+    }
+    bool rejected = false;
+    try {
+        static_cast<void>(Stage5LanguageModel::load_checkpoint(path));
+    } catch (const std::exception&) {
+        rejected = true;
+    }
+    require(rejected, "Stage 5 loader accepted an oversized parameter count");
+}
+
 void test_matched_models_and_memory_context() {
     const auto vocabulary = alphabet().size() + 1;
     const auto tokens = Stage5Vocabulary::compact_encode("a b a b a b a b a b ", alphabet(), alphabet().size());
@@ -109,6 +126,7 @@ int main() {
     const std::vector<std::pair<std::string, void (*)()>> tests{
         {"vocabulary_roundtrip", test_vocabulary_roundtrip},
         {"training_and_checkpoint", test_training_and_checkpoint},
+        {"bounded_checkpoint_loader", test_bounded_checkpoint_loader},
         {"matched_models_and_memory_context", test_matched_models_and_memory_context},
     };
     std::size_t passed = 0;

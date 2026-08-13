@@ -120,6 +120,23 @@ void test_audit_and_release_boundaries() {
             "audit serialization lost release-boundary records");
 }
 
+void test_bounded_deserialization() {
+    bool rejected = false;
+    try {
+        static_cast<void>(ProductionRegistry::deserialize("CCT_PRODUCTION_REGISTRY_V1\n18446744073709551615\n"));
+    } catch (const std::exception&) {
+        rejected = true;
+    }
+    require(rejected, "production registry accepted an unbounded collection count");
+    rejected = false;
+    try {
+        static_cast<void>(ProductionAudit::deserialize("CCT_PRODUCTION_AUDIT_V1\n18446744073709551615\n"));
+    } catch (const std::exception&) {
+        rejected = true;
+    }
+    require(rejected, "production audit accepted an unbounded collection count");
+}
+
 void test_fail_closed_validation() {
     ProductionRegistry registry;
     bool rejected = false;
@@ -146,6 +163,7 @@ int main() {
         {"policy_matrix", test_policy_matrix},
         {"realistic_application_fixtures", test_realistic_application_fixtures},
         {"audit_and_release_boundaries", test_audit_and_release_boundaries},
+        {"bounded_deserialization", test_bounded_deserialization},
         {"fail_closed_validation", test_fail_closed_validation},
     };
     std::size_t passed = 0;

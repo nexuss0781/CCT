@@ -116,20 +116,6 @@ void write_file(const std::filesystem::path& path, const std::string& content) {
     }
 }
 
-std::string json_escape(const std::string& value) {
-    std::ostringstream output;
-    for (const unsigned char character : value) {
-        if (character == '\\') output << "\\\\";
-        else if (character == '"') output << "\\\"";
-        else if (character == '\n') output << "\\n";
-        else if (character == '\r') output << "\\r";
-        else if (character == '\t') output << "\\t";
-        else if (character < 0x20U) output << "\\u" << std::hex << std::setw(4) << std::setfill('0') << static_cast<unsigned int>(character) << std::dec << std::setfill(' ');
-        else output << static_cast<char>(character);
-    }
-    return output.str();
-}
-
 unsigned int hex_digit(const char value) {
     if (value >= '0' && value <= '9') return static_cast<unsigned int>(value - '0');
     if (value >= 'a' && value <= 'f') return static_cast<unsigned int>(value - 'a' + 10);
@@ -499,11 +485,15 @@ int main(int argc, char** argv) {
         const auto elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
         const auto pretrain_checkpoint_hash = cct::nlp_checkpoint_hash(read_file(pretrain_checkpoint));
         const auto sft_checkpoint_hash = cct::nlp_checkpoint_hash(read_file(sft_checkpoint));
+        const auto pretrain_checkpoint_bytes = std::filesystem::file_size(pretrain_checkpoint);
+        const auto sft_checkpoint_bytes = std::filesystem::file_size(sft_checkpoint);
         std::ostringstream report;
         report << std::setprecision(10) << "{\"status\":\"PASS\",\"track\":\"track1\",\"backend\":\"native-c++20-track1-cct-recurrence\",\"tokenizer_hash\":\""
-               << tokenizer_hash << "\",\"pretrain_checkpoint\":\"" << json_escape(pretrain_checkpoint.string()) << "\",\"pretrain_checkpoint_hash\":\""
-               << pretrain_checkpoint_hash << "\",\"sft_checkpoint\":\"" << json_escape(sft_checkpoint.string()) << "\",\"sft_checkpoint_hash\":\""
-               << sft_checkpoint_hash << "\",\"pretrain\":{\"before_selection\":" << evaluation_json(pretrain.before)
+               << tokenizer_hash << "\",\"pretrain_checkpoint\":{\"reference\":\"pretrain_checkpoint.bin\",\"sha256\":\""
+               << pretrain_checkpoint_hash << "\",\"bytes\":" << pretrain_checkpoint_bytes << ",\"training_contract_hash\":\""
+               << pretrainer.checkpoint_info().training_contract_hash << "\"},\"sft_checkpoint\":{\"reference\":\"sft_checkpoint.bin\",\"sha256\":\""
+               << sft_checkpoint_hash << "\",\"bytes\":" << sft_checkpoint_bytes << ",\"training_contract_hash\":\""
+               << sft_trainer.checkpoint_info().training_contract_hash << "\"},\"pretrain\":{\"before_selection\":" << evaluation_json(pretrain.before)
                << ",\"after_selection\":" << evaluation_json(pretrain.after) << ",\"held_out_test\":" << evaluation_json(pretrain.held_out)
                << ",\"train_sequences\":" << pretrain.train_sequences << ",\"selection_sequences\":" << pretrain.selection_sequences
                << ",\"held_out_sequences\":" << pretrain.held_out_sequences << "},\"sft\":{\"before_selection\":" << evaluation_json(sft.before)

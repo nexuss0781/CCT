@@ -103,6 +103,32 @@ void test_environment_policy_and_replay() {
             "safe no-op was not allowed");
 }
 
+void test_bounded_deserialization() {
+    bool rejected = false;
+    try {
+        static_cast<void>(MultimodalEventStore::deserialize("CCT_MM_STORE_V1\n18446744073709551615\n"));
+    } catch (const std::exception&) {
+        rejected = true;
+    }
+    require(rejected, "multimodal store accepted an unbounded event count");
+    const std::string event_prefix =
+        "CCT_MM_EVENT_V1\n1 0 0 0 0 0 0 \"frame\"\n1 0 0 0 1 0 0 0 1\n\"payload\"\n";
+    rejected = false;
+    try {
+        static_cast<void>(MultimodalEvent::deserialize(event_prefix + "18446744073709551615\n"));
+    } catch (const std::exception&) {
+        rejected = true;
+    }
+    require(rejected, "multimodal event accepted an unbounded embedding count");
+    rejected = false;
+    try {
+        static_cast<void>(MultimodalAuditLog::deserialize("CCT_MM_AUDIT_V1\n18446744073709551615\n"));
+    } catch (const std::exception&) {
+        rejected = true;
+    }
+    require(rejected, "multimodal audit accepted an unbounded record count");
+}
+
 void test_audit_and_transfer_metadata() {
     MultimodalAuditLog log;
     log.append({"input", 40, Modality::Vision, "vision-patch-v1", false});
@@ -126,6 +152,7 @@ int main() {
         {"temporal_and_spatial_alignment", test_temporal_and_spatial_alignment},
         {"masked_fusion_and_uncertainty", test_masked_fusion_and_uncertainty},
         {"environment_policy_and_replay", test_environment_policy_and_replay},
+        {"bounded_deserialization", test_bounded_deserialization},
         {"audit_and_transfer_metadata", test_audit_and_transfer_metadata},
     };
     std::size_t passed = 0;

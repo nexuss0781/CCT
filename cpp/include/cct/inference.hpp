@@ -80,6 +80,8 @@ struct InferenceConfig {
     std::string adapter_version = "adapter-none-v1";
     std::string tokenizer_version = "tokenizer-stage10-v1";
     std::string knowledge_index_version = "lexical-v1";
+    std::string default_release_id = "stage16-default";
+    std::string default_release_digest = "stage16-default-release";
     InferenceBackendMode backend_mode = InferenceBackendMode::FixtureTemplate;
     std::string model_checkpoint_path;
     std::string tokenizer_snapshot_path;
@@ -95,6 +97,14 @@ struct InferenceConfig {
     std::int64_t state_ttl_milliseconds = 300000;
     std::size_t circuit_failure_threshold = 2;
     std::int64_t circuit_reset_milliseconds = 1000;
+    std::string policy_use_case_id = "grounded-answer-v1";
+    std::string policy_use_case_name = "Stage16 bounded inference";
+    ApplicationKind policy_application_kind = ApplicationKind::GroundedAnswer;
+    std::vector<std::string> policy_allowed_outputs{"answer"};
+    std::vector<std::string> policy_denied_actions{"external_action", "host_execution", "secret_access"};
+    bool policy_human_review_required = true;
+    std::string policy_owner = "cct-governance";
+    std::string policy_expiration = "review-required";
 };
 
 struct AuthContext {
@@ -300,6 +310,17 @@ struct DeploymentRelease {
     std::string knowledge_index_version;
     std::string artifact_digest;
     ModelRoute route = ModelRoute::Cct;
+    std::string model_artifact_path;
+    std::string tokenizer_artifact_path;
+
+    DeploymentRelease() = default;
+    DeploymentRelease(const std::string& release_id_value, const std::string& model_version_value, const std::string& adapter_version_value,
+                      const std::string& tokenizer_version_value, const std::string& knowledge_index_version_value,
+                      const std::string& artifact_digest_value, const ModelRoute route_value,
+                      const std::string& model_artifact_path_value = {}, const std::string& tokenizer_artifact_path_value = {})
+        : release_id(release_id_value), model_version(model_version_value), adapter_version(adapter_version_value),
+          tokenizer_version(tokenizer_version_value), knowledge_index_version(knowledge_index_version_value), artifact_digest(artifact_digest_value),
+          route(route_value), model_artifact_path(model_artifact_path_value), tokenizer_artifact_path(tokenizer_artifact_path_value) {}
 };
 
 struct DeploymentStatus {
@@ -341,6 +362,15 @@ private:
     DeploymentStatus status_;
 };
 
+/**
+ * Thread-safety contract: every public operation on this service serializes through
+ * the internal recursive mutex, including state, queue, cache, metrics, audit, and
+ * deployment mutations. Returned values are copies. The attached KnowledgePlane is
+ * an external dependency and is not made thread-safe by this service; callers must
+ * provide its synchronization if it is shared with other writers.
+ * Failure contract: invalid requests are returned as structured rejections or
+ * error responses; configuration and invariant violations throw InferenceError.
+ */
 class InferenceService {
 public:
     explicit InferenceService(InferenceConfig config = {}, KnowledgePlane* knowledge = nullptr);

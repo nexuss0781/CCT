@@ -6,6 +6,8 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <filesystem>
+#include <fcntl.h>
 #include <fstream>
 #include <iomanip>
 #include <limits>
@@ -15,12 +17,62 @@
 #include <stdexcept>
 #include <string_view>
 #include <utility>
+#include <unistd.h>
 
 namespace cct {
 namespace {
 
 void require(const bool condition, const std::string& message) {
     if (!condition) throw NlpTrainingError(message);
+}
+
+std::string training_contract_digest(const NlpModelConfig& model, const NlpOptimizerConfig& optimizer,
+                                    const std::string& tokenizer_hash, const std::string& dataset_hash) {
+    std::ostringstream contract;
+    contract << "cct-training-contract-v1|model_kind=" << static_cast<unsigned int>(model.kind) << "|vocabulary=" << model.vocabulary_size
+             << "|embedding=" << model.embedding_dim << "|hidden=" << model.hidden_dim << "|context=" << model.context_length
+             << "|seed=" << model.seed << "|objective=next-token-cross-entropy|mask=target-only-v1|optimizer=" << std::setprecision(17)
+             << optimizer.learning_rate << ',' << optimizer.beta1 << ',' << optimizer.beta2 << ',' << optimizer.epsilon << ','
+             << optimizer.weight_decay << ',' << optimizer.clip_norm << ',' << optimizer.warmup_steps << ',' << optimizer.total_steps << ','
+             << optimizer.validation_interval_steps << "|tokenizer=" << tokenizer_hash << "|dataset=" << dataset_hash << "|code=native-c++20-nlp-v3";
+    return GovernedCorpus::content_sha256(contract.str());
+}
+
+void atomic_publish_checkpoint(const std::string& path, const std::string& content) {
+    const std::filesystem::path target(path);
+    const auto parent = target.parent_path().empty() ? std::filesystem::path(".") : target.parent_path();
+    std::error_code directory_error;
+    std::filesystem::create_directories(parent, directory_error);
+    require(!directory_error, "could not create NLP checkpoint parent directory");
+    const auto template_path = (parent / (target.filename().string() + ".tmp.XXXXXX")).string();
+    std::vector<char> temporary_template(template_path.begin(), template_path.end());
+    temporary_template.push_back('\0');
+    const auto descriptor = ::mkstemp(temporary_template.data());
+    require(descriptor >= 0, "could not create NLP checkpoint temporary file");
+    const auto temporary_path = std::string(temporary_template.data());
+    std::size_t written = 0U;
+    while (written < content.size()) {
+        const auto count = ::write(descriptor, content.data() + written, content.size() - written);
+        if (count <= 0) {
+            ::close(descriptor);
+            static_cast<void>(::unlink(temporary_path.c_str()));
+            throw NlpTrainingError("could not write NLP checkpoint temporary file");
+        }
+        written += static_cast<std::size_t>(count);
+    }
+    if (::fsync(descriptor) != 0 || ::close(descriptor) != 0) {
+        static_cast<void>(::unlink(temporary_path.c_str()));
+        throw NlpTrainingError("could not durably flush NLP checkpoint temporary file");
+    }
+    if (::rename(temporary_path.c_str(), target.c_str()) != 0) {
+        static_cast<void>(::unlink(temporary_path.c_str()));
+        throw NlpTrainingError("could not atomically publish NLP checkpoint");
+    }
+    const auto directory_descriptor = ::open(parent.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    require(directory_descriptor >= 0, "could not open NLP checkpoint parent directory");
+    const auto directory_sync = ::fsync(directory_descriptor);
+    const auto directory_close = ::close(directory_descriptor);
+    require(directory_sync == 0 && directory_close == 0, "could not durably publish NLP checkpoint directory entry");
 }
 
 double sigmoid(const double value) {
@@ -45,7 +97,8 @@ std::string hex_encode(const std::string& value) {
     static constexpr char digits[] = "0123456789abcdef";
     std::string result;
     result.reserve(value.size() * 2U);
-    for (const unsigned char byte : value) {
+    for (const char raw_byte : value) {
+        const auto byte = static_cast<unsigned char>(raw_byte);
         result.push_back(digits[byte >> 4U]);
         result.push_back(digits[byte & 0x0fU]);
     }
@@ -54,10 +107,10 @@ std::string hex_encode(const std::string& value) {
 
 std::string hex_decode(const std::string& value) {
     if (value.size() % 2U != 0U) throw NlpTrainingError("hex field has odd length");
-    const auto nibble = [](const char value) -> unsigned char {
-        if (value >= '0' && value <= '9') return static_cast<unsigned char>(value - '0');
-        if (value >= 'a' && value <= 'f') return static_cast<unsigned char>(value - 'a' + 10);
-        if (value >= 'A' && value <= 'F') return static_cast<unsigned char>(value - 'A' + 10);
+    const auto nibble = [](const char character) -> unsigned char {
+        if (character >= '0' && character <= '9') return static_cast<unsigned char>(character - '0');
+        if (character >= 'a' && character <= 'f') return static_cast<unsigned char>(character - 'a' + 10);
+        if (character >= 'A' && character <= 'F') return static_cast<unsigned char>(character - 'A' + 10);
         throw NlpTrainingError("hex field contains invalid character");
     };
     std::string result;
@@ -699,10 +752,14 @@ NextTokenModel NextTokenModel::load_model(std::istream& stream) {
                               config.context_length >> config.seed),
             "NLP model checkpoint configuration is incomplete");
     config.kind = model_kind_from_number(kind);
+    require(config.vocabulary_size >= Tokenizer::kByteFirstId + 256U && config.vocabulary_size <= 1'000'000U && config.embedding_dim > 0U &&
+                config.embedding_dim <= 4096U && config.hidden_dim > 0U && config.hidden_dim <= 4096U && config.context_length >= 2U &&
+                config.context_length <= 1'000'000U,
+            "NLP model checkpoint dimensions exceed budget");
     NextTokenModel model(config);
     std::size_t parameter_count = 0;
-    require(static_cast<bool>(stream >> parameter_count) && parameter_count == model.parameter_count(),
-            "NLP model checkpoint parameter count is invalid");
+    require(static_cast<bool>(stream >> parameter_count) && parameter_count == model.parameter_count() && parameter_count <= 16'000'000U,
+            "NLP model checkpoint parameter count is invalid or exceeds budget");
     std::vector<double> parameters(parameter_count, 0.0);
     for (auto& value : parameters) require(static_cast<bool>(stream >> value) && std::isfinite(value), "NLP model checkpoint parameter is invalid");
     model.set_parameter_vector(parameters);
@@ -719,14 +776,15 @@ NlpTrainer::NlpTrainer(NlpModelConfig model_config, NlpOptimizerConfig optimizer
     second_moment_.assign(model_.parameter_count(), 0.0);
     state_.seed = model_.config().seed;
     state_.rng_state = "seed=" + std::to_string(state_.seed);
+    training_contract_hash_ = training_contract_digest(model_.config(), optimizer_config_, tokenizer_hash_, dataset_hash_);
     checkpoint_info_.tokenizer_hash = tokenizer_hash_;
     checkpoint_info_.dataset_hash = dataset_hash_;
+    checkpoint_info_.training_contract_hash = training_contract_hash_;
 }
 
 void NlpTrainer::validate_optimizer() const {
     require(optimizer_config_.learning_rate > 0.0 && optimizer_config_.beta1 >= 0.0 && optimizer_config_.beta1 < 1.0 &&
-                optimizer_config_.beta2 >= 0.0 && optimizer_config_.beta2 < 1.0 && optimizer_config_.epsilon > 0.0 &&
-                optimizer_config_.clip_norm > 0.0 && optimizer_config_.total_steps > 0U,
+                optimizer_config_.clip_norm > 0.0 && optimizer_config_.total_steps > 0U && optimizer_config_.validation_interval_steps > 0U,
             "NLP optimizer configuration is invalid");
 }
 
@@ -744,29 +802,50 @@ double NlpTrainer::scheduled_learning_rate() const {
 NlpEvaluation NlpTrainer::evaluate(const std::vector<NlpSequence>& sequences) const { return model_.evaluate(sequences); }
 
 NlpTrainingPoint NlpTrainer::train_step(const NlpDataset& dataset) {
+    const auto training_started = std::chrono::steady_clock::now();
     require(dataset.dataset_hash == dataset_hash_ && dataset.tokenizer_hash == tokenizer_hash_, "NLP dataset identity mismatch");
     require(!dataset.train.empty(), "NLP training dataset is empty");
     const auto& sequence = dataset.train[state_.data_cursor % dataset.train.size()];
     const auto gradient_result = model_.loss_and_gradients(sequence);
     require(std::isfinite(gradient_result.cross_entropy) && std::isfinite(gradient_result.gradient_norm), "NLP training objective is non-finite");
-    require(gradient_result.token_count > 0U, "NLP training sequence has no active tokens");
+    require(gradient_result.token_count > 0U && gradient_result.gradients.size() == model_.parameter_count(),
+            "NLP training gradient shape is invalid");
+    require_finite(gradient_result.gradients, "NLP training gradient is non-finite");
     auto parameters = model_.parameter_vector();
+    auto next_first_moment = first_moment_;
+    auto next_second_moment = second_moment_;
     const auto gradient_norm = gradient_result.gradient_norm;
     const auto scale = std::min(1.0, optimizer_config_.clip_norm / std::max(gradient_norm, 1e-12));
     const auto learning_rate = scheduled_learning_rate();
     const auto step = state_.optimizer_step + 1U;
     for (std::size_t index = 0; index < parameters.size(); ++index) {
         const auto gradient = gradient_result.gradients[index] * scale;
-        first_moment_[index] = optimizer_config_.beta1 * first_moment_[index] + (1.0 - optimizer_config_.beta1) * gradient;
-        second_moment_[index] = optimizer_config_.beta2 * second_moment_[index] + (1.0 - optimizer_config_.beta2) * gradient * gradient;
+        next_first_moment[index] = optimizer_config_.beta1 * next_first_moment[index] + (1.0 - optimizer_config_.beta1) * gradient;
+        next_second_moment[index] = optimizer_config_.beta2 * next_second_moment[index] + (1.0 - optimizer_config_.beta2) * gradient * gradient;
         const auto first_correction = 1.0 - std::pow(optimizer_config_.beta1, static_cast<double>(step));
         const auto second_correction = 1.0 - std::pow(optimizer_config_.beta2, static_cast<double>(step));
-        const auto first_hat = first_moment_[index] / std::max(first_correction, 1e-12);
-        const auto second_hat = second_moment_[index] / std::max(second_correction, 1e-12);
+        const auto first_hat = next_first_moment[index] / std::max(first_correction, 1e-12);
+        const auto second_hat = next_second_moment[index] / std::max(second_correction, 1e-12);
         parameters[index] -= learning_rate * (first_hat / (std::sqrt(second_hat) + optimizer_config_.epsilon) + optimizer_config_.weight_decay * parameters[index]);
     }
+    require_finite(next_first_moment, "NLP optimizer produced non-finite first moments");
+    require_finite(next_second_moment, "NLP optimizer produced non-finite second moments");
     require_finite(parameters, "NLP optimizer produced non-finite parameters");
-    model_.set_parameter_vector(parameters);
+    auto candidate_model = model_;
+    candidate_model.set_parameter_vector(parameters);
+    const auto training_elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - training_started).count();
+    NlpEvaluation validation;
+    double validation_elapsed = 0.0;
+    const bool validation_performed = step % optimizer_config_.validation_interval_steps == 0U;
+    if (validation_performed) {
+        const auto validation_started = std::chrono::steady_clock::now();
+        validation = candidate_model.evaluate(dataset.validation);
+        validation_elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - validation_started).count();
+        require(std::isfinite(validation.cross_entropy) && std::isfinite(validation.perplexity), "NLP validation metrics are non-finite");
+    }
+    first_moment_ = std::move(next_first_moment);
+    second_moment_ = std::move(next_second_moment);
+    model_ = std::move(candidate_model);
     state_.optimizer_step = step;
     state_.data_cursor += 1U;
     NlpTrainingPoint point;
@@ -776,9 +855,11 @@ NlpTrainingPoint NlpTrainer::train_step(const NlpDataset& dataset) {
     point.train_loss = gradient_result.cross_entropy;
     point.token_count = gradient_result.token_count;
     point.gradient_norm = gradient_norm;
-    const auto validation = model_.evaluate(dataset.validation);
     point.validation_loss = validation.cross_entropy;
     point.validation_perplexity = validation.perplexity;
+    point.validation_performed = validation_performed;
+    point.training_elapsed_seconds = training_elapsed;
+    point.validation_elapsed_seconds = validation_elapsed;
     history_.push_back(point);
     return point;
 }
@@ -800,18 +881,21 @@ void NlpTrainer::save_checkpoint(const std::string& path) const {
     serialized << "CCT_NLP_CHECKPOINT_V2\n";
     serialized << "tokenizer_hash=" << hex_encode(tokenizer_hash_) << "\n";
     serialized << "dataset_hash=" << hex_encode(dataset_hash_) << "\n";
+    serialized << "training_contract_hash=" << hex_encode(training_contract_hash_) << "\n";
     serialized << "optimizer_step=" << state_.optimizer_step << "\n";
     serialized << "data_cursor=" << state_.data_cursor << "\n";
     serialized << "seed=" << state_.seed << "\n";
     serialized << "rng_state=" << hex_encode(state_.rng_state) << "\n";
     serialized << "optimizer=" << std::setprecision(17) << optimizer_config_.learning_rate << ' ' << optimizer_config_.beta1 << ' '
                << optimizer_config_.beta2 << ' ' << optimizer_config_.epsilon << ' ' << optimizer_config_.weight_decay << ' '
-               << optimizer_config_.clip_norm << ' ' << optimizer_config_.warmup_steps << ' ' << optimizer_config_.total_steps << "\n";
+               << optimizer_config_.clip_norm << ' ' << optimizer_config_.warmup_steps << ' ' << optimizer_config_.total_steps << ' '
+               << optimizer_config_.validation_interval_steps << "\n";
     serialized << "history_count=" << history_.size() << "\n";
     for (const auto& point : history_) {
         serialized << "history=" << point.step << ' ' << point.data_cursor << ' ' << point.learning_rate << ' '
                    << point.train_loss << ' ' << point.validation_loss << ' ' << point.validation_perplexity << ' '
-                   << point.gradient_norm << ' ' << point.token_count << "\n";
+                   << point.gradient_norm << ' ' << point.token_count << ' ' << (point.validation_performed ? 1 : 0) << ' '
+                   << point.training_elapsed_seconds << ' ' << point.validation_elapsed_seconds << "\n";
     }
     serialized << "moments_count=" << first_moment_.size() << "\n";
     serialized << "first_moment=";
@@ -822,10 +906,7 @@ void NlpTrainer::save_checkpoint(const std::string& path) const {
     model_.save_model(serialized);
     serialized << "end=1\n";
     const auto content = serialized.str();
-    std::ofstream stream(path, std::ios::binary);
-    require(static_cast<bool>(stream), "could not write NLP checkpoint");
-    stream << content;
-    require(static_cast<bool>(stream), "could not finish NLP checkpoint");
+    atomic_publish_checkpoint(path, content);
     checkpoint_info_.checkpoint_hash = nlp_checkpoint_hash(content);
     checkpoint_info_.optimizer_step = state_.optimizer_step;
     checkpoint_info_.data_cursor = state_.data_cursor;
@@ -833,6 +914,13 @@ void NlpTrainer::save_checkpoint(const std::string& path) const {
 
 NlpTrainer NlpTrainer::load_checkpoint(const std::string& path, const std::string& expected_tokenizer_hash,
                                        const std::string& expected_dataset_hash) {
+    constexpr std::uintmax_t maximum_checkpoint_bytes = 256U * 1024U * 1024U;
+    constexpr std::size_t maximum_line_bytes = 64U * 1024U * 1024U;
+    constexpr std::size_t maximum_history_count = 1'000'000U;
+    constexpr std::size_t maximum_moment_count = 16'000'000U;
+    std::error_code size_error;
+    const auto file_bytes = std::filesystem::file_size(path, size_error);
+    require(!size_error && file_bytes <= maximum_checkpoint_bytes, "NLP checkpoint exceeds byte budget");
     std::ifstream input(path, std::ios::binary);
     require(static_cast<bool>(input), "could not read NLP checkpoint");
     std::ostringstream buffer;
@@ -843,6 +931,7 @@ NlpTrainer NlpTrainer::load_checkpoint(const std::string& path, const std::strin
     require(static_cast<bool>(std::getline(lines, line)) && line == "CCT_NLP_CHECKPOINT_V2", "unsupported NLP checkpoint header");
     std::string tokenizer_hash;
     std::string dataset_hash;
+    std::string contract_hash;
     std::size_t optimizer_step = 0;
     std::size_t data_cursor = 0;
     std::uint64_t seed = 0;
@@ -855,24 +944,31 @@ NlpTrainer NlpTrainer::load_checkpoint(const std::string& path, const std::strin
     std::vector<double> second;
     std::string model_text;
     bool model_started = false;
+    bool saw_end = false;
     while (std::getline(lines, line)) {
+        require(line.size() <= maximum_line_bytes, "NLP checkpoint line exceeds byte budget");
         if (line == "model_begin") {
             model_started = true;
             break;
         }
         if (line.rfind("tokenizer_hash=", 0) == 0) tokenizer_hash = hex_decode(line.substr(15));
         else if (line.rfind("dataset_hash=", 0) == 0) dataset_hash = hex_decode(line.substr(13));
+        else if (line.rfind("training_contract_hash=", 0) == 0) contract_hash = hex_decode(line.substr(23));
         else if (line.rfind("optimizer_step=", 0) == 0) optimizer_step = parse_size(line.substr(15), "optimizer_step");
         else if (line.rfind("data_cursor=", 0) == 0) data_cursor = parse_size(line.substr(12), "data_cursor");
         else if (line.rfind("seed=", 0) == 0) seed = static_cast<std::uint64_t>(parse_size(line.substr(5), "seed"));
         else if (line.rfind("rng_state=", 0) == 0) rng_state = hex_decode(line.substr(10));
         else if (line.rfind("optimizer=", 0) == 0) {
             std::istringstream values(line.substr(10));
-            require(static_cast<bool>(values >> optimizer.learning_rate >> optimizer.beta1 >> optimizer.beta2 >> optimizer.epsilon >>
+                                require(static_cast<bool>(values >> optimizer.learning_rate >> optimizer.beta1 >> optimizer.beta2 >> optimizer.epsilon >>
                                       optimizer.weight_decay >> optimizer.clip_norm >> optimizer.warmup_steps >> optimizer.total_steps),
                     "checkpoint optimizer fields are incomplete");
+            std::size_t validation_interval = 1U;
+            if (values >> validation_interval) optimizer.validation_interval_steps = validation_interval;
+
         } else if (line.rfind("history_count=", 0) == 0) {
             history_count = parse_size(line.substr(14), "history_count");
+            require(history_count <= maximum_history_count, "NLP checkpoint history exceeds budget");
             history.reserve(history_count);
         } else if (line.rfind("history=", 0) == 0) {
             std::istringstream values(line.substr(8));
@@ -880,9 +976,18 @@ NlpTrainer NlpTrainer::load_checkpoint(const std::string& path, const std::strin
             require(static_cast<bool>(values >> point.step >> point.data_cursor >> point.learning_rate >> point.train_loss >>
                                       point.validation_loss >> point.validation_perplexity >> point.gradient_norm >> point.token_count),
                     "checkpoint history row is incomplete");
+            int validation_performed = 0;
+            if (values >> validation_performed >> point.training_elapsed_seconds >> point.validation_elapsed_seconds) {
+                require(validation_performed == 0 || validation_performed == 1, "checkpoint validation flag is invalid");
+                point.validation_performed = validation_performed == 1;
+                require(std::isfinite(point.training_elapsed_seconds) && std::isfinite(point.validation_elapsed_seconds),
+                        "checkpoint training timing is invalid");
+            }
+            require(history.size() < maximum_history_count, "NLP checkpoint history exceeds budget");
             history.push_back(point);
         } else if (line.rfind("moments_count=", 0) == 0) {
             moments_count = parse_size(line.substr(14), "moments_count");
+            require(moments_count > 0U && moments_count <= maximum_moment_count, "NLP checkpoint moments exceed budget");
             first.assign(moments_count, 0.0);
             second.assign(moments_count, 0.0);
         } else if (line.rfind("first_moment=", 0) == 0) {
@@ -898,16 +1003,22 @@ NlpTrainer NlpTrainer::load_checkpoint(const std::string& path, const std::strin
     require(model_started && !tokenizer_hash.empty() && !dataset_hash.empty() && history.size() == history_count && moments_count > 0U,
             "NLP checkpoint metadata is incomplete");
     while (std::getline(lines, line)) {
-        if (line == "end=1") break;
+        require(line.size() <= maximum_line_bytes, "NLP checkpoint model line exceeds byte budget");
+        if (line == "end=1") {
+            saw_end = true;
+            break;
+        }
         model_text += line + "\n";
+        require(model_text.size() <= maximum_checkpoint_bytes, "NLP checkpoint model payload exceeds byte budget");
     }
-    require(!model_text.empty(), "NLP checkpoint model payload is missing");
+    require(saw_end && !model_text.empty(), "NLP checkpoint model payload or terminator is missing");
     std::istringstream model_stream(model_text);
     const auto model = NextTokenModel::load_model(model_stream);
     if (!expected_tokenizer_hash.empty()) require(tokenizer_hash == expected_tokenizer_hash, "checkpoint tokenizer hash mismatch");
     if (!expected_dataset_hash.empty()) require(dataset_hash == expected_dataset_hash, "checkpoint dataset hash mismatch");
     NlpTrainer trainer(model.config(), optimizer, tokenizer_hash, dataset_hash);
     trainer.model_.set_parameter_vector(model.parameter_vector());
+    if (!contract_hash.empty()) require(contract_hash == trainer.training_contract_hash_, "checkpoint training contract hash mismatch");
     require(first.size() == trainer.first_moment_.size() && second.size() == trainer.second_moment_.size(), "checkpoint optimizer state size mismatch");
     trainer.first_moment_ = std::move(first);
     trainer.second_moment_ = std::move(second);
@@ -916,6 +1027,7 @@ NlpTrainer NlpTrainer::load_checkpoint(const std::string& path, const std::strin
     trainer.state_.seed = seed;
     trainer.state_.rng_state = std::move(rng_state);
     trainer.history_ = std::move(history);
+    trainer.checkpoint_info_.training_contract_hash = trainer.training_contract_hash_;
     trainer.checkpoint_info_.checkpoint_hash = nlp_checkpoint_hash(content);
     trainer.checkpoint_info_.optimizer_step = optimizer_step;
     trainer.checkpoint_info_.data_cursor = data_cursor;

@@ -4,6 +4,8 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
+#include <fcntl.h>
 #include <fstream>
 #include <functional>
 #include <iomanip>
@@ -16,6 +18,7 @@
 #include <sstream>
 #include <unordered_map>
 #include <utility>
+#include <unistd.h>
 
 namespace cct {
 namespace {
@@ -48,6 +51,43 @@ std::uint64_t double_bits(double value) {
     static_assert(sizeof(bits) == sizeof(value));
     std::memcpy(&bits, &value, sizeof(value));
     return bits;
+}
+
+void atomic_write_snapshot(const std::string& path, const std::string& content) {
+    const std::filesystem::path target(path);
+    const auto parent = target.parent_path().empty() ? std::filesystem::path(".") : target.parent_path();
+    std::error_code directory_error;
+    std::filesystem::create_directories(parent, directory_error);
+    require(!directory_error, "could not create causal snapshot parent directory");
+    const auto template_path = (parent / (target.filename().string() + ".tmp.XXXXXX")).string();
+    std::vector<char> temporary_template(template_path.begin(), template_path.end());
+    temporary_template.push_back('\0');
+    const auto descriptor = ::mkstemp(temporary_template.data());
+    require(descriptor >= 0, "could not create causal snapshot temporary file");
+    const auto temporary_path = std::string(temporary_template.data());
+    std::size_t written = 0U;
+    while (written < content.size()) {
+        const auto count = ::write(descriptor, content.data() + written, content.size() - written);
+        if (count <= 0) {
+            ::close(descriptor);
+            static_cast<void>(::unlink(temporary_path.c_str()));
+            throw CausalGraphError("could not write causal snapshot temporary file");
+        }
+        written += static_cast<std::size_t>(count);
+    }
+    if (::fsync(descriptor) != 0 || ::close(descriptor) != 0) {
+        static_cast<void>(::unlink(temporary_path.c_str()));
+        throw CausalGraphError("could not durably flush causal snapshot temporary file");
+    }
+    if (::rename(temporary_path.c_str(), target.c_str()) != 0) {
+        static_cast<void>(::unlink(temporary_path.c_str()));
+        throw CausalGraphError("could not atomically publish causal snapshot");
+    }
+    const auto directory_descriptor = ::open(parent.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    require(directory_descriptor >= 0, "could not open causal snapshot parent directory");
+    const auto directory_sync = ::fsync(directory_descriptor);
+    const auto directory_close = ::close(directory_descriptor);
+    require(directory_sync == 0 && directory_close == 0, "could not durably publish causal snapshot directory entry");
 }
 
 }  // namespace
@@ -113,6 +153,13 @@ void CausalEventStore::validate_event(const CausalEvent& item) const {
         const bool unresolved = contains_id(item.unresolved_parent_ids, parent);
         require(exists != unresolved, "parent must exist or be explicitly unresolved, but not both");
         require(exists || config_.allow_unresolved_parents, "missing parent is not allowed by store configuration");
+        if (exists) {
+            const auto parent_timestamp = event(parent).timestamp;
+            const bool valid_timestamp = config_.temporal_policy == TemporalCausalityPolicy::AllowSameTimestamp
+                                              ? parent_timestamp <= item.timestamp
+                                              : parent_timestamp < item.timestamp;
+            require(valid_timestamp, "causal parent timestamp violates the configured temporal policy");
+        }
     }
     for (const auto unresolved : item.unresolved_parent_ids) {
         require(unresolved != item.id && !contains(unresolved), "unresolved parent is already present or self-referential");
@@ -246,12 +293,12 @@ std::vector<EventId> CausalEventStore::topological_order() const {
 
 std::string CausalEventStore::serialize_snapshot() const {
     std::ostringstream output;
-    output << "CCT_CAUSAL_EVENT_SNAPSHOT_V1\n" << std::setprecision(17);
+    output << "CCT_CAUSAL_EVENT_SNAPSHOT_V2\n" << std::setprecision(17);
     output << "CONFIG " << config_.payload_dim << ' ' << config_.coordinate_dim << ' '
            << (config_.allow_unresolved_parents ? 1 : 0);
     for (const auto value : config_.coordinate_min) output << ' ' << value;
     for (const auto value : config_.coordinate_max) output << ' ' << value;
-    output << '\n';
+    output << '\n' << "POLICY " << static_cast<unsigned int>(config_.temporal_policy) << '\n';
     std::vector<const CausalEvent*> events;
     for (const auto& item : ordered_events_) events.push_back(&item);
     std::sort(events.begin(), events.end(), [](const auto* left, const auto* right) { return left->id < right->id; });
@@ -282,22 +329,29 @@ std::string CausalEventStore::serialize_snapshot() const {
 std::string CausalEventStore::deterministic_export() const { return serialize_snapshot(); }
 
 void CausalEventStore::save_snapshot(const std::string& path) const {
-    std::ofstream stream(path);
-    require(static_cast<bool>(stream), "could not write causal graph snapshot");
-    stream << serialize_snapshot();
+    atomic_write_snapshot(path, serialize_snapshot());
 }
 
 CausalEventStore CausalEventStore::deserialize_snapshot(const std::string& snapshot) {
+    constexpr std::size_t maximum_snapshot_bytes = 64U * 1024U * 1024U;
+    constexpr std::size_t maximum_dimension = 4096U;
+    constexpr std::size_t maximum_events = 1'000'000U;
+    constexpr std::size_t maximum_vector_count = 1'000'000U;
+    require(snapshot.size() <= maximum_snapshot_bytes, "causal snapshot exceeds byte budget");
     std::istringstream input(snapshot);
     std::string header;
     std::getline(input, header);
-    require(header == "CCT_CAUSAL_EVENT_SNAPSHOT_V1", "invalid causal graph snapshot header");
+    const bool version_one = header == "CCT_CAUSAL_EVENT_SNAPSHOT_V1";
+    const bool version_two = header == "CCT_CAUSAL_EVENT_SNAPSHOT_V2";
+    require(version_one || version_two, "invalid causal graph snapshot header");
     std::string token;
     std::size_t payload_dim = 0;
     std::size_t coordinate_dim = 0;
     int allow_unresolved = 0;
     input >> token >> payload_dim >> coordinate_dim >> allow_unresolved;
-    require(token == "CONFIG", "missing causal graph configuration");
+    require(static_cast<bool>(input) && token == "CONFIG", "missing causal graph configuration");
+    require(payload_dim > 0U && payload_dim <= maximum_dimension && coordinate_dim > 0U && coordinate_dim <= maximum_dimension,
+            "causal graph dimensions exceed snapshot budget");
     CausalStoreConfig config;
     config.payload_dim = payload_dim;
     config.coordinate_dim = coordinate_dim;
@@ -306,8 +360,18 @@ CausalEventStore CausalEventStore::deserialize_snapshot(const std::string& snaps
     config.coordinate_max.resize(coordinate_dim);
     for (auto& value : config.coordinate_min) input >> value;
     for (auto& value : config.coordinate_max) input >> value;
+    require(static_cast<bool>(input), "causal graph coordinate bounds are truncated");
+    if (version_two) {
+        unsigned int policy = 0U;
+        input >> token >> policy;
+        require(static_cast<bool>(input) && token == "POLICY" && policy <= static_cast<unsigned int>(TemporalCausalityPolicy::AllowSameTimestamp),
+                "causal temporal policy is invalid");
+        config.temporal_policy = static_cast<TemporalCausalityPolicy>(policy);
+    }
     CausalEventStore store(config);
+    std::size_t event_count = 0U;
     while (input >> token) {
+        require(++event_count <= maximum_events, "causal graph event count exceeds snapshot budget");
         require(token == "EVENT", "invalid event record in causal graph snapshot");
         CausalEvent item;
         unsigned int provenance = 0;
@@ -315,6 +379,7 @@ CausalEventStore CausalEventStore::deserialize_snapshot(const std::string& snaps
         int has_intervention = 0;
         input >> item.id >> item.schema_version >> item.timestamp >> provenance >> uncertainty >> item.uncertainty.confidence >>
             has_intervention;
+        require(static_cast<bool>(input), "causal event header is truncated");
         item.provenance = static_cast<ProvenanceKind>(provenance);
         item.uncertainty.kind = static_cast<UncertaintyKind>(uncertainty);
         if (has_intervention != 0) {
@@ -326,18 +391,23 @@ CausalEventStore CausalEventStore::deserialize_snapshot(const std::string& snaps
         }
         std::size_t count = 0;
         input >> count;
+        require(static_cast<bool>(input) && count <= maximum_vector_count, "causal semantic payload count exceeds snapshot budget");
         item.semantic_payload.resize(count);
         for (auto& value : item.semantic_payload) input >> value;
         input >> count;
+        require(static_cast<bool>(input) && count <= maximum_vector_count, "causal coordinate count exceeds snapshot budget");
         item.coordinates.resize(count);
         for (auto& value : item.coordinates) input >> value;
         input >> count;
+        require(static_cast<bool>(input) && count <= maximum_vector_count, "causal parent count exceeds snapshot budget");
         item.causal_parents.resize(count);
         for (auto& value : item.causal_parents) input >> value;
         input >> count;
+        require(static_cast<bool>(input) && count <= maximum_vector_count, "causal unresolved-parent count exceeds snapshot budget");
         item.unresolved_parent_ids.resize(count);
         for (auto& value : item.unresolved_parent_ids) input >> value;
         input >> count;
+        require(static_cast<bool>(input) && count <= maximum_vector_count, "causal provenance-link count exceeds snapshot budget");
         item.provenance_links.resize(count);
         for (auto& value : item.provenance_links) input >> value;
         require(!store.contains(item.id), "duplicate event ID in snapshot");
@@ -349,6 +419,10 @@ CausalEventStore CausalEventStore::deserialize_snapshot(const std::string& snaps
 }
 
 CausalEventStore CausalEventStore::load_snapshot(const std::string& path) {
+    constexpr std::uintmax_t maximum_snapshot_bytes = 64U * 1024U * 1024U;
+    std::error_code size_error;
+    const auto size = std::filesystem::file_size(path, size_error);
+    require(!size_error && size <= maximum_snapshot_bytes, "causal snapshot file exceeds byte budget");
     std::ifstream stream(path);
     require(static_cast<bool>(stream), "could not read causal graph snapshot");
     std::ostringstream content;
@@ -562,6 +636,7 @@ CausalDataset SyntheticCausalGenerator::generate(const SyntheticCausalConfig& co
     if (dataset.visible_events.size() >= 4) {
         dataset.visible_events[1].causal_parents.push_back(dataset.visible_events[3].id);
         std::sort(dataset.visible_events[1].causal_parents.begin(), dataset.visible_events[1].causal_parents.end());
+        dataset.invalid_fixture = true;
     }
     std::uint64_t fingerprint = 1469598103934665603ULL;
     fingerprint = mix_hash(fingerprint, config.seed);
@@ -588,33 +663,68 @@ std::vector<double> CausalEventLearner::solve_ridge(const std::vector<std::vecto
                                                     const std::vector<double>& vector) const {
     require(!matrix.empty() && matrix.size() == vector.size(), "invalid regression system");
     const auto width = matrix.front().size();
-    require(width > 0, "empty regression feature set");
-    std::vector<std::vector<double>> augmented(width, std::vector<double>(width + 1, 0.0));
+    constexpr std::size_t maximum_features = 512U;
+    require(width > 0U && width <= maximum_features, "causal regression feature dimension exceeds budget");
+    require(matrix.size() <= 1'000'000U, "causal regression sample count exceeds budget");
+    double maximum_abs = 0.0;
     for (std::size_t row = 0; row < matrix.size(); ++row) {
-        require(matrix[row].size() == width, "inconsistent regression feature width");
-        for (std::size_t left = 0; left < width; ++left) {
-            for (std::size_t right = 0; right < width; ++right) augmented[left][right] += matrix[row][left] * matrix[row][right];
-            augmented[left][width] += matrix[row][left] * vector[row];
+        require(matrix[row].size() == width && std::isfinite(vector[row]), "inconsistent or non-finite regression row");
+        for (const auto value : matrix[row]) {
+            require(std::isfinite(value), "causal regression feature is non-finite");
+            maximum_abs = std::max(maximum_abs, std::abs(value));
         }
     }
-    for (std::size_t diagonal = 0; diagonal < width; ++diagonal) augmented[diagonal][diagonal] += 1e-7;
+    const auto regularization = 1e-8 * std::max(1.0, maximum_abs * maximum_abs);
+    const auto rows = matrix.size() + width;
+    std::vector<std::vector<double>> qr(rows, std::vector<double>(width, 0.0));
+    std::vector<double> rhs(rows, 0.0);
+    for (std::size_t row = 0; row < matrix.size(); ++row) {
+        qr[row] = matrix[row];
+        rhs[row] = vector[row];
+    }
+    const auto regularization_sqrt = std::sqrt(regularization);
+    for (std::size_t index = 0; index < width; ++index) qr[matrix.size() + index][index] = regularization_sqrt;
     for (std::size_t column = 0; column < width; ++column) {
-        std::size_t pivot = column;
-        for (std::size_t row = column + 1; row < width; ++row) {
-            if (std::abs(augmented[row][column]) > std::abs(augmented[pivot][column])) pivot = row;
+        double norm_squared = 0.0;
+        for (std::size_t row = column; row < rows; ++row) norm_squared += qr[row][column] * qr[row][column];
+        const auto norm = std::sqrt(norm_squared);
+        require(std::isfinite(norm) && norm > 1e-14 * std::max(1.0, maximum_abs), "ill-conditioned causal regression system");
+        const auto alpha = qr[column][column] >= 0.0 ? -norm : norm;
+        std::vector<double> reflector(rows - column, 0.0);
+        for (std::size_t row = column; row < rows; ++row) reflector[row - column] = qr[row][column];
+        reflector.front() -= alpha;
+        double reflector_norm_squared = 0.0;
+        for (const auto value : reflector) reflector_norm_squared += value * value;
+        require(std::isfinite(reflector_norm_squared) && reflector_norm_squared > 0.0, "causal QR reflector is degenerate");
+        for (std::size_t target = column; target < width; ++target) {
+            double projection = 0.0;
+            for (std::size_t row = column; row < rows; ++row) projection += reflector[row - column] * qr[row][target];
+            projection *= 2.0 / reflector_norm_squared;
+            for (std::size_t row = column; row < rows; ++row) qr[row][target] -= projection * reflector[row - column];
         }
-        require(std::abs(augmented[pivot][column]) > 1e-12, "singular causal regression system");
-        std::swap(augmented[pivot], augmented[column]);
-        const auto divisor = augmented[column][column];
-        for (std::size_t entry = column; entry <= width; ++entry) augmented[column][entry] /= divisor;
-        for (std::size_t row = 0; row < width; ++row) {
-            if (row == column) continue;
-            const auto factor = augmented[row][column];
-            for (std::size_t entry = column; entry <= width; ++entry) augmented[row][entry] -= factor * augmented[column][entry];
-        }
+        double rhs_projection = 0.0;
+        for (std::size_t row = column; row < rows; ++row) rhs_projection += reflector[row - column] * rhs[row];
+        rhs_projection *= 2.0 / reflector_norm_squared;
+        for (std::size_t row = column; row < rows; ++row) rhs[row] -= rhs_projection * reflector[row - column];
+        qr[column][column] = alpha;
+        for (std::size_t row = column + 1U; row < rows; ++row) qr[row][column] = 0.0;
     }
+    double minimum_diagonal = std::numeric_limits<double>::infinity();
+    double maximum_diagonal = 0.0;
+    for (std::size_t index = 0; index < width; ++index) {
+        const auto magnitude = std::abs(qr[index][index]);
+        require(std::isfinite(magnitude), "causal QR diagonal is non-finite");
+        minimum_diagonal = std::min(minimum_diagonal, magnitude);
+        maximum_diagonal = std::max(maximum_diagonal, magnitude);
+    }
+    require(minimum_diagonal > maximum_diagonal * 1e-12, "ill-conditioned causal regression system");
     std::vector<double> result(width, 0.0);
-    for (std::size_t index = 0; index < width; ++index) result[index] = augmented[index][width];
+    for (std::size_t reverse = width; reverse-- > 0U;) {
+        double residual = rhs[reverse];
+        for (std::size_t column = reverse + 1U; column < width; ++column) residual -= qr[reverse][column] * result[column];
+        result[reverse] = residual / qr[reverse][reverse];
+        require(std::isfinite(result[reverse]), "causal regression coefficient is non-finite");
+    }
     return result;
 }
 

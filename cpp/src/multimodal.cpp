@@ -12,8 +12,28 @@
 namespace cct {
 namespace {
 
+constexpr std::size_t kMaximumSerializedBytes = 64U * 1024U * 1024U;
+constexpr std::size_t kMaximumCollectionItems = 1'000'000U;
+constexpr std::size_t kMaximumEmbeddingValues = 4'000'000U;
+constexpr std::size_t kMaximumStringBytes = 4U * 1024U * 1024U;
+
 void require(bool condition, const std::string& message) {
     if (!condition) throw std::runtime_error(message);
+}
+
+void require_serialized_size(const std::string& text, const std::string& format) {
+    require(text.size() <= kMaximumSerializedBytes, format + " exceeds byte budget");
+}
+
+std::size_t read_count(std::istringstream& input, const std::string& field, std::size_t maximum) {
+    std::size_t count = 0;
+    require(static_cast<bool>(input >> count), field + " count is invalid");
+    require(count <= maximum, field + " count exceeds budget");
+    return count;
+}
+
+void require_string_size(const std::string& value, const std::string& field) {
+    require(value.size() <= kMaximumStringBytes, field + " exceeds byte budget");
 }
 
 std::size_t modality_index(Modality modality) {
@@ -92,6 +112,7 @@ std::string MultimodalEvent::serialize() const {
 }
 
 MultimodalEvent MultimodalEvent::deserialize(const std::string& text) {
+    require_serialized_size(text, "multimodal event");
     std::istringstream input(text);
     std::string header;
     std::getline(input, header);
@@ -100,19 +121,26 @@ MultimodalEvent MultimodalEvent::deserialize(const std::string& text) {
     unsigned int modality = 0;
     input >> event.event_id >> modality >> event.timestamp >> event.has_interval >> event.interval.start_tick >>
         event.interval.end_tick >> event.has_spatial_frame >> std::quoted(event.spatial_frame.name);
+    require(modality <= static_cast<unsigned int>(Modality::Tool), "multimodal modality is invalid");
     event.modality = static_cast<Modality>(modality);
     for (auto& value : event.spatial_frame.transform) input >> value;
     input >> std::quoted(event.payload_ref);
-    std::size_t count = 0;
-    input >> count;
-    event.embedding.resize(count);
+    require_string_size(event.spatial_frame.name, "spatial-frame name");
+    require_string_size(event.payload_ref, "payload reference");
+    const auto embedding_count = read_count(input, "embedding", kMaximumEmbeddingValues);
+    event.embedding.resize(embedding_count);
     for (auto& value : event.embedding) input >> value;
-    input >> count;
-    event.causal_parents.resize(count);
+    const auto parent_count = read_count(input, "causal-parent", kMaximumCollectionItems);
+    event.causal_parents.resize(parent_count);
     for (auto& value : event.causal_parents) input >> value;
     input >> std::quoted(event.provenance.source_id) >> std::quoted(event.provenance.license) >>
         std::quoted(event.provenance.transformation_version) >> std::quoted(event.provenance.content_hash);
     input >> event.uncertainty.confidence >> event.uncertainty.timestamp_uncertainty >> std::quoted(event.uncertainty.reason);
+    require_string_size(event.provenance.source_id, "provenance source");
+    require_string_size(event.provenance.license, "provenance license");
+    require_string_size(event.provenance.transformation_version, "provenance transformation");
+    require_string_size(event.provenance.content_hash, "provenance content hash");
+    require_string_size(event.uncertainty.reason, "uncertainty reason");
     for (auto& value : event.mask.available) input >> value;
     input >> event.schema_version;
     require(static_cast<bool>(input) && event.schema_version == kSchemaVersion, "invalid multimodal event serialization");
@@ -155,12 +183,12 @@ std::string MultimodalEventStore::serialize() const {
 }
 
 MultimodalEventStore MultimodalEventStore::deserialize(const std::string& text) {
+    require_serialized_size(text, "multimodal store");
     std::istringstream input(text);
     std::string header;
     std::getline(input, header);
     require(header == "CCT_MM_STORE_V1", "invalid multimodal store header");
-    std::size_t count = 0;
-    input >> count;
+    const auto count = read_count(input, "event collection", kMaximumCollectionItems);
     MultimodalEventStore store;
     for (std::size_t index = 0; index < count; ++index) {
         std::string serialized;
@@ -231,7 +259,8 @@ AlignmentResult TemporalAligner::align(const std::vector<MultimodalEvent>& event
     }
     const auto estimated = events[1].timestamp - events[0].timestamp;
     const auto error = std::abs(static_cast<double>(estimated - expected_offset));
-    return {error <= static_cast<double>(tolerance), estimated, error, any_missing, error <= tolerance ? "aligned" : "offset_out_of_tolerance"};
+    const auto within_tolerance = error <= static_cast<double>(tolerance);
+    return {within_tolerance, estimated, error, any_missing, within_tolerance ? "aligned" : "offset_out_of_tolerance"};
 }
 
 double SpatialAligner::round_trip_error(const SpatialFrame& frame) {
@@ -298,18 +327,21 @@ std::string MultimodalAuditLog::serialize() const {
 }
 
 MultimodalAuditLog MultimodalAuditLog::deserialize(const std::string& text) {
+    require_serialized_size(text, "multimodal audit");
     std::istringstream input(text);
     std::string header;
     std::getline(input, header);
     require(header == "CCT_MM_AUDIT_V1", "invalid multimodal audit header");
-    std::size_t count = 0;
-    input >> count;
+    const auto count = read_count(input, "audit collection", kMaximumCollectionItems);
     MultimodalAuditLog log;
     for (std::size_t index = 0; index < count; ++index) {
         MultimodalTraceRecord record;
         unsigned int modality = 0;
         input >> std::quoted(record.kind) >> record.event_id >> modality >> record.policy_blocked >> std::quoted(record.detail);
+        require(modality <= static_cast<unsigned int>(Modality::Tool), "audit modality is invalid");
         record.modality = static_cast<Modality>(modality);
+        require_string_size(record.kind, "audit kind");
+        require_string_size(record.detail, "audit detail");
         log.append(record);
     }
     return log;

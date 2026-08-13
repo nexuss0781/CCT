@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cctype>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
@@ -11,9 +10,20 @@
 
 namespace cct {
 namespace {
+constexpr std::size_t kMaximumCorpusSerializedBytes = 64U * 1024U * 1024U;
+constexpr std::size_t kMaximumCorpusItems = 1'000'000U;
+constexpr std::size_t kMaximumCorpusVectorItems = 100'000U;
 
 void require(bool condition, const std::string& message) {
     if (!condition) throw std::runtime_error(message);
+}
+
+std::string truncate_utf8_boundary(const std::string& value, const std::size_t maximum_bytes) {
+    if (maximum_bytes == 0U || value.size() <= maximum_bytes) return value;
+    std::size_t boundary = maximum_bytes;
+    while (boundary > 0U && (static_cast<unsigned char>(value[boundary]) & 0xC0U) == 0x80U) --boundary;
+    require(boundary > 0U, "UTF-8 byte budget ends inside a continuation-only prefix");
+    return value.substr(0U, boundary);
 }
 
 bool contains(const std::string& text, const std::string& value) {
@@ -33,9 +43,12 @@ void write_strings(std::ostringstream& output, const std::vector<std::string>& v
 
 std::vector<std::string> read_strings(std::istringstream& input) {
     std::size_t count = 0;
-    input >> count;
+    require(static_cast<bool>(input >> count) && count <= kMaximumCorpusVectorItems, "invalid or oversized corpus string vector");
     std::vector<std::string> values(count);
-    for (auto& value : values) input >> std::quoted(value);
+    for (auto& value : values) {
+        input >> std::quoted(value);
+        require(value.size() <= 4U * 1024U * 1024U, "corpus string field exceeds byte budget");
+    }
     require(static_cast<bool>(input), "invalid corpus string vector");
     return values;
 }
@@ -105,6 +118,7 @@ CorpusRecord GovernedCorpus::ingest(const std::string& record_id, const std::str
     record.delete_after = "review-required";
     record = process_record(std::move(record));
     records_.push_back(record);
+    index_record(records_.size() - 1U);
     audit(records_.back(), "ingest", records_.back().reason_codes.empty() ? "accepted" : records_.back().reason_codes.front());
     return records_.back();
 }
@@ -116,7 +130,7 @@ CorpusRecord GovernedCorpus::ingest_file(const std::string& record_id, const std
     std::ostringstream content;
     content << stream.rdbuf();
     std::string value = content.str();
-    if (max_bytes != 0 && value.size() > max_bytes) value.resize(max_bytes);
+    if (max_bytes != 0U && value.size() > max_bytes) value = truncate_utf8_boundary(value, max_bytes);
     require(!value.empty(), "corpus source file is empty");
     return ingest(record_id, source_id, value, split, data_class, evaluator_only);
 }
@@ -126,15 +140,9 @@ void GovernedCorpus::add_evaluator_canary(const std::string& record_id, const st
     require(record.decision == CorpusDecision::Accept && record.evaluator_only, "evaluator canary was not accepted as evaluator-only");
 }
 
-bool GovernedCorpus::detect_contamination(const std::string& candidate_content) const {
+bool GovernedCorpus::detect_contamination(const std::string& candidate_content, const CorpusSplit candidate_split) const {
     const auto normalized = normalize(candidate_content);
-    const auto candidate_hash = sha256(normalized);
-    for (const auto& record : records_) {
-        if (!record.evaluator_only || record.deleted) continue;
-        if (record.normalized_hash == candidate_hash || contains(normalized, record.normalized_content) ||
-            contains(record.normalized_content, normalized)) return true;
-    }
-    return false;
+    return has_split_contamination(sha256(normalized), normalized, candidate_split);
 }
 
 bool GovernedCorpus::tombstone(const std::string& record_id, const std::string& reason) {
@@ -211,14 +219,20 @@ std::string GovernedCorpus::normalize(const std::string& content) {
     std::string result;
     result.reserve(content.size());
     bool whitespace = false;
-    for (const unsigned char character : content) {
-        if (std::isspace(character) != 0) {
+    for (const char raw_character : content) {
+        const auto character = static_cast<unsigned char>(raw_character);
+        const bool ascii_whitespace = character == ' ' || character == '\t' || character == '\n' || character == '\r' ||
+                                       character == '\f' || character == '\v';
+        if (ascii_whitespace) {
             whitespace = !result.empty();
             continue;
         }
         if (whitespace && !result.empty()) result.push_back(' ');
         whitespace = false;
-        result.push_back(static_cast<char>(std::tolower(character)));
+        const auto lowered = character >= static_cast<unsigned char>('A') && character <= static_cast<unsigned char>('Z')
+                                  ? static_cast<unsigned char>(character + static_cast<unsigned char>('a' - 'A'))
+                                  : character;
+        result.push_back(static_cast<char>(lowered));
     }
     while (!result.empty() && result.back() == ' ') result.pop_back();
     return result;
@@ -292,30 +306,42 @@ std::string GovernedCorpus::sha256(const std::string& content) {
 bool GovernedCorpus::detect_pii(const std::string& content) {
     const auto lower = normalize(content);
     if (contains(lower, "social security") || contains(lower, "ssn") || contains(lower, "bank account") ||
-        contains(lower, "password") || contains(lower, "secret key")) return true;
+        contains(lower, "credit card") || contains(lower, "passport") || contains(lower, "date of birth") ||
+        contains(lower, "password") || contains(lower, "secret key") || contains(lower, "api key") ||
+        contains(lower, "private key") || contains(lower, "access token") || contains(lower, "bearer token")) return true;
     const auto at = lower.find('@');
-    if (at != std::string::npos && lower.find('.', at) != std::string::npos) return true;
+    if (at != std::string::npos && at > 0U && lower.find('.', at) != std::string::npos) return true;
     std::size_t consecutive_digits = 0;
     for (const auto character : lower) {
         if (std::isdigit(static_cast<unsigned char>(character)) != 0) {
             ++consecutive_digits;
             if (consecutive_digits >= 10U) return true;
-        } else {
+        } else if (character != ' ' && character != '-') {
             consecutive_digits = 0;
         }
     }
-    return false;
+    return contains(lower, "-----begin ") && contains(lower, " private key-----");
 }
 
 bool GovernedCorpus::looks_like_code(const std::string& content) {
     const auto lower = normalize(content);
-    return contains(lower, "#include") || contains(lower, "std::") || contains(lower, "def ") ||
-           contains(lower, "class ") || (contains(lower, "{") && contains(lower, "}"));
+    const auto structural_markers = static_cast<unsigned int>(contains(lower, "#include")) +
+                                    static_cast<unsigned int>(contains(lower, "std::")) +
+                                    static_cast<unsigned int>(contains(lower, "def ")) +
+                                    static_cast<unsigned int>(contains(lower, "class ")) +
+                                    static_cast<unsigned int>(contains(lower, "import ")) +
+                                    static_cast<unsigned int>(contains(lower, "function ")) +
+                                    static_cast<unsigned int>(contains(lower, "=>"));
+    return structural_markers >= 2U || (structural_markers >= 1U && contains(lower, "{") && contains(lower, "}"));
 }
 
 std::vector<std::string> GovernedCorpus::labels_for(const std::string& content, CorpusDataClass data_class) {
     std::vector<std::string> labels{"english"};
-    if (looks_like_code(content) || data_class == CorpusDataClass::Code) labels.push_back("code");
+    if (detect_pii(content)) labels.push_back("pii_candidate");
+    if (looks_like_code(content) || data_class == CorpusDataClass::Code) {
+        labels.push_back("code");
+        labels.push_back("code_candidate");
+    }
     switch (data_class) {
         case CorpusDataClass::GeneralText: labels.push_back("general"); break;
         case CorpusDataClass::ReferenceText: labels.push_back("reference"); break;
@@ -329,20 +355,31 @@ std::vector<std::string> GovernedCorpus::labels_for(const std::string& content, 
     return labels;
 }
 
-bool GovernedCorpus::has_exact_hash(const std::string& normalized_hash) const {
-    return std::any_of(records_.begin(), records_.end(), [&](const auto& record) {
-        return !record.deleted && record.decision == CorpusDecision::Accept && record.normalized_hash == normalized_hash;
+bool GovernedCorpus::has_exact_hash(const std::string& normalized_hash, const std::optional<CorpusSplit> different_from) const {
+    const auto found = normalized_hash_index_.find(normalized_hash);
+    if (found == normalized_hash_index_.end()) return false;
+    return std::any_of(found->second.begin(), found->second.end(), [&](const auto index) {
+        const auto& record = records_.at(index);
+        return !record.deleted && record.decision == CorpusDecision::Accept &&
+               (!different_from.has_value() || record.split != different_from.value());
     });
 }
 
-bool GovernedCorpus::has_near_duplicate(const std::string& normalized_content) const {
+bool GovernedCorpus::has_near_duplicate(const std::string& normalized_content, const std::optional<CorpusSplit> different_from) const {
     std::istringstream candidate_stream(normalized_content);
     std::unordered_set<std::string> candidate_words;
     std::string word;
     while (candidate_stream >> word) candidate_words.insert(word);
     if (candidate_words.size() < 4U) return false;
-    for (const auto& record : records_) {
-        if (record.deleted || record.decision != CorpusDecision::Accept) continue;
+    std::unordered_set<std::size_t> candidates;
+    for (const auto& candidate_word : candidate_words) {
+        const auto found = word_index_.find(candidate_word);
+        if (found != word_index_.end()) candidates.insert(found->second.begin(), found->second.end());
+    }
+    for (const auto index : candidates) {
+        const auto& record = records_.at(index);
+        if (record.deleted || record.decision != CorpusDecision::Accept ||
+            (different_from.has_value() && record.split == different_from.value())) continue;
         std::istringstream existing_stream(record.normalized_content);
         std::unordered_set<std::string> existing_words;
         while (existing_stream >> word) existing_words.insert(word);
@@ -357,11 +394,39 @@ bool GovernedCorpus::has_near_duplicate(const std::string& normalized_content) c
     return false;
 }
 
+bool GovernedCorpus::has_split_contamination(const std::string& normalized_hash, const std::string& normalized_content,
+                                             const CorpusSplit split) const {
+    if (has_exact_hash(normalized_hash, split) || has_near_duplicate(normalized_content, split)) return true;
+    for (const auto& record : records_) {
+        if (record.deleted || record.decision != CorpusDecision::Accept || record.split == split) continue;
+        if (contains(normalized_content, record.normalized_content) || contains(record.normalized_content, normalized_content)) return true;
+    }
+    return false;
+}
+
+void GovernedCorpus::index_record(const std::size_t record_index) {
+    const auto& record = records_.at(record_index);
+    if (record.deleted || record.decision != CorpusDecision::Accept) return;
+    normalized_hash_index_[record.normalized_hash].push_back(record_index);
+    std::istringstream stream(record.normalized_content);
+    std::unordered_set<std::string> words;
+    std::string word;
+    while (stream >> word) words.insert(word);
+    for (const auto& item : words) word_index_[item].push_back(record_index);
+}
+
+void GovernedCorpus::rebuild_indexes() {
+    normalized_hash_index_.clear();
+    word_index_.clear();
+    for (std::size_t index = 0; index < records_.size(); ++index) index_record(index);
+}
+
 CorpusRecord GovernedCorpus::process_record(CorpusRecord record) const {
     const auto& policy = source(record.source_id);
-    record.content_hash = sha256(record.content);
-    record.normalized_content = normalize(record.content);
-    record.pii_detected = detect_pii(record.content);
+    const auto original_content = record.content;
+    record.content_hash = sha256(original_content);
+    record.normalized_content = normalize(original_content);
+    record.pii_detected = detect_pii(original_content);
     if (record.pii_detected) {
         record.redacted = true;
         record.normalized_content = "[redacted]";
@@ -371,7 +436,7 @@ CorpusRecord GovernedCorpus::process_record(CorpusRecord record) const {
     }
     record.normalized_hash = sha256(record.normalized_content);
     record.transformation_chain = {"utf8-whitespace-v1", "lowercase-v1"};
-    record.language_and_domain_labels = labels_for(record.content, record.data_class);
+    record.language_and_domain_labels = labels_for(original_content, record.data_class);
     record.quality_labels.push_back(record.normalized_content.size() >= 8U ? "length_adequate" : "length_short");
     record.quality_labels.push_back(record.normalized_content.find('\0') == std::string::npos ? "encoding_valid" : "encoding_invalid");
     const bool needs_training_rights = !record.evaluator_only && record.split == CorpusSplit::Train;
@@ -399,6 +464,11 @@ CorpusRecord GovernedCorpus::process_record(CorpusRecord record) const {
     if (record.normalized_content.size() < 8U) {
         record.decision = CorpusDecision::Reject;
         record.reason_codes.push_back("quality_length");
+        return record;
+    }
+    if (has_split_contamination(record.normalized_hash, record.normalized_content, record.split)) {
+        record.decision = CorpusDecision::Reject;
+        record.reason_codes.push_back("split_contamination");
         return record;
     }
     if (has_exact_hash(record.normalized_hash)) {
@@ -466,6 +536,7 @@ std::string GovernedCorpus::serialize() const {
 }
 
 GovernedCorpus GovernedCorpus::deserialize(const std::string& text) {
+    require(text.size() <= kMaximumCorpusSerializedBytes, "governed corpus exceeds byte budget");
     std::istringstream input(text);
     std::string header;
     std::getline(input, header);
@@ -473,7 +544,7 @@ GovernedCorpus GovernedCorpus::deserialize(const std::string& text) {
     require(version_one || header == "CCT_GOVERNED_CORPUS_V2", "invalid governed corpus header");
     GovernedCorpus corpus;
     std::size_t count = 0;
-    input >> count;
+    require(static_cast<bool>(input >> count) && count <= kMaximumCorpusItems, "invalid or oversized corpus source count");
     for (std::size_t index = 0; index < count; ++index) {
         SourcePolicy item;
         input >> std::quoted(item.source_id) >> std::quoted(item.source_uri) >> std::quoted(item.license_or_consent) >>
@@ -482,7 +553,7 @@ GovernedCorpus GovernedCorpus::deserialize(const std::string& text) {
             item.training_allowed >> item.evaluation_allowed >> item.human_reviewed;
         corpus.register_source(item);
     }
-    input >> count;
+    require(static_cast<bool>(input >> count) && count <= kMaximumCorpusItems, "invalid or oversized corpus record count");
     for (std::size_t index = 0; index < count; ++index) {
         CorpusRecord item;
         unsigned int decision = 0;
@@ -505,12 +576,15 @@ GovernedCorpus GovernedCorpus::deserialize(const std::string& text) {
             if (std::find(item.reason_codes.begin(), item.reason_codes.end(), "raw_content_purged") == item.reason_codes.end())
                 item.reason_codes.push_back("raw_content_purged");
         }
+        require(decision <= static_cast<unsigned int>(CorpusDecision::Reject) && split <= static_cast<unsigned int>(CorpusSplit::EvaluatorOnly) &&
+                    data_class <= static_cast<unsigned int>(CorpusDataClass::EvaluatorOnly),
+                "corpus enum value is outside the supported domain");
         item.decision = static_cast<CorpusDecision>(decision);
         item.split = static_cast<CorpusSplit>(split);
         item.data_class = static_cast<CorpusDataClass>(data_class);
         corpus.records_.push_back(item);
     }
-    input >> count;
+    require(static_cast<bool>(input >> count) && count <= kMaximumCorpusItems, "invalid or oversized corpus audit count");
     for (std::size_t index = 0; index < count; ++index) {
         CorpusAuditEvent item;
         unsigned int decision = 0;
@@ -520,6 +594,7 @@ GovernedCorpus GovernedCorpus::deserialize(const std::string& text) {
         corpus.audit_.push_back(item);
     }
     require(static_cast<bool>(input), "invalid governed corpus serialization");
+    corpus.rebuild_indexes();
     return corpus;
 }
 

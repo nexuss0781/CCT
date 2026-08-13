@@ -25,7 +25,8 @@ std::string hex_encode(const std::string& value) {
     static constexpr char digits[] = "0123456789abcdef";
     std::string encoded;
     encoded.reserve(value.size() * 2U);
-    for (const unsigned char byte : value) {
+    for (const char raw_byte : value) {
+        const auto byte = static_cast<unsigned char>(raw_byte);
         encoded.push_back(digits[byte >> 4U]);
         encoded.push_back(digits[byte & 0x0fU]);
     }
@@ -499,7 +500,13 @@ std::string Tokenizer::snapshot_hash() const {
 }
 
 Tokenizer Tokenizer::from_snapshot(const std::string& snapshot, const std::string& expected_hash) {
+    constexpr std::size_t maximum_snapshot_bytes = 64U * 1024U * 1024U;
+    constexpr std::size_t maximum_line_bytes = 16U * 1024U * 1024U;
+    constexpr std::size_t maximum_training_records = 1'000'000U;
+    constexpr std::size_t maximum_vocabulary_entries = 1'000'000U;
+    constexpr std::size_t maximum_piece_order_entries = 1'000'000U;
     if (snapshot.empty()) throw TokenizerError("cannot load an empty tokenizer snapshot");
+    if (snapshot.size() > maximum_snapshot_bytes) throw TokenizerError("tokenizer snapshot exceeds byte budget");
     if (!expected_hash.empty() && GovernedCorpus::content_sha256(snapshot) != expected_hash) {
         throw TokenizerError("tokenizer snapshot hash mismatch");
     }
@@ -518,6 +525,7 @@ Tokenizer Tokenizer::from_snapshot(const std::string& snapshot, const std::strin
     bool saw_format = false;
     bool saw_end = false;
     while (std::getline(input, line)) {
+        if (line.size() > maximum_line_bytes) throw TokenizerError("tokenizer snapshot line exceeds byte budget");
         if (line == "end=1") {
             saw_end = true;
             break;
@@ -539,31 +547,41 @@ Tokenizer Tokenizer::from_snapshot(const std::string& snapshot, const std::strin
             config.seed = parse_unsigned(value, key);
         } else if (key == "minimum_piece_frequency") {
             config.minimum_piece_frequency = static_cast<std::size_t>(parse_unsigned(value, key));
+            if (config.minimum_piece_frequency > maximum_vocabulary_entries) throw TokenizerError("tokenizer minimum frequency exceeds budget");
         } else if (key == "maximum_piece_count") {
             config.maximum_piece_count = static_cast<std::size_t>(parse_unsigned(value, key));
+            if (config.maximum_piece_count > maximum_vocabulary_entries) throw TokenizerError("tokenizer piece count exceeds budget");
         } else if (key == "maximum_piece_bytes") {
             config.maximum_piece_bytes = static_cast<std::size_t>(parse_unsigned(value, key));
+            if (config.maximum_piece_bytes > maximum_line_bytes) throw TokenizerError("tokenizer piece bytes exceed budget");
         } else if (key == "include_bos_eos") {
             const auto parsed = parse_unsigned(value, key);
             if (parsed > 1U) throw TokenizerError("snapshot include_bos_eos flag is invalid");
             config.include_bos_eos = parsed == 1U;
         } else if (key == "training_count") {
             expected_training = static_cast<std::size_t>(parse_unsigned(value, key));
+            if (expected_training > maximum_training_records) throw TokenizerError("tokenizer training count exceeds budget");
         } else if (key == "training") {
+            if (training_ids.size() >= maximum_training_records) throw TokenizerError("tokenizer training records exceed budget");
             training_ids.push_back(hex_decode(value));
         } else if (key == "vocabulary_count") {
             expected_vocabulary = static_cast<std::size_t>(parse_unsigned(value, key));
+            if (expected_vocabulary > maximum_vocabulary_entries) throw TokenizerError("tokenizer vocabulary count exceeds budget");
         } else if (key == "vocab") {
             const auto fields = split(value, ',');
             if (fields.size() != 5U) throw TokenizerError("snapshot vocabulary row is malformed");
-            vocabulary.push_back({static_cast<TokenId>(parse_unsigned(fields[0], "vocabulary ID")),
-                                 hex_decode(fields[4]), parse_unsigned(fields[3], "frequency"),
+            if (vocabulary.size() >= maximum_vocabulary_entries) throw TokenizerError("tokenizer vocabulary entries exceed budget");
+            const auto parsed_id = parse_unsigned(fields[0], "vocabulary ID");
+            if (parsed_id > std::numeric_limits<TokenId>::max()) throw TokenizerError("tokenizer vocabulary ID exceeds budget");
+            vocabulary.push_back({static_cast<TokenId>(parsed_id), hex_decode(fields[4]), parse_unsigned(fields[3], "frequency"),
                                  token_kind_from_number(fields[1]), control_from_number(fields[2])});
         } else if (key == "piece_order_count") {
             expected_order = static_cast<std::size_t>(parse_unsigned(value, key));
+            if (expected_order > maximum_piece_order_entries) throw TokenizerError("tokenizer piece order count exceeds budget");
         } else if (key == "piece_order") {
             if (!value.empty()) {
                 for (const auto& field : split(value, ',')) {
+                    if (piece_order.size() >= maximum_piece_order_entries) throw TokenizerError("tokenizer piece order exceeds budget");
                     piece_order.push_back(static_cast<std::size_t>(parse_unsigned(field, "piece order")));
                 }
             }

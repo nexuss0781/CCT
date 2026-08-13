@@ -80,7 +80,8 @@ Track1Config fixture_config(const std::filesystem::path& root) {
 
 void test_pinned_sources_and_contract() {
     Track1Pipeline pipeline(fixture_config("/tmp/cct-track1-source-contract"));
-    require(pipeline.manifest().sources.size() == 5U, "Track 1 source count changed");
+    require(pipeline.manifest().sources.size() == 5U && pipeline.manifest().pretrain_token_count_mode == "byte_fallback_v1",
+            "Track 1 source or pretraining count-mode contract changed");
     for (const auto& source : pipeline.manifest().sources) {
         require(source.revision.size() == 40U && source.row_api_url.find("datasets-server.huggingface.co/rows") != std::string::npos &&
                     source.license.find("CC BY-SA") != std::string::npos,
@@ -96,8 +97,11 @@ void test_pinned_sources_and_contract() {
                 squad_source.raw_file_url.find("gem_data_split/train.json") != std::string::npos,
             "GEM SQuAD direct-file provenance is incomplete");
     require(pipeline.evaluation_contract().qa_metrics.size() == 7U &&
-                pipeline.evaluation_contract().forbidden_behaviors.front() == "final_test_used_for_updates",
-            "Track 1 evaluation contract is incomplete");
+                pipeline.evaluation_contract().forbidden_behaviors.front() == "final_test_used_for_updates" &&
+                pipeline.evaluation_contract().pretrain_task == "target_token_prediction" &&
+                pipeline.evaluation_contract().pretrain_evaluation_scope == "not_answer_quality" &&
+                pipeline.evaluation_contract().qa_task == "answer_span_and_answerability",
+            "Track 1 evaluation contract is incomplete or overclaims answer quality");
 }
 
 void test_prepare_counts_caps_and_isolation() {

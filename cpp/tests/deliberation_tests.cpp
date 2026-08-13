@@ -137,6 +137,20 @@ void test_serialization_replay_and_interrupt_resume() {
     require(resumed.serialize() == expected.serialize(), "interrupted/resumed result diverged from uninterrupted result");
     const auto restored = cct::DeliberationResult::deserialize(expected.serialize());
     require(restored.serialize() == expected.serialize(), "deliberation result serialization is not round-trip stable");
+    auto oversized_trace = expected.serialize();
+    const auto trace_marker = oversized_trace.find("TRACE 5");
+    require(trace_marker != std::string::npos, "deliberation trace marker changed unexpectedly");
+    oversized_trace.replace(trace_marker, std::string("TRACE 5").size(), "TRACE 1000001");
+    bool trace_rejected = false;
+    try { static_cast<void>(cct::DeliberationResult::deserialize(oversized_trace)); } catch (const std::exception&) { trace_rejected = true; }
+    require(trace_rejected, "oversized deliberation trace count was accepted");
+    auto oversized_workspace = expected.serialize();
+    const auto goals_marker = oversized_workspace.find("GOALS 1");
+    require(goals_marker != std::string::npos, "workspace goals marker changed unexpectedly");
+    oversized_workspace.replace(goals_marker, std::string("GOALS 1").size(), "GOALS 1000001");
+    bool workspace_rejected = false;
+    try { static_cast<void>(cct::DeliberationResult::deserialize(oversized_workspace)); } catch (const std::exception&) { workspace_rejected = true; }
+    require(workspace_rejected, "oversized deliberation workspace count was accepted");
 }
 
 }  // namespace

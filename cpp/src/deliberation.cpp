@@ -11,8 +11,28 @@
 namespace cct {
 namespace {
 
+constexpr std::size_t kMaximumSerializedBytes = 64U * 1024U * 1024U;
+constexpr std::size_t kMaximumCollectionItems = 1'000'000U;
+constexpr std::size_t kMaximumWorkspaceCapacity = 1'000'000U;
+constexpr std::size_t kMaximumStringBytes = 4U * 1024U * 1024U;
+
 void require(bool condition, const std::string& message) {
     if (!condition) throw std::runtime_error(message);
+}
+
+void require_serialized_size(const std::string& text, const std::string& format) {
+    require(text.size() <= kMaximumSerializedBytes, format + " exceeds byte budget");
+}
+
+std::size_t read_count(std::istringstream& input, const std::string& field) {
+    std::size_t count = 0;
+    require(static_cast<bool>(input >> count), field + " count is invalid");
+    require(count <= kMaximumCollectionItems, field + " count exceeds budget");
+    return count;
+}
+
+void require_string_size(const std::string& value, const std::string& field) {
+    require(value.size() <= kMaximumStringBytes, field + " exceeds byte budget");
 }
 
 std::string termination_name(TerminationReason reason) {
@@ -99,55 +119,67 @@ std::string WorkspaceState::serialize() const {
 }
 
 WorkspaceState WorkspaceState::deserialize(const std::string& text) {
+    require_serialized_size(text, "workspace");
     std::istringstream input(text);
     std::string header;
     std::getline(input, header);
     require(header == "CCT_WORKSPACE_V1", "invalid workspace header");
     WorkspaceState state;
     input >> state.schema_version >> state.capacity;
-    require(state.schema_version == kSchemaVersion && state.capacity > 0, "invalid workspace schema or capacity");
+    require(state.schema_version == kSchemaVersion && state.capacity > 0 && state.capacity <= kMaximumWorkspaceCapacity,
+            "invalid workspace schema or capacity");
     std::string section;
-    std::size_t count = 0;
-    input >> section >> count;
+    input >> section;
+    auto count = read_count(input, "goals");
     require(section == "GOALS", "workspace goals section missing");
     for (std::size_t index = 0; index < count; ++index) {
         std::string value;
         input >> std::quoted(value);
+        require_string_size(value, "goal");
         state.goals.push_back(std::move(value));
     }
-    input >> section >> count;
+    input >> section;
+    count = read_count(input, "subgoals");
     require(section == "SUBGOALS", "workspace subgoals section missing");
     for (std::size_t index = 0; index < count; ++index) {
         PlanSubgoal value;
         input >> value.id >> value.parent_id >> value.complete >> value.repaired >> std::quoted(value.description);
         state.subgoals.push_back(std::move(value));
     }
-    input >> section >> count;
+    input >> section;
+    count = read_count(input, "hypotheses");
     require(section == "HYPOTHESES", "workspace hypotheses section missing");
     for (std::size_t index = 0; index < count; ++index) {
         Hypothesis value;
         input >> std::quoted(value.name) >> std::quoted(value.value) >> value.confidence >> value.rejected;
         state.hypotheses.push_back(std::move(value));
     }
-    input >> section >> count;
+    input >> section;
+    count = read_count(input, "observations");
     require(section == "OBSERVATIONS", "workspace observations section missing");
     for (std::size_t index = 0; index < count; ++index) {
         std::string value;
         input >> std::quoted(value);
+        require_string_size(value, "observation");
         state.observations.push_back(std::move(value));
     }
-    input >> section >> count;
+    input >> section;
+    count = read_count(input, "conflicts");
     require(section == "CONFLICTS", "workspace conflicts section missing");
     for (std::size_t index = 0; index < count; ++index) {
         std::string value;
         input >> std::quoted(value);
+        require_string_size(value, "conflict");
         state.conflicts.push_back(std::move(value));
     }
-    input >> section >> count;
+    input >> section;
+    count = read_count(input, "evidence");
     require(section == "EVIDENCE", "workspace evidence section missing");
     for (std::size_t index = 0; index < count; ++index) {
         EvidenceRef value;
         input >> std::quoted(value.source_id) >> value.memory_id >> value.version >> std::quoted(value.span) >> value.confidence;
+        require_string_size(value.source_id, "evidence source");
+        require_string_size(value.span, "evidence span");
         state.evidence_refs.push_back(std::move(value));
     }
     require(static_cast<bool>(input), "truncated workspace serialization");
@@ -174,6 +206,7 @@ std::string DeliberationResult::serialize() const {
 }
 
 DeliberationResult DeliberationResult::deserialize(const std::string& text) {
+    require_serialized_size(text, "deliberation result");
     std::istringstream input(text);
     std::string header;
     std::getline(input, header);
@@ -213,10 +246,12 @@ DeliberationResult DeliberationResult::deserialize(const std::string& text) {
     input >> section;
     std::size_t trace_count = 0;
     require(section == "TRACE", "trace section missing");
-    input >> trace_count;
+    require(static_cast<bool>(input >> trace_count), "trace count is invalid");
+    require(trace_count <= kMaximumCollectionItems, "trace count exceeds budget");
     for (std::size_t index = 0; index < trace_count; ++index) {
         std::string value;
         input >> std::quoted(value);
+        require_string_size(value, "trace entry");
         result.trace.push_back(std::move(value));
     }
     return result;

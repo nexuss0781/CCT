@@ -1,12 +1,15 @@
 #include "cct/release.hpp"
 
 #include <algorithm>
+#include <filesystem>
+#include <fcntl.h>
 #include <chrono>
 #include <cmath>
 #include <iomanip>
 #include <sstream>
 #include <stdexcept>
 #include <utility>
+#include <unistd.h>
 
 namespace cct {
 namespace {
@@ -21,7 +24,8 @@ bool contains(const std::vector<std::string>& values, const std::string& value) 
 
 std::string json_escape(const std::string& value) {
     std::ostringstream output;
-    for (const unsigned char character : value) {
+    for (const char raw_character : value) {
+        const auto character = static_cast<unsigned char>(raw_character);
         if (character == '"' || character == '\\') output << '\\';
         if (character == '\n') output << "\\n";
         else if (character == '\r') output << "\\r";
@@ -52,6 +56,43 @@ bool passed_phase(const std::vector<PhaseDecisionRecord>& decisions, const Relea
     return std::find_if(decisions.begin(), decisions.end(), [&](const auto& decision) {
                return decision.phase == phase && decision.decision == ReleaseDecision::PassBoundedProduction;
            }) != decisions.end();
+}
+
+void atomic_write(const std::string& path, const std::string& content) {
+    const std::filesystem::path target(path);
+    const auto parent = target.parent_path().empty() ? std::filesystem::path(".") : target.parent_path();
+    std::error_code directory_error;
+    std::filesystem::create_directories(parent, directory_error);
+    require(!directory_error, "could not create release artifact parent directory");
+    const auto template_path = (parent / (target.filename().string() + ".tmp.XXXXXX")).string();
+    std::vector<char> temporary_template(template_path.begin(), template_path.end());
+    temporary_template.push_back('\0');
+    const auto descriptor = ::mkstemp(temporary_template.data());
+    require(descriptor >= 0, "could not create release artifact temporary file");
+    const auto temporary_path = std::string(temporary_template.data());
+    std::size_t written = 0U;
+    while (written < content.size()) {
+        const auto count = ::write(descriptor, content.data() + written, content.size() - written);
+        if (count <= 0) {
+            ::close(descriptor);
+            static_cast<void>(::unlink(temporary_path.c_str()));
+            throw ReleaseError("could not write release artifact temporary file");
+        }
+        written += static_cast<std::size_t>(count);
+    }
+    if (::fsync(descriptor) != 0 || ::close(descriptor) != 0) {
+        static_cast<void>(::unlink(temporary_path.c_str()));
+        throw ReleaseError("could not durably flush release artifact temporary file");
+    }
+    if (::rename(temporary_path.c_str(), target.c_str()) != 0) {
+        static_cast<void>(::unlink(temporary_path.c_str()));
+        throw ReleaseError("could not atomically publish release artifact");
+    }
+    const auto directory_descriptor = ::open(parent.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    require(directory_descriptor >= 0, "could not open release artifact parent directory");
+    const auto directory_sync = ::fsync(directory_descriptor);
+    const auto directory_close = ::close(directory_descriptor);
+    require(directory_sync == 0 && directory_close == 0, "could not durably publish release artifact directory entry");
 }
 
 }  // namespace
@@ -112,7 +153,8 @@ void ReleaseScope::validate() const {
 }
 
 std::string ReleaseScope::immutable_identity() const {
-    const auto material = release_id + "|" + approved_model_version + "|" + approved_tokenizer_version + "|" +
+    const auto material = release_id + "|" + approved_model_version + "|" + approved_model_artifact_path + "|" + approved_tokenizer_version + "|" +
+                          approved_tokenizer_artifact_path + "|" +
                           json_array(approved_adapter_versions) + "|" + approved_retrieval_index_version + "|" +
                           json_array(approved_task_schemas) + "|" + json_array(approved_user_groups) + "|" +
                           json_array(approved_tenant_boundaries) + "|" + json_array(approved_data_classes) + "|" +
@@ -434,11 +476,27 @@ void PilotReleaseController::enter_safe_degraded_mode(const std::string& reason)
     status_.safe_degraded = true;
 }
 
+void PilotReleaseController::activate_release(InferenceService& service) const {
+    require_frozen();
+    require(status_.final_decision == ReleaseDecision::PassBoundedProduction || status_.final_decision == ReleaseDecision::PassLimitedPilot,
+            "release must have an approved terminal decision before activation");
+    require(!scope_.approved_model_artifact_path.empty() && !scope_.approved_tokenizer_artifact_path.empty(),
+            "approved release artifact paths are required for activation");
+    require(!scope_.approved_adapter_versions.empty(), "approved release adapter identity is missing");
+    service.register_release({scope_.release_id, scope_.approved_model_version, scope_.approved_adapter_versions.front(),
+                              scope_.approved_tokenizer_version, scope_.approved_retrieval_index_version, scope_.artifact_hash,
+                              ModelRoute::Cct, scope_.approved_model_artifact_path, scope_.approved_tokenizer_artifact_path});
+    service.activate_release(scope_.release_id);
+}
+
 std::string PilotReleaseController::serialize_release_manifest() const {
     require_frozen();
     std::ostringstream output;
     output << "{\"release_id\":\"" << json_escape(scope_.release_id) << "\",\"approved_model_version\":\"" << json_escape(scope_.approved_model_version)
-           << "\",\"approved_tokenizer_version\":\"" << json_escape(scope_.approved_tokenizer_version) << "\",\"approved_adapter_versions\":" << json_array(scope_.approved_adapter_versions)
+           << "\",\"approved_model_artifact_path\":\"" << json_escape(scope_.approved_model_artifact_path)
+           << "\",\"approved_tokenizer_version\":\"" << json_escape(scope_.approved_tokenizer_version)
+           << "\",\"approved_tokenizer_artifact_path\":\"" << json_escape(scope_.approved_tokenizer_artifact_path)
+           << "\",\"approved_adapter_versions\":" << json_array(scope_.approved_adapter_versions)
            << ",\"approved_retrieval_index_version\":\"" << json_escape(scope_.approved_retrieval_index_version) << "\",\"approved_task_schemas\":" << json_array(scope_.approved_task_schemas)
            << ",\"approved_user_groups\":" << json_array(scope_.approved_user_groups) << ",\"approved_tenant_boundaries\":" << json_array(scope_.approved_tenant_boundaries)
            << ",\"approved_data_classes\":" << json_array(scope_.approved_data_classes) << ",\"approved_regions\":" << json_array(scope_.approved_regions)
@@ -459,6 +517,14 @@ std::string PilotReleaseController::serialize_audit() const {
            << ",\"incidents\":" << incidents_.size() << ",\"deletions\":" << deletions_.size() << ",\"drift_observations\":" << drift_observations_.size()
            << ",\"approval_signatures\":" << approvals_.size() << ",\"safe_degraded\":" << (status_.safe_degraded ? "true" : "false") << "}";
     return output.str();
+}
+
+void PilotReleaseController::save_release_manifest(const std::string& path) const {
+    atomic_write(path, serialize_release_manifest() + "\n");
+}
+
+void PilotReleaseController::save_audit(const std::string& path) const {
+    atomic_write(path, serialize_audit() + "\n");
 }
 
 }  // namespace cct

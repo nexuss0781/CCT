@@ -73,6 +73,12 @@ public:
                const std::vector<std::vector<std::vector<double>>>& target_batch,
                const std::vector<std::vector<std::uint8_t>>& masks,
                const Stage5TrainConfig& config);
+    /** Common deterministic finite-difference reference path for matched architecture comparisons. */
+    void train_reference_finite_difference(const std::vector<std::vector<std::vector<double>>>& input_batch,
+                                           const std::vector<std::vector<std::vector<double>>>& target_batch,
+                                           const std::vector<std::vector<std::uint8_t>>& masks,
+                                           const Stage5TrainConfig& config,
+                                           double finite_difference_epsilon = 1e-5);
 
     std::size_t parameter_count() const noexcept;
     std::size_t state_memory_bytes() const noexcept;

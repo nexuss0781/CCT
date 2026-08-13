@@ -279,7 +279,7 @@ std::string poisoning_check() {
 std::string long_context_check() {
     auto memory = PersistentMemory(base_config());
     for (MemoryId id = 70; id < 90; ++id) {
-        memory.write(make_record(id, "distant distractor " + std::to_string(id), {0.0, 0.0, 0.0, 1.0}, id, "long-context"));
+        memory.write(make_record(id, "distant distractor " + std::to_string(id), {0.0, 0.0, 0.0, 1.0}, static_cast<LogicalTime>(id), "long-context"));
     }
     auto first = make_record(100, "multi-hop premise", {0.7, 0.7, 0.0, 0.0}, 1, "long-context");
     memory.write(first);
@@ -304,7 +304,7 @@ std::string long_context_check() {
 std::string ablation_resource_check() {
     auto memory = PersistentMemory(base_config());
     for (MemoryId id = 200; id < 240; ++id) {
-        memory.write(make_record(id, "capacity fixture " + std::to_string(id), {1.0, 0.0, 0.0, 0.0}, id, "capacity"));
+        memory.write(make_record(id, "capacity fixture " + std::to_string(id), {1.0, 0.0, 0.0, 0.0}, static_cast<LogicalTime>(id), "capacity"));
     }
     const auto started = std::chrono::steady_clock::now();
     MemoryQuery query;
@@ -320,7 +320,7 @@ std::string ablation_resource_check() {
     MemoryConfig constrained = base_config();
     constrained.max_active_records = 8;
     PersistentMemory bounded(constrained);
-    for (MemoryId id = 300; id < 312; ++id) bounded.write(make_record(id, "bounded " + std::to_string(id), {0.0, 1.0, 0.0, 0.0}, id, "bounded"));
+    for (MemoryId id = 300; id < 312; ++id) bounded.write(make_record(id, "bounded " + std::to_string(id), {0.0, 1.0, 0.0, 0.0}, static_cast<LogicalTime>(id), "bounded"));
     const auto removed = bounded.enforce_capacity();
     require(removed == 4 && bounded.active_size() == 8, "capacity retention policy failed");
     const auto no_memory = PersistentMemory::no_memory_context();

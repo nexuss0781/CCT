@@ -69,6 +69,7 @@ struct Track1Example {
 struct Track1Manifest {
     std::string manifest_version = "track1-v1";
     std::string tokenizer_snapshot = "data/stage-10/tokenizer_snapshot.bin";
+    std::string pretrain_token_count_mode = "byte_fallback_v1";
     std::string selection_policy = "stable-question-id-hash-v1";
     std::uint64_t selection_seed = 1701;
     std::size_t pretrain_train_tokens = 0;
@@ -103,7 +104,10 @@ struct Track1PreparationReport {
 };
 
 struct Track1EvaluationContract {
-    std::string metric_version = "track1-eval-v1";
+    std::string metric_version = "track1-eval-v2";
+    std::string pretrain_task = "target_token_prediction";
+    std::string pretrain_evaluation_scope = "not_answer_quality";
+    std::string qa_task = "answer_span_and_answerability";
     std::vector<std::string> pretrain_metrics{"loss", "perplexity", "tokens_per_second"};
     std::vector<std::string> qa_metrics{"exact_match", "token_f1", "answerability_auroc", "answerability_auprc", "abstention_precision", "abstention_recall", "unsupported_answer_rate"};
     std::vector<std::string> required_slices{"all", "answerable", "unanswerable"};

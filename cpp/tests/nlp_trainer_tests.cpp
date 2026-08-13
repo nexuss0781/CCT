@@ -120,6 +120,7 @@ void test_optimizer_direction_and_schedule() {
     optimizer.learning_rate = 0.02;
     optimizer.warmup_steps = 2;
     optimizer.total_steps = 10;
+    optimizer.validation_interval_steps = 2;
     NlpTrainer trainer(model_config(NlpModelKind::Track1CctRecurrence, 13), optimizer, data.tokenizer_hash, data.dataset_hash);
     const auto before = trainer.evaluate(data.validation).cross_entropy;
     const auto first = trainer.train_step(data);
@@ -128,6 +129,9 @@ void test_optimizer_direction_and_schedule() {
             "NLP warmup schedule or optimizer step is incorrect");
     require(std::isfinite(before) && std::isfinite(first.train_loss) && trainer.state().data_cursor == 2U,
             "NLP optimizer produced invalid state");
+    require(!first.validation_performed && second.validation_performed && first.training_elapsed_seconds >= 0.0 &&
+                second.validation_elapsed_seconds >= 0.0,
+            "NLP validation cadence or timing evidence is incorrect");
 }
 
 void test_deterministic_initialization_and_controls() {
@@ -171,6 +175,24 @@ void test_checkpoint_resume_exactness_and_fail_closed() {
         rejected = true;
     }
     require(rejected, "wrong tokenizer checkpoint identity was accepted");
+    std::ifstream checkpoint_input("artifacts/stage-11-test-checkpoint.bin");
+    std::ostringstream checkpoint_text;
+    checkpoint_text << checkpoint_input.rdbuf();
+    const auto contract_start = checkpoint_text.str().find("training_contract_hash=");
+    require(contract_start != std::string::npos, "training contract digest was not serialized");
+    const auto contract_end = checkpoint_text.str().find('\n', contract_start);
+    auto tampered = checkpoint_text.str();
+    tampered.replace(contract_start, contract_end - contract_start, "training_contract_hash=" + std::string(64U, '0'));
+    std::ofstream tampered_output("artifacts/stage-11-tampered-contract.bin", std::ios::trunc);
+    tampered_output << tampered;
+    tampered_output.close();
+    rejected = false;
+    try {
+        static_cast<void>(NlpTrainer::load_checkpoint("artifacts/stage-11-tampered-contract.bin"));
+    } catch (const NlpTrainingError&) {
+        rejected = true;
+    }
+    require(rejected, "tampered training contract identity was accepted");
     std::ofstream malformed("artifacts/stage-11-malformed-checkpoint.bin");
     malformed << "CCT_NLP_CHECKPOINT_V2\ntruncated";
     malformed.close();

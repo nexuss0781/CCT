@@ -152,6 +152,16 @@ private:
     double quarantine_threshold_;
 };
 
+/**
+ * Thread-safety contract: PersistentMemory has no internal mutex. Callers must
+ * externally serialize all mutations, retrievals that overlap mutation, snapshot
+ * operations, and log rebuilds. Read-only calls may run concurrently only when
+ * the instance is otherwise quiescent. `active_record()` and `event_log()` return
+ * borrowed references that are invalidated by mutation. Snapshot loading is
+ * fail-closed and does not publish partial state.
+ * Failure contract: invalid records, policy violations, and malformed snapshots
+ * throw MemoryError; no operation silently repairs an invalid state.
+ */
 class PersistentMemory {
 public:
     explicit PersistentMemory(MemoryConfig config = {});

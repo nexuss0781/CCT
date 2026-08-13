@@ -254,7 +254,7 @@ int main(int argc, char** argv) {
     const auto commit_value = git_command("git rev-parse HEAD 2>/dev/null");
     const auto commit = commit_value.empty() ? std::string("unknown") : commit_value;
     const auto dirty = git_command("git status --porcelain 2>/dev/null");
-    const std::size_t blocked_actions = std::count_if(audit_records.begin(), audit_records.end(), [](const auto& record) { return record.policy_blocked; });
+    const std::size_t blocked_actions = static_cast<std::size_t>(std::count_if(audit_records.begin(), audit_records.end(), [](const auto& record) { return record.policy_blocked; }));
     const bool passed = checks_passed && blocked_actions >= 1 && !audit_records.empty();
     const std::vector<Metric> metrics{
         {"mandatory_check_count", static_cast<double>(checks.size()), "checks", "all PASS", checks_passed ? "PASS" : "FAIL"},

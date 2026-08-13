@@ -2,7 +2,9 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace cct {
@@ -85,7 +87,8 @@ public:
                              CorpusSplit split, CorpusDataClass data_class, std::size_t max_bytes = 0,
                              bool evaluator_only = false);
     void add_evaluator_canary(const std::string& record_id, const std::string& source_id, const std::string& content);
-    bool detect_contamination(const std::string& candidate_content) const;
+    /** Checks a candidate against every accepted record outside its declared split. */
+    bool detect_contamination(const std::string& candidate_content, CorpusSplit candidate_split = CorpusSplit::Train) const;
     bool tombstone(const std::string& record_id, const std::string& reason);
     std::vector<CorpusShard> build_shards(std::size_t max_records_per_shard) const;
     std::vector<CorpusRecord> training_records() const;
@@ -106,13 +109,18 @@ private:
     static bool detect_pii(const std::string& content);
     static bool looks_like_code(const std::string& content);
     static std::vector<std::string> labels_for(const std::string& content, CorpusDataClass data_class);
-    bool has_exact_hash(const std::string& normalized_hash) const;
-    bool has_near_duplicate(const std::string& normalized_content) const;
+    bool has_exact_hash(const std::string& normalized_hash, std::optional<CorpusSplit> different_from = std::nullopt) const;
+    bool has_near_duplicate(const std::string& normalized_content, std::optional<CorpusSplit> different_from = std::nullopt) const;
+    bool has_split_contamination(const std::string& normalized_hash, const std::string& normalized_content, CorpusSplit split) const;
+    void index_record(std::size_t record_index);
+    void rebuild_indexes();
     void audit(const CorpusRecord& record, const std::string& event_type, const std::string& reason);
 
     std::vector<SourcePolicy> sources_;
     std::vector<CorpusRecord> records_;
     std::vector<CorpusAuditEvent> audit_;
+    std::unordered_map<std::string, std::vector<std::size_t>> normalized_hash_index_;
+    std::unordered_map<std::string, std::vector<std::size_t>> word_index_;
 };
 
 }  // namespace cct

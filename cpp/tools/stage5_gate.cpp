@@ -57,6 +57,8 @@ struct ModelResult {
     double validation_cross_entropy = 0.0;
     double validation_accuracy = 0.0;
     std::size_t parameters = 0;
+    std::size_t target_parameters = 0;
+    std::size_t parameter_delta = 0;
     std::size_t state_memory = 0;
     double seconds = 0.0;
 };
@@ -197,20 +199,41 @@ std::string manifest_audit(const std::string& manifest_path, const std::string& 
     return details.str();
 }
 
+Stage5ModelConfig matched_model_config(Stage5ModelKind kind, std::size_t vocabulary, std::size_t target_parameters) {
+    Stage5ModelConfig best{vocabulary, 1, vocabulary, 1000 + static_cast<unsigned int>(kind), kind};
+    std::size_t best_delta = std::numeric_limits<std::size_t>::max();
+    for (std::size_t hidden = 1; hidden <= 32; ++hidden) {
+        Stage5LanguageModel candidate(Stage5ModelConfig{vocabulary, hidden, vocabulary, 1000 + static_cast<unsigned int>(kind), kind});
+        const auto parameters = candidate.parameter_count();
+        const auto delta = parameters > target_parameters ? parameters - target_parameters : target_parameters - parameters;
+        if (delta < best_delta) {
+            best = {vocabulary, hidden, vocabulary, 1000 + static_cast<unsigned int>(kind), kind};
+            best_delta = delta;
+        }
+    }
+    const auto tolerance = std::max<std::size_t>(1U, target_parameters / 10U);
+    require(best_delta <= tolerance, "model cannot satisfy the 10 percent parameter matching tolerance");
+    return best;
+}
+
 ModelResult train_model(Stage5ModelKind kind, const Batch& train, const Batch& validation,
-                        std::size_t vocabulary, std::uint64_t manifest_fingerprint) {
-    Stage5LanguageModel model(Stage5ModelConfig{vocabulary, 6, vocabulary, 1000 + static_cast<unsigned int>(kind), kind});
+                        std::size_t vocabulary, std::uint64_t manifest_fingerprint, std::size_t target_parameters) {
+    const auto config = matched_model_config(kind, vocabulary, target_parameters);
+    Stage5LanguageModel model(config);
     const auto before = model.evaluate(train.inputs, train.targets, train.masks);
     const auto started = std::chrono::steady_clock::now();
-    model.train(train.inputs, train.targets, train.masks, Stage5TrainConfig{20, 0.12, 10.0, 0, manifest_fingerprint});
+    model.train_reference_finite_difference(train.inputs, train.targets, train.masks,
+                                            Stage5TrainConfig{20, 0.12, 10.0, 0, manifest_fingerprint});
     const auto finished = std::chrono::steady_clock::now();
     const auto after = model.evaluate(train.inputs, train.targets, train.masks);
     const auto validation_result = model.evaluate(validation.inputs, validation.targets, validation.masks);
     require(std::isfinite(before.cross_entropy) && std::isfinite(after.cross_entropy) && std::isfinite(validation_result.cross_entropy),
             "Stage 5 model produced non-finite metrics");
     require(after.cross_entropy < before.cross_entropy * 0.95, model.name() + " failed the 5 percent training-loss threshold");
+    const auto parameters = model.parameter_count();
+    const auto parameter_delta = parameters > target_parameters ? parameters - target_parameters : target_parameters - parameters;
     return {model.name(), before.cross_entropy, after.cross_entropy, validation_result.cross_entropy,
-            validation_result.token_accuracy, model.parameter_count(), model.state_memory_bytes(),
+            validation_result.token_accuracy, parameters, target_parameters, parameter_delta, model.state_memory_bytes(),
             std::chrono::duration<double>(finished - started).count()};
 }
 
@@ -219,7 +242,13 @@ std::string model_quality_check(const Batch& train, const Batch& validation, std
     const std::vector<Stage5ModelKind> kinds{
         Stage5ModelKind::DenseCausalAttention, Stage5ModelKind::GRU, Stage5ModelKind::DiagonalSSM,
         Stage5ModelKind::CCTNoMemory, Stage5ModelKind::CCTFrozenMemory};
-    for (const auto kind : kinds) results->push_back(train_model(kind, train, validation, vocabulary, manifest_fingerprint));
+    const Stage5LanguageModel target_model(Stage5ModelConfig{vocabulary, 6, vocabulary, 1000, Stage5ModelKind::CCTNoMemory});
+    const auto target_parameters = target_model.parameter_count();
+    for (const auto kind : kinds) results->push_back(train_model(kind, train, validation, vocabulary, manifest_fingerprint, target_parameters));
+    require(std::all_of(results->begin(), results->end(), [&](const auto& result) {
+                return result.target_parameters == target_parameters && result.parameter_delta <= std::max<std::size_t>(1U, target_parameters / 10U);
+            }),
+            "Stage 5 comparison contains a non-matched parameter budget");
     require(results->size() == 5, "Stage 5 matched model count mismatch");
     std::ostringstream details;
     details << "{\"models\":[";
@@ -229,7 +258,8 @@ std::string model_quality_check(const Batch& train, const Batch& validation, std
         details << "{\"name\":\"" << result.name << "\",\"before_cross_entropy\":" << result.before_cross_entropy
                 << ",\"after_cross_entropy\":" << result.after_cross_entropy << ",\"validation_cross_entropy\":"
                 << result.validation_cross_entropy << ",\"validation_accuracy\":" << result.validation_accuracy
-                << ",\"parameters\":" << result.parameters << ",\"state_memory_bytes\":" << result.state_memory
+                << ",\"parameters\":" << result.parameters << ",\"target_parameters\":" << result.target_parameters
+                << ",\"parameter_delta\":" << result.parameter_delta << ",\"state_memory_bytes\":" << result.state_memory
                 << ",\"training_seconds\":" << result.seconds << "}";
     }
     details << "]}";
@@ -392,12 +422,13 @@ int main(int argc, char** argv) {
            << "**Commit:** `" << commit << "`  \n"
            << "**Dirty tree at gate execution:** `" << (dirty.empty() ? "False" : "True") << "`\n\n"
            << "## Methodology\n\n"
-           << "The gate uses two hash-addressed Project Gutenberg text fixtures, a repository-owned C++ fixture, a byte-fallback vocabulary, a compact deterministic token benchmark, five matched native model configurations, Stage 4 frozen-memory retrieval, checkpoint replay, long-context finite-metric checks, static code safety checks, and evaluator-only canary separation. No generated code is executed.\n\n"
-           << "## Matched configurations\n\n| Model | Before CE | After CE | Validation CE | Validation accuracy | Parameters | State memory |\n|---|---:|---:|---:|---:|---:|---:|\n";
+           << "The gate uses two hash-addressed Project Gutenberg text fixtures, a repository-owned C++ fixture, a byte-fallback vocabulary, a compact deterministic token benchmark, five parameter-matched native model configurations, one shared finite-difference reference optimizer with identical steps, learning rate, clip norm, batch, context, and splits, Stage 4 frozen-memory retrieval, checkpoint replay, long-context finite-metric checks, static code safety checks, and evaluator-only canary separation. No generated code is executed.\n\n"
+           << "## Matched configurations\n\n| Model | Before CE | After CE | Validation CE | Validation accuracy | Parameters | Target parameters | Absolute delta | State memory |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|\n";
     for (const auto& result : model_results) {
         report << "| " << result.name << " | " << result.before_cross_entropy << " | " << result.after_cross_entropy
                << " | " << result.validation_cross_entropy << " | " << result.validation_accuracy << " | "
-               << result.parameters << " | " << result.state_memory << " |\n";
+               << result.parameters << " | " << result.target_parameters << " | " << result.parameter_delta << " | "
+               << result.state_memory << " |\n";
     }
     report << "\n## Mandatory checks\n\n| Check | Status | Duration (s) |\n|---|---:|---:|\n";
     for (const auto& check : checks) report << "| " << check.name << " | `" << check.status << "` | " << check.duration_seconds << " |\n";
