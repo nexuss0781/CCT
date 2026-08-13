@@ -7,6 +7,8 @@
 #include <functional>
 #include <optional>
 #include <stdexcept>
+#include <unordered_map>
+#include <unordered_set>
 #include <string>
 #include <vector>
 
@@ -261,8 +263,11 @@ private:
     bool is_stale(const KnowledgeRecord& record, std::int64_t valid_at) const;
     static std::vector<std::string> terms(const std::string& text);
     static std::string join_terms(const std::vector<std::string>& terms);
+    void index_record(std::size_t record_index);
+    void rebuild_lexical_index();
     static bool claim_supported(const KnowledgeClaim& claim, const std::string& evidence_text);
     KnowledgeEmbeddingProvider embedding_provider_;
+    std::unordered_map<std::string, std::unordered_set<std::size_t>> lexical_index_;
 };
 
 }  // namespace cct

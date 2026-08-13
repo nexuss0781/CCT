@@ -246,6 +246,42 @@ void test_release_activation_and_atomic_publication() {
     std::filesystem::remove_all(fixture.model_path.parent_path());
 }
 
+void test_durable_release_bundle_black_box() {
+    const auto model_path = std::filesystem::path("artifacts/stage-16/cpp-gate/checkpoint-fixture/model.checkpoint");
+    const auto tokenizer_path = std::filesystem::path("artifacts/stage-16/cpp-gate/checkpoint-fixture/tokenizer.snapshot");
+    require(std::filesystem::exists(model_path) && std::filesystem::exists(tokenizer_path), "durable release-validation artifacts are missing");
+    auto release_scope = scope();
+    release_scope.approved_model_artifact_path = model_path.string();
+    release_scope.approved_tokenizer_artifact_path = tokenizer_path.string();
+    release_scope.artifact_hash = nlp_checkpoint_hash(read_file(model_path));
+    PilotReleaseController controller(&test_clock);
+    controller.freeze_artifacts(release_scope);
+    add_scope_enrollment(controller);
+    add_complete_evidence(controller);
+    const auto scope_hash = controller.scope().immutable_identity();
+    controller.submit_approval({"release-stage17", "tech", "technical", scope_hash, "approve", "2026-08-12", "sig-tech"});
+    controller.submit_approval({"release-stage17", "sec", "security", scope_hash, "approve", "2026-08-12", "sig-sec"});
+    controller.submit_approval({"release-stage17", "prod", "product", scope_hash, "approve", "2026-08-12", "sig-prod"});
+    controller.submit_approval({"release-stage17", "gov", "governance", scope_hash, "approve", "2026-08-12", "sig-gov"});
+    controller.mark_final_decision(ReleaseDecision::PassBoundedProduction);
+    InferenceService service;
+    controller.activate_release(service);
+    InferenceRequest request;
+    request.request_id = "durable-release-black-box";
+    request.tenant_id = "tenant-a";
+    request.user_id = "user-a";
+    request.role = "analyst";
+    request.session_id = "durable-release-session";
+    request.input = "alpha";
+    request.task_schema = "answer";
+    request.retrieval_policy = "none";
+    request.tool_policy = "offline-deny";
+    request.trace_id = "durable-release-trace";
+    const auto response = service.handle(request, {true, "tenant-a", "user-a", {"analyst"}});
+    require(response.error_code.empty() && response.backend_identity.find("checkpoint-backed-") == 0U && !response.output.empty(),
+            "durable release-validation bundle did not execute a black-box inference request");
+}
+
 void test_terminal_approval_and_decision() {
     PilotReleaseController controller(&test_clock);
     controller.freeze_artifacts(scope());
@@ -273,6 +309,7 @@ int main() {
         {"shadow_review_feedback_and_deletion", test_shadow_review_feedback_and_deletion},
         {"incident_and_rollback_controls", test_incident_and_rollback_controls},
         {"release_activation_and_atomic_publication", test_release_activation_and_atomic_publication},
+        {"durable_release_bundle_black_box", test_durable_release_bundle_black_box},
         {"terminal_approval_and_decision", test_terminal_approval_and_decision}};
     std::size_t passed = 0U;
     for (const auto& [name, test] : tests) {

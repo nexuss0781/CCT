@@ -64,7 +64,8 @@ void test_checksum_replay_and_versioning() {
     const auto snapshot = memory.serialize_snapshot();
     const auto restored = PersistentMemory::deserialize_snapshot(snapshot);
     require(restored.canonical_state_export() == memory.canonical_state_export(), "memory snapshot changed canonical state");
-    require(restored.log_export() == memory.log_export(), "memory snapshot changed event log");
+    require(restored.log_export() == memory.log_export() && restored.config().embedding_backend == memory.config().embedding_backend,
+            "memory snapshot changed event log or embedding backend contract");
 }
 
 void test_filtered_exact_retrieval_and_citation() {
@@ -174,6 +175,34 @@ void test_digest_deferred_policy_and_atomic_snapshot() {
     std::filesystem::remove(path);
 }
 
+void test_indexed_text_retrieval_matches_oracle() {
+    PersistentMemory memory(config());
+    memory.write(make_record(70, "alpha climate evidence", {1.0, 0.0, 0.0, 0.0}, 1, "indexed-a"));
+    memory.write(make_record(71, "beta finance evidence", {0.0, 1.0, 0.0, 0.0}, 2, "indexed-b"));
+    memory.write(make_record(72, "alpha historical evidence", {0.8, 0.2, 0.0, 0.0}, 3, "indexed-c"));
+    MemoryQuery query;
+    query.text = "alpha climate";
+    query.budget = 5;
+    const auto indexed = memory.retrieve(query);
+    const auto oracle = memory.retrieve_linear_oracle(query);
+    require(indexed.size() == oracle.size() && indexed.size() == 2U,
+            "indexed text retrieval candidate set is incorrect indexed=" + std::to_string(indexed.size()) + " oracle=" + std::to_string(oracle.size()));
+    for (std::size_t index = 0; index < indexed.size(); ++index) {
+        require(indexed[index].memory_id == oracle[index].memory_id && std::abs(indexed[index].score - oracle[index].score) < 1e-12,
+                "indexed retrieval diverged from linear correctness oracle");
+    }
+    memory.update(make_record(71, "alpha updated evidence", {0.7, 0.3, 0.0, 0.0}, 4, "indexed-b"));
+    require(memory.retrieve(query).size() == memory.retrieve_linear_oracle(query).size(), "indexed update invalidation diverged from oracle");
+    memory.delete_memory(70);
+    require(memory.retrieve(query).size() == 2U && memory.retrieve_linear_oracle(query).size() == 2U,
+            "indexed deletion filtering diverged from oracle");
+    memory.rebuild_from_log();
+    const auto replayed = memory.retrieve(query);
+    const auto replayed_oracle = memory.retrieve_linear_oracle(query);
+    require(replayed.size() == replayed_oracle.size() && replayed.front().memory_id == replayed_oracle.front().memory_id,
+            "indexed retrieval index was not rebuilt from the event log");
+}
+
 void test_malformed_snapshot_rejection() {
     bool rejected = false;
     try {
@@ -201,6 +230,7 @@ int main() {
         {"poisoning_boundary_and_causal_adapter", test_poisoning_boundary_and_causal_adapter},
         {"digest_deferred_policy_and_atomic_snapshot", test_digest_deferred_policy_and_atomic_snapshot},
         {"malformed_snapshot_rejection", test_malformed_snapshot_rejection},
+        {"indexed_text_retrieval_matches_oracle", test_indexed_text_retrieval_matches_oracle},
     };
     std::size_t passed = 0;
     for (const auto& [name, test] : tests) {

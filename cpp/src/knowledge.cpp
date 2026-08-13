@@ -283,6 +283,7 @@ void KnowledgePlane::ingest(KnowledgeRecord record) {
         }
     }
     records_.push_back(std::move(record));
+    index_record(records_.size() - 1U);
     metrics_.estimated_memory_bytes = serialize_snapshot().size();
 }
 
@@ -329,6 +330,7 @@ void KnowledgePlane::tombstone(const std::string& knowledge_id, const std::strin
 
 void KnowledgePlane::rebuild() {
     for (const auto& record : records_) validate_record(record);
+    rebuild_lexical_index();
     rebuilt_ = true;
     metrics_.estimated_memory_bytes = serialize_snapshot().size();
 }
@@ -352,6 +354,18 @@ std::string KnowledgePlane::join_terms(const std::vector<std::string>& values) {
         output << values[index];
     }
     return output.str();
+}
+
+void KnowledgePlane::index_record(const std::size_t record_index) {
+    require(record_index < records_.size(), "knowledge lexical index record index is invalid");
+    const auto values = terms(records_[record_index].content);
+    const std::unordered_set<std::string> unique_values(values.begin(), values.end());
+    for (const auto& term : unique_values) lexical_index_[term].insert(record_index);
+}
+
+void KnowledgePlane::rebuild_lexical_index() {
+    lexical_index_.clear();
+    for (std::size_t index = 0U; index < records_.size(); ++index) index_record(index);
 }
 
 std::vector<double> KnowledgePlane::embed(const std::string& text) const {
@@ -429,7 +443,16 @@ std::vector<KnowledgeHit> KnowledgePlane::retrieve(const KnowledgeQuery& query) 
     audit.tenant_id = query.tenant_id;
     audit.role = query.role;
     audit.decision = "allow";
-    for (const auto& record : records_) {
+    std::unordered_set<std::size_t> lexical_candidates;
+    if (query.mode == RetrievalMode::Lexical) {
+        for (const auto& term : terms(query.text)) {
+            const auto found = lexical_index_.find(term);
+            if (found != lexical_index_.end()) lexical_candidates.insert(found->second.begin(), found->second.end());
+        }
+    }
+    for (std::size_t record_index = 0U; record_index < records_.size(); ++record_index) {
+        if (query.mode == RetrievalMode::Lexical && !lexical_candidates.contains(record_index)) continue;
+        const auto& record = records_[record_index];
         ++audit.scanned_records;
         if (!can_access(record, query)) { ++audit.unauthorized_records; continue; }
         const auto stale = is_stale(record, query.valid_at);

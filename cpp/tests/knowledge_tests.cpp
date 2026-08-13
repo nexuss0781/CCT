@@ -69,6 +69,23 @@ void test_ingestion_retrieval_and_tenant_isolation() {
     require(plane.audit().back().unauthorized_records > 0U, "unauthorized retrieval was not audited");
 }
 
+void test_indexed_lexical_candidates_and_snapshot_rebuild() {
+    KnowledgePlane plane;
+    plane.ingest(record("lex-alpha", "tenant-a", "alpha", 1U, "alpha climate evidence", 100));
+    plane.ingest(record("lex-beta", "tenant-a", "beta", 1U, "beta finance evidence", 100));
+    plane.ingest(record("lex-gamma", "tenant-a", "gamma", 1U, "gamma operations evidence", 100));
+    auto lexical = query("q-lex-index", "tenant-a", "alpha climate", 150);
+    lexical.mode = RetrievalMode::Lexical;
+    lexical.embedding_version.clear();
+    const auto hits = plane.retrieve(lexical);
+    require(hits.size() == 1U && hits.front().knowledge_id == "lex-alpha", "indexed lexical retrieval returned the wrong evidence");
+    require(plane.audit().back().scanned_records == 1U, "lexical retrieval did not use the posting index");
+    const auto restored = KnowledgePlane::deserialize_snapshot(plane.serialize_snapshot());
+    const auto restored_hits = restored.retrieve(lexical);
+    require(restored_hits.size() == 1U && restored_hits.front().knowledge_id == "lex-alpha" && restored.audit().back().scanned_records == 1U,
+            "lexical posting index was not rebuilt after snapshot restore");
+}
+
 void test_version_freshness_and_stale_selection() {
     KnowledgePlane plane;
     plane.ingest(record("v1", "tenant-a", "policy", 1U, "Policy version one is historical and expired.", 100));
@@ -200,6 +217,7 @@ void test_version_fail_closed_and_reviews() {
 int main() {
     const std::vector<std::pair<std::string, void (*)()>> tests{
         {"ingestion_retrieval_and_tenant_isolation", test_ingestion_retrieval_and_tenant_isolation},
+        {"indexed_lexical_candidates_and_snapshot_rebuild", test_indexed_lexical_candidates_and_snapshot_rebuild},
         {"version_freshness_and_stale_selection", test_version_freshness_and_stale_selection},
         {"citations_grounding_and_conflicts", test_citations_grounding_and_conflicts},
         {"exact_span_provider_conflict_and_bounded_snapshot", test_exact_span_provider_conflict_and_bounded_snapshot},
