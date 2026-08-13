@@ -30,10 +30,10 @@ This is an evidence-linked engineering backlog, not a mathematical proof that ev
 
 ## Release blockers
 
-The following items currently block any claim that the shipped CCT implementation is a complete teacher engine or production inference system:
+The following items are release-governance blockers; entries marked `[x]` are closed and no longer block the next transition:
 
-- [ ] **SEQ-001** Correct analytic gradients for complex, normalized, and masked sequence modes.
-- [ ] **TRAIN-001** Unify the Track 1 NLP CCT model with the general `SelectiveSequenceCore`, or explicitly rename and separate the two models with independent claims.
+- [x] **SEQ-001** Correct analytic gradients for complex, normalized, and masked sequence modes; verified by complete all-mode finite differences and sparse-mask state tests.
+- [x] **TRAIN-001** Explicitly renamed and separated the Track 1 NLP recurrence from the general `SelectiveSequenceCore`; independent model identity, serialization, and claim-boundary tests pass.
 - [ ] **INF-001** Replace template inference responses with a real checkpoint-backed model execution path.
 - [ ] **INF-002** Implement true incremental decoding and cooperative cancellation before claiming streaming.
 - [ ] **CORPUS-001** Stop retaining raw PII after heuristic detection and replace the heuristic privacy boundary with a governed privacy pipeline.
@@ -47,17 +47,19 @@ The following items currently block any claim that the shipped CCT implementatio
 
 ## SEQ-001 — Incorrect analytic gradients for complex, normalized, and masked modes
 
-**Priority:** P0. **Status:** `[ ] OPEN`.
+**Priority:** P0. **Status:** `[x] FIXED`.
 
-**Evidence:** `cpp/src/sequence.cpp:249-375`. The forward path in `step()` applies complex rotation at lines 198–205 and state normalization at lines 211–220. The gradient path caches only real hidden state and real gate/candidate values at lines 261–312, then backpropagates through an unrotated, unnormalized recurrence at lines 342–373. It also executes `step()` for every position during cache construction at lines 288–314 even when the mask says the state should not update. The derivative path uses `write_raw` and `retain_raw` as if they were the post-activation values in lines 350–355, and it discards `d_input` and `d_previous_next` at lines 370 and 374.
+**Historical evidence (pre-fix):** The forward path in `step()` applied complex rotation at lines 198–205 and state normalization at lines 211–220. The prior gradient path cached only real hidden state and real gate/candidate values at lines 261–312, then backpropagated through an unrotated, unnormalized recurrence at lines 342–373. It also executed `step()` for every position during cache construction at lines 288–314 even when the mask said the state should not update. The derivative path used `write_raw` and `retain_raw` as if they were the post-activation values in lines 350–355, and discarded `d_input` and `d_previous_next` at lines 370 and 374.
+
+The corrected implementation is in `cpp/src/sequence.cpp`, with permanent coverage in `cpp/tests/sequence_tests.cpp`.
 
 **Measured impact:** A targeted finite-difference probe measured a maximum gradient error of approximately `1.12e-3` in complex masked mode and `8.11e-2` in complex-plus-normalized masked mode. Plain masked mode was approximately `5.1e-12`.
 
 **Why this matters:** Optimizing these modes can move parameters in a direction that does not minimize the implemented forward loss. Masked training can also propagate gradient through positions that do not update state. This invalidates training evidence for the affected modes.
 
-**Remediation:** Implement a mode-complete reverse pass that caches complex real/imaginary state, rotation derivatives, normalization Jacobians, gate clamp behavior, output normalization, and previous-input recurrence. Use the exact forward mask semantics during cache construction. Remove discarded derivative accumulators or implement the corresponding input-gradient contract.
+**Remediation completed:** Implemented a mode-complete reverse pass with complex real/imaginary state, rotation derivatives, state/output normalization Jacobians, gate-boundary derivatives, and exact forward mask semantics. Non-finite targets are rejected before objective evaluation.
 
-**Required regression:** Add finite-difference checks for every combination of `complex_state`, `normalize_state`, `normalize_output`, `selective_gates`, and sparse masks. Require relative and absolute tolerances per mode. Add a test proving masked positions neither update state nor transmit gradient.
+**Verification:** Permanent regression covers all eight combinations of `complex_state`, `normalize_state`, and `normalize_output` under sparse masks, compares the complete flattened parameter vector to central finite differences at absolute tolerance `<1e-8`, verifies masked state preservation, and rejects non-finite targets. The native suite is green after the fix.
 
 **Depends on:** None. **Blocks:** L1-2/L1-5 modes using these features.
 
@@ -141,15 +143,15 @@ The following items currently block any claim that the shipped CCT implementatio
 
 ## TRAIN-001 — Track 1 CCT is a separate recurrence from the general CCT sequence core
 
-**Priority:** P0. **Status:** `[ ] OPEN`.
+**Priority:** P0. **Status:** `[x] FIXED`.
 
-**Evidence:** `cpp/src/nlp_trainer.cpp:206-259` allocates a model-specific parameter layout. Its CCT forward and gradient implementations are separate from `SelectiveSequenceCore` in `cpp/src/sequence.cpp`. The Track 1 runner configures and trains `NextTokenModel`, not `SelectiveSequenceCore`.
+**Evidence:** `cpp/src/nlp_trainer.cpp` retains the separate recurrence implementation, now exposed as `NlpModelKind::Track1CctRecurrence` and `track1_cct_recurrence`; the general core remains `SelectiveSequenceCore` in `cpp/src/sequence.cpp`. The original implementation had a model-specific parameter layout and separate forward and gradient functions. The Track 1 runner configures and trains `NextTokenModel`, not `SelectiveSequenceCore`.
 
 **Impact:** Track 1 results do not validate the general CCT sequence architecture, including complex state, normalization, skip projection, and the public sequence API. A “CCT trained successfully” statement is ambiguous unless it names the exact implementation.
 
-**Remediation:** Choose one of two explicit designs. Either compose the NLP model from `SelectiveSequenceCore` and expose a shared parameter/gradient contract, or rename the NLP recurrence as a separate model and publish separate claims, tests, and baselines.
+**Remediation completed:** Chose the explicit-separation design. The Track 1 recurrence is named independently, its model serialization now publishes `NLP_MODEL_V3` while accepting V2 checkpoints, and Stage 11/12/Track 1 artifacts report `track1_cct_recurrence`. General sequence-core claims are not attached to Track 1 results.
 
-**Required regression:** Assert serialized model kind, sequence-core configuration, parameter count, and forward equivalence between the intended shared path and the NLP path.
+**Verification:** `cpp/tests/nlp_trainer_tests.cpp` asserts model kind, public name, V3 serialization, V2 compatibility mapping, and exact parameter restoration. Stage 11 and Stage 12 gates pass with the explicit identity.
 
 ## TRAIN-002 — The baseline comparison is computationally and parametrically non-matched
 

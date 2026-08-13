@@ -51,7 +51,7 @@ ScalingPointConfig point_config(const ScalingBackend backend, const std::size_t 
     optimizer.total_steps = horizon;
     optimizer.clip_norm = 1.0;
     optimizer.weight_decay = 0.0;
-    return {backend, {NlpModelKind::CCT, 768, width, width, context, seed}, optimizer,
+    return {backend, {NlpModelKind::Track1CctRecurrence, 768, width, width, context, seed}, optimizer,
             "stage12-tokenizer", "stage12-dataset", context, horizon, 1};
 }
 
@@ -110,7 +110,7 @@ void test_atomic_checkpoint_and_recovery() {
     optimizer.total_steps = 4;
     optimizer.warmup_steps = 1;
     optimizer.weight_decay = 0.0;
-    NlpTrainer trainer({NlpModelKind::CCT, 768, 2, 2, 8, 17}, optimizer, data.tokenizer_hash, data.dataset_hash);
+    NlpTrainer trainer({NlpModelKind::Track1CctRecurrence, 768, 2, 2, 8, 17}, optimizer, data.tokenizer_hash, data.dataset_hash);
     trainer.train_steps(data, 2);
     const auto path = std::string("artifacts/stage-12-test-checkpoint.bin");
     const auto result = ScalingRunner::save_atomic(trainer, path);

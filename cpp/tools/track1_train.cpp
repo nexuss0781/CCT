@@ -439,7 +439,7 @@ int main(int argc, char** argv) {
         const auto pretrain_dataset = NlpDataset::build(pretrain_train, pretrain_validation, tokenizer_hash, config.context_length);
         const auto pretrain_test_dataset = evaluation_dataset(pretrain_test, tokenizer_hash, config.context_length);
 
-        NlpModelConfig model{NlpModelKind::CCT, vocabulary_size, config.embedding_dim, config.hidden_dim, config.context_length, config.seed};
+        NlpModelConfig model{NlpModelKind::Track1CctRecurrence, vocabulary_size, config.embedding_dim, config.hidden_dim, config.context_length, config.seed};
         NlpOptimizerConfig pretrain_optimizer;
         pretrain_optimizer.learning_rate = 0.01;
         pretrain_optimizer.weight_decay = 1e-5;
@@ -476,7 +476,7 @@ int main(int argc, char** argv) {
         const auto pretrain_checkpoint_hash = cct::nlp_checkpoint_hash(read_file(pretrain_checkpoint));
         const auto sft_checkpoint_hash = cct::nlp_checkpoint_hash(read_file(sft_checkpoint));
         std::ostringstream report;
-        report << std::setprecision(10) << "{\"status\":\"PASS\",\"track\":\"track1\",\"backend\":\"native-c++20-cct\",\"tokenizer_hash\":\""
+        report << std::setprecision(10) << "{\"status\":\"PASS\",\"track\":\"track1\",\"backend\":\"native-c++20-track1-cct-recurrence\",\"tokenizer_hash\":\""
                << tokenizer_hash << "\",\"pretrain_checkpoint\":\"" << json_escape(pretrain_checkpoint.string()) << "\",\"pretrain_checkpoint_hash\":\""
                << pretrain_checkpoint_hash << "\",\"sft_checkpoint\":\"" << json_escape(sft_checkpoint.string()) << "\",\"sft_checkpoint_hash\":\""
                << sft_checkpoint_hash << "\",\"pretrain\":{\"before_selection\":" << evaluation_json(pretrain.before)

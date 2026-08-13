@@ -188,7 +188,7 @@ int main(int argc, char** argv) {
             const auto data = context_dataset(base_dataset, 8U);
             NlpOptimizerConfig optimizer;
             optimizer.total_steps = 2U;
-            static_cast<void>(ScalingRunner::run({ScalingBackend::CudaUnavailable, {NlpModelKind::CCT, 768, 2, 2, 8, 3}, optimizer,
+            static_cast<void>(ScalingRunner::run({ScalingBackend::CudaUnavailable, {NlpModelKind::Track1CctRecurrence, 768, 2, 2, 8, 3}, optimizer,
                                                    tokenizer_hash, data.dataset_hash, 8U, 2U, 1U}, data));
         } catch (const NlpTrainingError&) {
             rejected_cuda = true;
@@ -214,7 +214,7 @@ int main(int argc, char** argv) {
                             optimizer.total_steps = horizon;
                             optimizer.clip_norm = 1.0;
                             optimizer.weight_decay = 0.0;
-                            const ScalingPointConfig config{backend, {NlpModelKind::CCT, 768U, width, width, context, seed}, optimizer,
+                            const ScalingPointConfig config{backend, {NlpModelKind::Track1CctRecurrence, 768U, width, width, context, seed}, optimizer,
                                                             tokenizer_hash, data.dataset_hash, context, horizon, 1U};
                             const auto point = ScalingRunner::run(config, data);
                             require(point.finite && point.optimizer_steps == horizon && point.training_tokens > 0U &&
@@ -238,7 +238,7 @@ int main(int argc, char** argv) {
         optimizer.total_steps = 8U;
         optimizer.warmup_steps = 1U;
         optimizer.weight_decay = 0.0;
-        const ScalingPointConfig reference_config{ScalingBackend::CpuReference, {NlpModelKind::CCT, 768U, 4U, 4U, 8U, 19U}, optimizer,
+        const ScalingPointConfig reference_config{ScalingBackend::CpuReference, {NlpModelKind::Track1CctRecurrence, 768U, 4U, 4U, 8U, 19U}, optimizer,
                                                   tokenizer_hash, data.dataset_hash, 8U, 8U, 1U};
         auto fused_config = reference_config;
         fused_config.backend = ScalingBackend::CpuFused;
@@ -258,7 +258,7 @@ int main(int argc, char** argv) {
         optimizer.total_steps = 8U;
         optimizer.warmup_steps = 1U;
         optimizer.weight_decay = 0.0;
-        const ScalingPointConfig config{ScalingBackend::CpuFused, {NlpModelKind::CCT, 768U, 4U, 4U, 16U, 29U}, optimizer,
+        const ScalingPointConfig config{ScalingBackend::CpuFused, {NlpModelKind::Track1CctRecurrence, 768U, 4U, 4U, 16U, 29U}, optimizer,
                                         tokenizer_hash, data.dataset_hash, 16U, 8U, 1U};
         const auto first = ScalingRunner::run(config, data);
         const auto second = ScalingRunner::run(config, data);
@@ -276,7 +276,7 @@ int main(int argc, char** argv) {
         optimizer.total_steps = 8U;
         optimizer.warmup_steps = 1U;
         optimizer.weight_decay = 0.0;
-        const ScalingPointConfig single{ScalingBackend::CpuFused, {NlpModelKind::CCT, 768U, 2U, 2U, 8U, 37U}, optimizer,
+        const ScalingPointConfig single{ScalingBackend::CpuFused, {NlpModelKind::Track1CctRecurrence, 768U, 2U, 2U, 8U, 37U}, optimizer,
                                         tokenizer_hash, data.dataset_hash, 8U, 8U, 1U};
         auto ordered = single;
         ordered.worker_count = 2U;
@@ -295,7 +295,7 @@ int main(int argc, char** argv) {
         optimizer.total_steps = 8U;
         optimizer.warmup_steps = 1U;
         optimizer.weight_decay = 0.0;
-        NlpTrainer trainer({NlpModelKind::CCT, 768U, 2U, 2U, 8U, 43U}, optimizer, tokenizer_hash, data.dataset_hash);
+        NlpTrainer trainer({NlpModelKind::Track1CctRecurrence, 768U, 2U, 2U, 8U, 43U}, optimizer, tokenizer_hash, data.dataset_hash);
         trainer.train_steps(data, 4U);
         const auto path = (output / "committed_checkpoint.bin").string();
         const auto atomic = ScalingRunner::save_atomic(trainer, path);

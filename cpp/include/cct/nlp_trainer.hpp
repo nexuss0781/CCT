@@ -13,7 +13,7 @@
 namespace cct {
 
 enum class NlpModelKind : std::uint8_t {
-    CCT = 0,
+    Track1CctRecurrence = 0,
     DenseCausalAttention = 1,
     GRU = 2,
     DiagonalSSM = 3
@@ -47,7 +47,7 @@ struct NlpDataset {
 };
 
 struct NlpModelConfig {
-    NlpModelKind kind = NlpModelKind::CCT;
+    NlpModelKind kind = NlpModelKind::Track1CctRecurrence;
     std::size_t vocabulary_size = 0;
     std::size_t embedding_dim = 8;
     std::size_t hidden_dim = 8;

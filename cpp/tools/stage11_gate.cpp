@@ -40,7 +40,7 @@ struct SeedResult {
 };
 
 struct BaselineResult {
-    NlpModelKind kind = NlpModelKind::CCT;
+    NlpModelKind kind = NlpModelKind::Track1CctRecurrence;
     double initial_validation_loss = 0.0;
     double final_validation_loss = 0.0;
     std::size_t parameter_count = 0;
@@ -200,12 +200,12 @@ int main(int argc, char** argv) {
     }));
 
     checks.push_back(run_check("objective_gradient_and_optimizer_contract", [&]() {
-        NlpModelConfig config{NlpModelKind::CCT, vocabulary_size, 2U, 2U, 24U, 31U};
+        NlpModelConfig config{NlpModelKind::Track1CctRecurrence, vocabulary_size, 2U, 2U, 24U, 31U};
         const auto item = pilot_dataset.train.front();
         auto model = NextTokenModel(config);
         const auto analytic = model.loss_and_gradients(item);
         require(analytic.token_count > 0U && std::isfinite(analytic.cross_entropy) && std::isfinite(analytic.gradient_norm),
-                "Stage 11 categorical objective is non-finite");
+                "Stage 11 Track 1 categorical objective is non-finite");
         const std::size_t spot = static_cast<std::size_t>(item.input_ids.front()) * config.embedding_dim;
         auto plus_values = model.parameter_vector();
         auto minus_values = plus_values;
@@ -232,7 +232,7 @@ int main(int argc, char** argv) {
                ",\"optimizer_step\":1,\"warmup_learning_rate\":" + std::to_string(point.learning_rate) + "}";
     }));
 
-    checks.push_back(run_check("three_seed_cct_validation_pilot", [&]() {
+    checks.push_back(run_check("three_seed_track1_recurrence_validation_pilot", [&]() {
         NlpOptimizerConfig optimizer;
         optimizer.learning_rate = 0.04;
         optimizer.warmup_steps = 2U;
@@ -240,15 +240,15 @@ int main(int argc, char** argv) {
         optimizer.clip_norm = 2.0;
         optimizer.weight_decay = 0.0;
         for (const auto seed : {std::uint64_t{3}, std::uint64_t{5}, std::uint64_t{7}}) {
-            NlpModelConfig config{NlpModelKind::CCT, vocabulary_size, 2U, 2U, 24U, seed};
+            NlpModelConfig config{NlpModelKind::Track1CctRecurrence, vocabulary_size, 2U, 2U, 24U, seed};
             NlpTrainer trainer(config, optimizer, tokenizer_hash, dataset_hash);
             const auto initial = trainer.evaluate(pilot_dataset.validation);
             const auto points = trainer.train_steps(pilot_dataset, 120U);
             const auto final = trainer.evaluate(pilot_dataset.validation);
             require(initial.finite && final.finite && !points.empty() && final.tokens_per_second >= 100.0,
-                    "CCT three-seed pilot produced invalid metrics or insufficient throughput");
+                    "Track 1 recurrence three-seed pilot produced invalid metrics or insufficient throughput");
             const auto improvement = (initial.cross_entropy - final.cross_entropy) / initial.cross_entropy;
-            require(improvement >= 0.05, "CCT seed " + std::to_string(seed) + " held-out improvement=" + std::to_string(improvement) + " below 0.05");
+            require(improvement >= 0.05, "Track 1 recurrence seed " + std::to_string(seed) + " held-out improvement=" + std::to_string(improvement) + " below 0.05");
             const auto& last = points.back();
             seed_results.push_back({seed, initial.cross_entropy, final.cross_entropy, final.perplexity, improvement,
                                     last.train_loss, final.tokens_per_second, trainer.model().parameter_count(),
@@ -281,7 +281,7 @@ int main(int argc, char** argv) {
         optimizer.total_steps = 60U;
         optimizer.clip_norm = 2.0;
         optimizer.weight_decay = 0.0;
-        NlpTrainer trainer({NlpModelKind::CCT, vocabulary_size, 2U, 2U, 16U, 41U}, optimizer, tokenizer_hash, tiny.dataset_hash);
+        NlpTrainer trainer({NlpModelKind::Track1CctRecurrence, vocabulary_size, 2U, 2U, 16U, 41U}, optimizer, tokenizer_hash, tiny.dataset_hash);
         const auto initial = trainer.evaluate(tiny.train).cross_entropy;
         trainer.train_steps(tiny, 40U);
         const auto final = trainer.evaluate(tiny.train);
@@ -320,7 +320,7 @@ int main(int argc, char** argv) {
         optimizer.clip_norm = 2.0;
         optimizer.weight_decay = 0.0;
         for (const auto interruption : {std::size_t{0}, std::size_t{1}, std::size_t{3}}) {
-            NlpModelConfig config{NlpModelKind::CCT, vocabulary_size, 2U, 2U, 24U, 61U};
+            NlpModelConfig config{NlpModelKind::Track1CctRecurrence, vocabulary_size, 2U, 2U, 24U, 61U};
             NlpTrainer uninterrupted(config, optimizer, tokenizer_hash, dataset_hash);
             uninterrupted.train_steps(pilot_dataset, 6U);
             NlpTrainer interrupted(config, optimizer, tokenizer_hash, dataset_hash);
@@ -356,7 +356,7 @@ int main(int argc, char** argv) {
         invalid.target_ids[0] = 999999U;
         rejected = false;
         try {
-            NextTokenModel({NlpModelKind::CCT, vocabulary_size, 2U, 2U, 24U, 71U}).loss_only(invalid);
+            NextTokenModel({NlpModelKind::Track1CctRecurrence, vocabulary_size, 2U, 2U, 24U, 71U}).loss_only(invalid);
         } catch (const NlpTrainingError&) {
             rejected = true;
         }
@@ -365,7 +365,7 @@ int main(int argc, char** argv) {
         std::fill(invalid.loss_mask.begin(), invalid.loss_mask.end(), static_cast<std::uint8_t>(0));
         rejected = false;
         try {
-            NextTokenModel({NlpModelKind::CCT, vocabulary_size, 2U, 2U, 24U, 71U}).loss_only(invalid);
+            NextTokenModel({NlpModelKind::Track1CctRecurrence, vocabulary_size, 2U, 2U, 24U, 71U}).loss_only(invalid);
         } catch (const NlpTrainingError&) {
             rejected = true;
         }
@@ -418,15 +418,15 @@ int main(int argc, char** argv) {
     write_file(output / "gradient_report.json", "{\"analytic_finite_difference_tolerance\":0.0001,\"objective\":\"categorical_cross_entropy\",\"status\":\"PASS\"}\n");
     write_file(output / "checkpoint_report.json", "{\"checkpoint_hash\":\"" + selected_checkpoint_hash + "\",\"interruptions\":[0,1,3],\"resume_equal\":true,\"tokenizer_hash\":\"" + tokenizer_hash + "\",\"dataset_hash\":\"" + dataset_hash + "}\n");
     write_file(output / "dataset_manifest.json", "{\"tokenizer_hash\":\"" + tokenizer_hash + "\",\"dataset_hash\":\"" + dataset_hash + "\",\"train_tokens\":" + std::to_string(pilot_dataset.train_tokens) + ",\"validation_tokens\":" + std::to_string(pilot_dataset.validation_tokens) + ",\"evaluator_training_records\":0}\n");
-    write_file(output / "resource_profile.json", "{\"selected_model\":\"cct\",\"parameter_count\":" + std::to_string(selected_parameter_count) + ",\"state_memory_bytes\":" + std::to_string(selected_state_memory) + ",\"tokens_per_second\":" + std::to_string(selected_tokens_per_second) + ",\"minimum_tokens_per_second\":100}\n");
-        write_file(output / "metrics.json", "{\"seed_count\":3,\"selected_model\":\"cct\",\"initial_validation_loss\":" + std::to_string(no_training_validation_loss) + ",\"final_validation_loss\":" + std::to_string(final_selected_validation_loss) + ",\"validation_improvement\":" + std::to_string(no_training_validation_loss > 0.0 ? (no_training_validation_loss - final_selected_validation_loss) / no_training_validation_loss : 0.0) + ",\"capability_threshold\":0.01,\"selected_parameter_count\":" + std::to_string(selected_parameter_count) + ",\"baseline_min_parameter_count\":" + std::to_string(minimum_baseline_parameters) + ",\"baseline_max_parameter_count\":" + std::to_string(maximum_baseline_parameters) + ",\"parameter_band_pass\":" + (parameter_band_pass ? "true" : "false") + ",\"status\":\"" + (passed ? "PASS" : "FAIL") + "\"}\n");
+    write_file(output / "resource_profile.json", "{\"selected_model\":\"track1_cct_recurrence\",\"parameter_count\":" + std::to_string(selected_parameter_count) + ",\"state_memory_bytes\":" + std::to_string(selected_state_memory) + ",\"tokens_per_second\":" + std::to_string(selected_tokens_per_second) + ",\"minimum_tokens_per_second\":100}\n");
+        write_file(output / "metrics.json", "{\"seed_count\":3,\"selected_model\":\"track1_cct_recurrence\",\"initial_validation_loss\":" + std::to_string(no_training_validation_loss) + ",\"final_validation_loss\":" + std::to_string(final_selected_validation_loss) + ",\"validation_improvement\":" + std::to_string(no_training_validation_loss > 0.0 ? (no_training_validation_loss - final_selected_validation_loss) / no_training_validation_loss : 0.0) + ",\"capability_threshold\":0.01,\"selected_parameter_count\":" + std::to_string(selected_parameter_count) + ",\"baseline_min_parameter_count\":" + std::to_string(minimum_baseline_parameters) + ",\"baseline_max_parameter_count\":" + std::to_string(maximum_baseline_parameters) + ",\"parameter_band_pass\":" + (parameter_band_pass ? "true" : "false") + ",\"status\":\"" + (passed ? "PASS" : "FAIL") + "\"}\n");
 
     write_file(output / "incident_log.json", "{\"nan_or_inf\":false,\"checkpoint_mismatch\":false,\"cursor_skip_or_duplicate\":false,\"evaluator_contamination\":false,\"cross_document_loss\":false,\"tokenizer_mismatch\":false}\n");
-    write_file(output / "release_record.json", "{\"stage\":11,\"status\":\"" + std::string(passed ? "PASS" : "FAIL") + "\",\"selected_model\":\"cct\",\"tokenizer_hash\":\"" + tokenizer_hash + "\",\"checkpoint_hash\":\"" + selected_checkpoint_hash + "\",\"training_authorized\":false,\"next_stage\":\"12\",\"approval_required\":true}\n");
+    write_file(output / "release_record.json", "{\"stage\":11,\"status\":\"" + std::string(passed ? "PASS" : "FAIL") + "\",\"selected_model\":\"track1_cct_recurrence\",\"tokenizer_hash\":\"" + tokenizer_hash + "\",\"checkpoint_hash\":\"" + selected_checkpoint_hash + "\",\"training_authorized\":false,\"next_stage\":\"12\",\"approval_required\":true}\n");
     std::ostringstream report;
     report << "# Stage 11 Trainable Native NLP Core Gate Report\n\n**Status:** `" << (passed ? "PASS" : "FAIL")
-           << "`  \n**Selected model:** `cct`  \n**Tokenizer hash:** `" << tokenizer_hash << "`  \n**Checkpoint hash:** `" << selected_checkpoint_hash
-           << "`\n\n## Evidence boundary\n\nThis gate exercises a real categorical next-token objective over bounded slices of governed real text and native C++ sources, application-shaped code/JSON/Unicode/separator fixtures, a held-out validation slice, three CCT seeds, matched native controls, analytic/finite-difference gradients, optimizer schedules, checkpoint interruption/resume, cursor identity, contamination rejection, and fail-closed invalid inputs.\n\n## Claim boundary\n\nStage 11 is a small controlled CPU training pilot. It does not establish broad language competence, scale efficiency, factuality, safety, instruction following, retrieval grounding, production usefulness, or general intelligence. `training_authorized` remains false and Stage 12 requires explicit approval.\n";
+           << "`  \n**Selected model:** `track1_cct_recurrence`  \n**Tokenizer hash:** `" << tokenizer_hash << "`  \n**Checkpoint hash:** `" << selected_checkpoint_hash
+           << "`\n\n## Evidence boundary\n\nThis gate exercises a real categorical next-token objective over bounded slices of governed real text and native C++ sources, application-shaped code/JSON/Unicode/separator fixtures, a held-out validation slice, three Track 1 recurrence seeds, matched native controls, analytic/finite-difference gradients, optimizer schedules, checkpoint interruption/resume, cursor identity, contamination rejection, and fail-closed invalid inputs.\n\n## Claim boundary\n\nStage 11 is a small controlled CPU training pilot. It does not establish broad language competence, scale efficiency, factuality, safety, instruction following, retrieval grounding, production usefulness, or general intelligence. `training_authorized` remains false and Stage 12 requires explicit approval.\n";
     write_file(output / "report.md", report.str());
     std::cout << "{\"status\":\"" << (passed ? "PASS" : "FAIL") << "\",\"output\":\"" << output.string() << "\"}\n";
     return passed ? 0 : 1;

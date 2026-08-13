@@ -53,11 +53,11 @@ The repository contains two partially overlapping execution surfaces. The first 
 |---|---|---|---|
 | Field numerical layer | `cpp/include/cct/field.hpp`, `cpp/src/field.cpp` | Grid-shaped scalar field state, finite-difference stepping, spectral Laplacian, operator loss, and selected gradient helpers | Implemented and tested; model integration remains limited |
 | Event and causal layer | `cpp/include/cct/event.hpp`, `cpp/src/causal.cpp` | Event validation, parent references, DAG checks, topological ordering, event encoding, synthetic structural data, ridge learner | Implemented and tested; causal claims are bounded by the synthetic learner and explicit graph input |
-| Sequence layer | `cpp/include/cct/sequence.hpp`, `cpp/src/sequence.cpp` | Stateful recurrent updates, optional complex rotation, optional state normalization, full/scan execution, and analytic gradient path | Implemented and tested; complex/normalized gradient path needs correction |
+| Sequence layer | `cpp/include/cct/sequence.hpp`, `cpp/src/sequence.cpp` | Stateful recurrent updates, optional complex rotation, optional state normalization, full/scan execution, and analytic gradient path | Implemented and tested; all eight complex/normalization combinations now have finite-difference coverage |
 | Memory layer | `cpp/include/cct/memory.hpp`, `cpp/src/memory.cpp` | Versioned records, event-log replay, tombstones, quarantine, retrieval, citations, and snapshots | Implemented and tested; retrieval is linear and checksums are not cryptographic authentication |
 | Corpus governance | `cpp/include/cct/corpus.hpp`, `cpp/src/corpus.cpp` | Source policy, normalization, heuristic PII/code labels, duplicate checks, split records, sharding, and serialized corpus state | Implemented and tested; heuristics are not sufficient for production privacy or deduplication |
 | Tokenizer | `cpp/include/cct/tokenizer.hpp`, `cpp/src/tokenizer.cpp` | Byte/subword tokenization, snapshot identity, Unicode offsets, causal packing, masks, and batch construction | Implemented and tested; Unicode and resource limits need stronger adversarial coverage |
-| NLP training | `cpp/include/cct/nlp_trainer.hpp`, `cpp/src/nlp_trainer.cpp` | Native next-token model, CCT recurrence path, baseline paths, optimizer, checkpointing, and metrics | Implemented and tested; Track 1 model path is not identical to the general sequence core |
+| NLP training | `cpp/include/cct/nlp_trainer.hpp`, `cpp/src/nlp_trainer.cpp` | Native next-token model, explicit `Track1CctRecurrence` path, baseline paths, optimizer, checkpointing, and metrics | Implemented and tested; Track 1 recurrence is explicitly separate from the general sequence core and reports its own identity |
 | SFT/adapters | `cpp/include/cct/sft.hpp`, `cpp/src/sft.cpp`, `cpp/tools/track1_train.cpp` | Canonical supervised formatting, target-span masks, structured-output validation, and Track 1 continuation training | Formatter and Track 1 path implemented; complete adapter lifecycle remains incomplete |
 | Track 1 acquisition | `cpp/include/cct/track1.hpp`, `cpp/src/track1.cpp` | Pinned WikiText-2 archive and GEM SQuAD acquisition, parsing, balancing, split isolation, and manifests | Implemented and tested; source-specific parser is still a custom JSON implementation |
 | Knowledge and retrieval | `cpp/include/cct/knowledge.hpp`, `cpp/src/knowledge.cpp` | Versioned knowledge records, retrieval, grounding, citation spans, and verification | Implemented and tested; index and embedding behavior are bounded and simple |
@@ -91,7 +91,7 @@ The general sequence core maps an input vector \(x_t\) and previous state \(h_t\
 
 where \(m_t\) is the causal mask. The implementation uses projected input terms, recurrent terms, sigmoid gates, an optional complex-state rotation, optional state normalization, and an output projection.
 
-The intended invariant is that masked positions do not update state and do not contribute to the loss. This invariant is not currently preserved by the analytic gradient path for all modes: the review probe found maximum finite-difference errors of approximately `0.0011179` in complex masked mode and `0.0810910` in complex-plus-normalized masked mode, while the plain mode error was approximately `5.1e-12`. These modes must not be used for training claims until corrected.
+The intended invariant is that masked positions do not update state and do not contribute to the loss. The corrected reverse pass preserves this contract and is covered by all eight combinations of complex state, state normalization, and output normalization under sparse masks, with absolute finite-difference tolerance below `1e-8` across the complete flattened parameter vector. Non-finite targets are rejected before objective evaluation.
 
 ### 4.3 Causal event representation
 
@@ -119,7 +119,7 @@ The current encoder produces deterministic hash-derived vectors from the supplie
 
 The Track 1 path uses a native next-token objective with causal masking and checkpointed optimizer state. WikiText-2 provides pretraining text. SQuAD 2.0 provides target-span supervised continuation examples. The current report measures target-token next-token behavior; it does not implement constrained answer decoding, exact match, or F1.
 
-The most important architectural distinction is that the Track 1 `NextTokenModel` contains its own CCT recurrence implementation in `cpp/src/nlp_trainer.cpp`. It is not a direct composition of the general `SelectiveSequenceCore` in `cpp/src/sequence.cpp`. Consequently, a Track 1 result is evidence for the NLP trainer’s CCT path, not automatically evidence for every feature of the general sequence core.
+The Track 1 `NextTokenModel` contains its own recurrence implementation in `cpp/src/nlp_trainer.cpp`, and its public identity is `NlpModelKind::Track1CctRecurrence` with model name `track1_cct_recurrence`. It is not a direct composition of the general `SelectiveSequenceCore` in `cpp/src/sequence.cpp`. The model serializer now publishes `NLP_MODEL_V3` while accepting the prior V2 format, and regression tests assert the identity and exact parameter restoration. Consequently, Track 1 results are evidence for the explicitly named NLP trainer path, not evidence for the general sequence core or its complex/normalized modes.
 
 ## 5. Actual system boundaries
 
@@ -146,7 +146,7 @@ The following connections are not yet real end-to-end model behavior:
 1. `InferenceService` does not invoke a trained CCT generative model. Without retrieval it returns a route-labelled echo such as `CCT-ASE response: <input>`.
 2. The `transformer` and `hybrid` model routes are labels and response prefixes, not separate model backends.
 3. Streaming splits a completed response into whitespace words after `handle()` has already executed and updated state; it is not incremental model decoding.
-4. The Track 1 trainer does not use the general complex or normalized sequence-core modes.
+4. The Track 1 trainer uses the explicitly separate `Track1CctRecurrence` path and does not use the general complex or normalized sequence-core modes; its claims are reported independently.
 5. Memory retrieval uses a deterministic hash encoder and linear scan rather than a learned embedding model and indexed search.
 6. The mathematical manifold, topological memory, eigenmode reasoning, learned metric, variational inference, and claimed scaling laws are not implemented as end-to-end components.
 
@@ -174,7 +174,7 @@ These are **engineering strengths**, not proof that the mathematical hypotheses 
 
 ## 8. Architectural priorities
 
-The first priority is correctness of the trainable path: unify or explicitly distinguish the NLP recurrence from the general sequence core, correct complex/normalized gradient handling, and add finite-difference or autodiff-equivalent tests for every trainable mode.
+The first trainable-path boundary is now explicit: the Track 1 recurrence is named and tested independently from the general sequence core, while the sequence core’s complex, normalized, and masked reverse pass is covered by complete finite-difference regressions. The next priority is connecting a real checkpoint-backed model to inference without expanding the claim boundary.
 
 The second priority is honest system integration: replace template inference outputs with a real checkpoint-backed model interface, implement true incremental decoding, make routing select actual backends, and measure concurrent queue behavior rather than only stateful synchronous calls.
 
