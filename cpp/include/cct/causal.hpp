@@ -13,6 +13,7 @@ namespace cct {
 
 enum class EventMode : std::uint8_t { Observed = 0, DoIntervention = 1, Counterfactual = 2 };
 enum class ProvenanceKind : std::uint8_t { Generated = 0, Observed = 1, Intervened = 2, Retrieved = 3, Corrected = 4 };
+enum class TemporalCausalityPolicy : std::uint8_t { StrictEarlier = 0, AllowSameTimestamp = 1 };
 enum class UncertaintyKind : std::uint8_t { Known = 0, Estimated = 1, Unknown = 2, Conflicting = 3 };
 
 using EventId = std::uint64_t;
@@ -50,6 +51,7 @@ struct CausalStoreConfig {
     std::vector<double> coordinate_min{-1.0, -1.0};
     std::vector<double> coordinate_max{1.0, 1.0};
     bool allow_unresolved_parents = true;
+    TemporalCausalityPolicy temporal_policy = TemporalCausalityPolicy::StrictEarlier;
 };
 
 class CausalGraphError : public std::runtime_error {
@@ -57,6 +59,16 @@ public:
     using std::runtime_error::runtime_error;
 };
 
+/**
+ * Thread-safety contract: CausalEventStore has no internal mutex. Callers must
+ * externally synchronize inserts, graph queries, deterministic exports, and
+ * snapshot save/load when the same instance may be mutated. Returned events and
+ * configuration are borrowed references and must not overlap mutation. A store
+ * can be shared by concurrent readers only while it is quiescent.
+ * Failure contract: temporal, parent, cycle, and snapshot violations throw
+ * CausalGraphError; malformed or oversized snapshots are rejected before state
+ * publication.
+ */
 class CausalEventStore {
 public:
     explicit CausalEventStore(CausalStoreConfig config = {});
@@ -177,6 +189,7 @@ struct CausalDataset {
     std::vector<CounterfactualCase> counterfactual_cases;
     StructuralModelTruth evaluator_truth;
     std::uint64_t dataset_fingerprint = 0;
+    bool invalid_fixture = false;
 };
 
 struct SyntheticCausalConfig {

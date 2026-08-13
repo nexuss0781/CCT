@@ -22,8 +22,24 @@ bool has_item(const std::vector<T>& values, Predicate predicate) {
     return std::find_if(values.begin(), values.end(), predicate) != values.end();
 }
 
+constexpr std::size_t kMaximumSerializedBytes = 64U * 1024U * 1024U;
+constexpr std::size_t kMaximumCollectionItems = 1'000'000U;
+constexpr std::size_t kMaximumStringItems = 4096U;
+constexpr std::size_t kMaximumStringBytes = 4U * 1024U * 1024U;
+
 void require_new_id(const std::vector<std::string>& ids, const std::string& id) {
     require(!id.empty() && !contains(ids, id), "empty or duplicate registry id");
+}
+
+void require_serialized_size(const std::string& text, const std::string& format) {
+    require(text.size() <= kMaximumSerializedBytes, format + " exceeds byte budget");
+}
+
+std::size_t read_count(std::istringstream& input, const std::string& field, std::size_t maximum = kMaximumCollectionItems) {
+    std::size_t count = 0;
+    require(static_cast<bool>(input >> count), field + " count is invalid");
+    require(count <= maximum, field + " count exceeds budget");
+    return count;
 }
 
 std::string quote(const std::string& value) {
@@ -40,11 +56,12 @@ std::string serialize_strings(const std::vector<std::string>& values) {
 }
 
 std::vector<std::string> deserialize_strings(std::istringstream& input) {
-    std::size_t count = 0;
-    input >> count;
+    const auto count = read_count(input, "string vector", kMaximumStringItems);
     std::vector<std::string> values(count);
-    for (auto& value : values) input >> std::quoted(value);
-    require(static_cast<bool>(input), "invalid string vector serialization");
+    for (auto& value : values) {
+        require(static_cast<bool>(input >> std::quoted(value)), "invalid string vector serialization");
+        require(value.size() <= kMaximumStringBytes, "string value exceeds byte budget");
+    }
     return values;
 }
 
@@ -185,13 +202,13 @@ std::string ProductionRegistry::serialize() const {
 }
 
 ProductionRegistry ProductionRegistry::deserialize(const std::string& text) {
+    require_serialized_size(text, "production registry");
     std::istringstream input(text);
     std::string header;
     std::getline(input, header);
     require(header == "CCT_PRODUCTION_REGISTRY_V1", "invalid production registry header");
     ProductionRegistry registry;
-    std::size_t count = 0;
-    input >> count;
+    auto count = read_count(input, "use-case collection");
     for (std::size_t index = 0; index < count; ++index) {
         ProductUseCase item;
         unsigned int kind = 0;
@@ -202,7 +219,7 @@ ProductionRegistry ProductionRegistry::deserialize(const std::string& text) {
         input >> item.human_review_required >> std::quoted(item.owner) >> std::quoted(item.expiration);
         registry.add_use_case(item);
     }
-    input >> count;
+    count = read_count(input, "threat collection");
     for (std::size_t index = 0; index < count; ++index) {
         ThreatControl item;
         unsigned int severity = 0;
@@ -211,7 +228,7 @@ ProductionRegistry ProductionRegistry::deserialize(const std::string& text) {
         item.severity = static_cast<RiskSeverity>(severity);
         registry.add_threat(item);
     }
-    input >> count;
+    count = read_count(input, "data-policy collection");
     for (std::size_t index = 0; index < count; ++index) {
         DataPolicy item;
         unsigned int data_class = 0;
@@ -221,7 +238,7 @@ ProductionRegistry ProductionRegistry::deserialize(const std::string& text) {
         item.data_class = static_cast<DataClass>(data_class);
         registry.add_data_policy(item);
     }
-    input >> count;
+    count = read_count(input, "experiment collection");
     for (std::size_t index = 0; index < count; ++index) {
         ExperimentIdentity item;
         input >> std::quoted(item.experiment_id) >> std::quoted(item.config_hash) >> std::quoted(item.data_manifest_hash) >>
@@ -229,7 +246,7 @@ ProductionRegistry ProductionRegistry::deserialize(const std::string& text) {
             std::quoted(item.status);
         registry.add_experiment(item);
     }
-    input >> count;
+    count = read_count(input, "evaluation collection");
     for (std::size_t index = 0; index < count; ++index) {
         EvaluationSpec item;
         input >> std::quoted(item.evaluation_id) >> std::quoted(item.task_id) >> std::quoted(item.split_id);
@@ -239,7 +256,7 @@ ProductionRegistry ProductionRegistry::deserialize(const std::string& text) {
         input >> std::quoted(item.evaluator_owner) >> item.evaluator_only;
         registry.add_evaluation(item);
     }
-    input >> count;
+    count = read_count(input, "artifact collection");
     for (std::size_t index = 0; index < count; ++index) {
         ArtifactManifest item;
         input >> std::quoted(item.stage_id) >> std::quoted(item.commit) >> std::quoted(item.configuration_hash) >>
@@ -249,7 +266,7 @@ ProductionRegistry ProductionRegistry::deserialize(const std::string& text) {
         input >> std::quoted(item.status);
         registry.add_artifact(item);
     }
-    input >> count;
+    count = read_count(input, "release collection");
     for (std::size_t index = 0; index < count; ++index) {
         ReleaseRecord item;
         unsigned int decision = 0;
@@ -320,12 +337,12 @@ std::string ProductionAudit::serialize() const {
 }
 
 ProductionAudit ProductionAudit::deserialize(const std::string& text) {
+    require_serialized_size(text, "production audit");
     std::istringstream input(text);
     std::string header;
     std::getline(input, header);
     require(header == "CCT_PRODUCTION_AUDIT_V1", "invalid production audit header");
-    std::size_t count = 0;
-    input >> count;
+    const auto count = read_count(input, "audit collection");
     ProductionAudit audit;
     for (std::size_t index = 0; index < count; ++index) {
         AuditRecord record;

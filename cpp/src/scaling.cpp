@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <limits>
@@ -13,8 +14,19 @@
 namespace cct {
 namespace {
 
+constexpr std::uintmax_t kMaximumCheckpointBytes = 64U * 1024U * 1024U;
+constexpr std::size_t kMaximumModelDimension = 4096U;
+constexpr std::size_t kMaximumParameterCount = 8'000'000U;
+
 void require(bool condition, const std::string& message) {
     if (!condition) throw std::runtime_error(message);
+}
+
+std::size_t checked_file_size(const std::string& path) {
+    std::error_code error;
+    const auto size = std::filesystem::file_size(path, error);
+    require(!error && size <= kMaximumCheckpointBytes, "Stage 5 checkpoint exceeds byte budget");
+    return static_cast<std::size_t>(size);
 }
 
 std::size_t argmax(const std::vector<double>& values) {
@@ -183,6 +195,47 @@ void Stage5LanguageModel::train(
     manifest_fingerprint_ = config.manifest_fingerprint;
 }
 
+void Stage5LanguageModel::train_reference_finite_difference(
+    const std::vector<std::vector<std::vector<double>>>& input_batch,
+    const std::vector<std::vector<std::vector<double>>>& target_batch,
+    const std::vector<std::vector<std::uint8_t>>& masks,
+    const Stage5TrainConfig& config,
+    const double finite_difference_epsilon) {
+    require(input_batch.size() == target_batch.size() && !input_batch.empty(), "invalid Stage 5 reference training batch");
+    require(config.epochs > 0U && config.learning_rate > 0.0 && config.clip_norm > 0.0 &&
+                finite_difference_epsilon > 0.0 && std::isfinite(finite_difference_epsilon),
+            "invalid Stage 5 reference training configuration");
+    const auto batch_masks = masks.empty() ? std::vector<std::vector<std::uint8_t>>(input_batch.size()) : masks;
+    require(batch_masks.size() == input_batch.size(), "Stage 5 reference mask batch size mismatch");
+    for (std::size_t epoch = 0; epoch < config.epochs; ++epoch) {
+        for (std::size_t batch = 0; batch < input_batch.size(); ++batch) {
+            const auto original = parameter_vector();
+            std::vector<double> gradients(original.size(), 0.0);
+            for (std::size_t index = 0; index < original.size(); ++index) {
+                auto plus = original;
+                auto minus = original;
+                plus[index] += finite_difference_epsilon;
+                minus[index] -= finite_difference_epsilon;
+                set_parameter_vector(plus);
+                const auto plus_loss = evaluate({input_batch[batch]}, {target_batch[batch]}, {batch_masks[batch]}).mean_squared_loss;
+                set_parameter_vector(minus);
+                const auto minus_loss = evaluate({input_batch[batch]}, {target_batch[batch]}, {batch_masks[batch]}).mean_squared_loss;
+                gradients[index] = (plus_loss - minus_loss) / (2.0 * finite_difference_epsilon);
+            }
+            set_parameter_vector(original);
+            double norm_squared = 0.0;
+            for (const auto gradient : gradients) norm_squared += gradient * gradient;
+            const auto scale = std::min(1.0, config.clip_norm / std::max(std::sqrt(norm_squared), 1e-12));
+            auto updated = original;
+            for (std::size_t index = 0; index < updated.size(); ++index) updated[index] -= config.learning_rate * scale * gradients[index];
+            set_parameter_vector(updated);
+            ++optimizer_step_;
+        }
+    }
+    data_cursor_ = config.data_cursor + static_cast<std::uint64_t>(config.epochs * input_batch.size());
+    manifest_fingerprint_ = config.manifest_fingerprint;
+}
+
 std::size_t Stage5LanguageModel::parameter_count() const noexcept {
     return baseline_ ? baseline_->parameter_count() : cct_->parameter_count();
 }
@@ -212,6 +265,7 @@ void Stage5LanguageModel::save_checkpoint(const std::string& path) const {
 }
 
 Stage5LanguageModel Stage5LanguageModel::load_checkpoint(const std::string& path) {
+    static_cast<void>(checked_file_size(path));
     std::ifstream stream(path);
     require(static_cast<bool>(stream), "could not read Stage 5 checkpoint");
     std::string header;
@@ -223,9 +277,13 @@ Stage5LanguageModel Stage5LanguageModel::load_checkpoint(const std::string& path
     Stage5LanguageModel* unused = nullptr;
     (void)unused;
     stream >> kind >> config.input_dim >> config.hidden_dim >> config.output_dim >> config.seed;
+    require(config.input_dim > 0U && config.input_dim <= kMaximumModelDimension && config.hidden_dim > 0U &&
+                config.hidden_dim <= kMaximumModelDimension && config.output_dim > 0U && config.output_dim <= kMaximumModelDimension,
+            "Stage 5 checkpoint dimensions exceed budget");
     config.kind = static_cast<Stage5ModelKind>(kind);
     Stage5LanguageModel model(config);
     stream >> model.optimizer_step_ >> model.data_cursor_ >> model.manifest_fingerprint_ >> parameter_count;
+    require(parameter_count > 0U && parameter_count <= kMaximumParameterCount, "Stage 5 checkpoint parameter count exceeds budget");
     std::vector<double> parameters(parameter_count, 0.0);
     for (auto& value : parameters) stream >> value;
     require(static_cast<bool>(stream), "truncated Stage 5 checkpoint");

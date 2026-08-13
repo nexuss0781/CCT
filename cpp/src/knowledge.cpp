@@ -26,7 +26,8 @@ std::string hex_encode(const std::string& value) {
     static constexpr char digits[] = "0123456789abcdef";
     std::string output;
     output.reserve(value.size() * 2U);
-    for (const unsigned char byte : value) {
+    for (const char raw_byte : value) {
+        const auto byte = static_cast<unsigned char>(raw_byte);
         output.push_back(digits[byte >> 4U]);
         output.push_back(digits[byte & 0x0fU]);
     }
@@ -207,7 +208,10 @@ std::int64_t parse_time_checked(const std::string& value, const std::string& fie
 std::string lower_ascii(const std::string& value) {
     std::string output;
     output.reserve(value.size());
-    for (const unsigned char character : value) output.push_back(static_cast<char>(std::tolower(character)));
+    for (const char raw_character : value) {
+        const auto character = static_cast<unsigned char>(raw_character);
+        output.push_back(static_cast<char>(std::tolower(character)));
+    }
     return output;
 }
 
@@ -332,7 +336,8 @@ void KnowledgePlane::rebuild() {
 std::vector<std::string> KnowledgePlane::terms(const std::string& text) {
     std::vector<std::string> output;
     std::string current;
-    for (const unsigned char character : lower_ascii(text)) {
+    for (const char raw_character : lower_ascii(text)) {
+        const auto character = static_cast<unsigned char>(raw_character);
         if (std::isalnum(character) != 0U || character == '_') current.push_back(static_cast<char>(character));
         else if (!current.empty()) { output.push_back(current); current.clear(); }
     }
@@ -359,7 +364,11 @@ std::vector<double> KnowledgePlane::embed(const std::string& text) const {
     std::vector<double> output(config_.embedding_dimension, 0.0);
     for (const auto& term : terms(text)) {
         std::uint64_t hash = 1469598103934665603ULL;
-        for (const unsigned char byte : term) { hash ^= byte; hash *= 1099511628211ULL; }
+        for (const char raw_byte : term) {
+            const auto byte = static_cast<unsigned char>(raw_byte);
+            hash ^= byte;
+            hash *= 1099511628211ULL;
+        }
         const auto index = static_cast<std::size_t>(hash % config_.embedding_dimension);
         output[index] += 1.0;
     }

@@ -64,6 +64,7 @@ struct NlpOptimizerConfig {
     double clip_norm = 1.0;
     std::size_t warmup_steps = 2;
     std::size_t total_steps = 100;
+    std::size_t validation_interval_steps = 1;
 };
 
 struct NlpEvaluation {
@@ -93,6 +94,9 @@ struct NlpTrainingPoint {
     double validation_perplexity = 0.0;
     double gradient_norm = 0.0;
     std::size_t token_count = 0;
+    bool validation_performed = false;
+    double training_elapsed_seconds = 0.0;
+    double validation_elapsed_seconds = 0.0;
 };
 
 struct NlpTrainerState {
@@ -146,6 +150,7 @@ private:
 struct NlpCheckpointInfo {
     std::string tokenizer_hash;
     std::string dataset_hash;
+    std::string training_contract_hash;
     std::string checkpoint_hash;
     std::size_t optimizer_step = 0;
     std::size_t data_cursor = 0;
@@ -175,6 +180,7 @@ private:
     NlpOptimizerConfig optimizer_config_;
     std::string tokenizer_hash_;
     std::string dataset_hash_;
+    std::string training_contract_hash_;
     NlpTrainerState state_;
     std::vector<double> first_moment_;
     std::vector<double> second_moment_;

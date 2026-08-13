@@ -337,7 +337,7 @@ void test_concurrent_callers_cache_bound_and_state_accounting() {
 void test_faults_circuit_and_slo_observability() {
     InferenceConfig config;
     config.circuit_failure_threshold = 2U;
-    config.circuit_reset_milliseconds = 1;
+    config.circuit_reset_milliseconds = 1000;
     KnowledgePlane plane;
     plane.ingest(knowledge_record("policy", "tenant-a", "The retention policy is seven days."));
     InferenceService service(config, &plane);
@@ -353,7 +353,7 @@ void test_faults_circuit_and_slo_observability() {
     const auto circuit = service.handle(input, auth());
     require(circuit.error_code == "CIRCUIT_OPEN" && service.circuit_open(), "circuit breaker did not reject after threshold");
     service.clear_fault();
-    std::this_thread::sleep_for(std::chrono::milliseconds(3));
+    std::this_thread::sleep_for(std::chrono::milliseconds(1100));
     auto recovered = request("fault-recovered");
     recovered.retrieval_policy = "none";
     const auto response = service.handle(recovered, auth());

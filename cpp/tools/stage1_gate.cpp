@@ -124,7 +124,7 @@ Check run_check(const std::string& name, const std::function<std::string()>& fun
 
 std::string transform_check() {
     std::vector<double> field(32 * 24, 0.0);
-    for (std::size_t index = 0; index < field.size(); ++index) field[index] = std::sin(0.13 * index) + std::cos(0.017 * index);
+    for (std::size_t index = 0; index < field.size(); ++index) field[index] = std::sin(0.13 * static_cast<double>(index)) + std::cos(0.017 * static_cast<double>(index));
     const auto error = cct::fft_round_trip_error(field, {32, 24});
     require(error < 2e-12, "transform error exceeded 2e-12");
     std::ostringstream details;
@@ -171,10 +171,10 @@ std::string manufactured_check() {
     const auto phi0 = cct::manufactured_mode({64}, {1.0}, {4});
     const auto omega = cct::manufactured_mode_frequency({64}, {1.0}, {4}, 1.0);
     std::vector<double> psi0(64, 0.0);
-    for (std::size_t index = 0; index < 64; ++index) psi0[index] = -omega * std::cos(2.0 * kPi * 4.0 * index / 64.0);
+    for (std::size_t index = 0; index < 64; ++index) psi0[index] = -omega * std::cos(2.0 * kPi * 4.0 * static_cast<double>(index) / 64.0);
     const auto result = solver.rollout(solver.initialize(phi0, psi0), std::vector<std::vector<double>>(20, zeros(64)));
     std::vector<double> expected(64, 0.0);
-    for (std::size_t index = 0; index < 64; ++index) expected[index] = std::sin(2.0 * kPi * 4.0 * index / 64.0 - omega * result.time.back());
+    for (std::size_t index = 0; index < 64; ++index) expected[index] = std::sin(2.0 * kPi * 4.0 * static_cast<double>(index) / 64.0 - omega * result.time.back());
     const auto error = max_difference(result.phi.back(), expected);
     require(error < 2e-3, "manufactured solution error exceeded 2e-3");
     std::ostringstream details;
@@ -189,11 +189,11 @@ std::string convergence_check() {
         const auto phi0 = cct::manufactured_mode({64}, {1.0}, {4});
         const auto omega = cct::manufactured_mode_frequency({64}, {1.0}, {4}, 1.0);
         std::vector<double> psi0(64, 0.0);
-        for (std::size_t index = 0; index < 64; ++index) psi0[index] = -omega * std::cos(2.0 * kPi * 4.0 * index / 64.0);
+        for (std::size_t index = 0; index < 64; ++index) psi0[index] = -omega * std::cos(2.0 * kPi * 4.0 * static_cast<double>(index) / 64.0);
         const auto steps = static_cast<std::size_t>(std::llround(1.0 / dt));
         const auto result = solver.rollout(solver.initialize(phi0, psi0), std::vector<std::vector<double>>(steps, zeros(64)));
         std::vector<double> expected(64, 0.0);
-        for (std::size_t index = 0; index < 64; ++index) expected[index] = std::sin(2.0 * kPi * 4.0 * index / 64.0 - omega * result.time.back());
+        for (std::size_t index = 0; index < 64; ++index) expected[index] = std::sin(2.0 * kPi * 4.0 * static_cast<double>(index) / 64.0 - omega * result.time.back());
         double sum = 0.0;
         for (std::size_t index = 0; index < 64; ++index) {
             const auto error = result.phi.back()[index] - expected[index];
@@ -214,7 +214,7 @@ std::string energy_check() {
     const auto phi0 = cct::manufactured_mode({64}, {1.0}, {1});
     const auto omega = cct::manufactured_mode_frequency({64}, {1.0}, {1}, 1.0);
     std::vector<double> psi0(64, 0.0);
-    for (std::size_t index = 0; index < 64; ++index) psi0[index] = -omega * std::cos(2.0 * kPi * index / 64.0);
+    for (std::size_t index = 0; index < 64; ++index) psi0[index] = -omega * std::cos(2.0 * kPi * static_cast<double>(index) / 64.0);
     const auto result = solver.rollout(solver.initialize(phi0, psi0), std::vector<std::vector<double>>(400, zeros(64)));
     double first = 0.0;
     double minimum = 1e300;
@@ -275,7 +275,7 @@ std::string gradient_check() {
 
 std::string boundaries_check() {
     std::vector<double> initial(32, 0.0);
-    for (std::size_t index = 0; index < initial.size(); ++index) initial[index] = std::sin(kPi * index / 31.0);
+    for (std::size_t index = 0; index < initial.size(); ++index) initial[index] = std::sin(kPi * static_cast<double>(index) / 31.0);
     const auto dirichlet = FiniteDifferenceSolver(config(32, 0.1, Method::Leapfrog, Boundary::Dirichlet));
     const auto dirichlet_result = dirichlet.rollout(dirichlet.initialize(initial), std::vector<std::vector<double>>(20, zeros(32)));
     double dirichlet_residual = 0.0;

@@ -45,7 +45,8 @@ void require(const bool condition, const std::string& message) {
 
 std::string escape_json(const std::string& value) {
     std::ostringstream output;
-    for (const unsigned char character : value) {
+    for (const char raw_character : value) {
+        const auto character = static_cast<unsigned char>(raw_character);
         if (character == '"' || character == '\\') output << '\\';
         if (character == '\n') output << "\\n";
         else if (character == '\r') output << "\\r";
@@ -205,12 +206,12 @@ CandidateMetric evaluate_candidate(const Tokenizer& tokenizer, const std::vector
     }
     const auto packed = CausalBatchPacker::pack(encoded);
     const auto padded = CausalBatchPacker::pad(encoded);
-    metric.packed_utilization = packed.input_ids.empty() ? 0.0 : static_cast<double>(metric.token_count) / packed.input_ids.size();
+    metric.packed_utilization = packed.input_ids.empty() ? 0.0 : static_cast<double>(metric.token_count) / static_cast<double>(packed.input_ids.size());
     padded_slots = padded.input_ids.size() * padded.input_ids.front().size();
-    metric.padded_utilization = padded_slots == 0U ? 0.0 : static_cast<double>(metric.token_count) / padded_slots;
+    metric.padded_utilization = padded_slots == 0U ? 0.0 : static_cast<double>(metric.token_count) / static_cast<double>(padded_slots);
     require(packed_loss_checksum(packed) == padded_loss_checksum(padded), "candidate packed/padded checksum mismatch");
-    metric.compression_ratio = metric.token_count == 0U ? 0.0 : static_cast<double>(metric.source_bytes) / metric.token_count;
-    metric.fallback_rate = metric.token_count == 0U ? 0.0 : static_cast<double>(metric.fallback_count) / metric.token_count;
+    metric.compression_ratio = metric.token_count == 0U ? 0.0 : static_cast<double>(metric.source_bytes) / static_cast<double>(metric.token_count);
+    metric.fallback_rate = metric.token_count == 0U ? 0.0 : static_cast<double>(metric.fallback_count) / static_cast<double>(metric.token_count);
     metric.throughput = tokenizer.measure_throughput(documents, 3);
     metric.snapshot_hash = tokenizer.snapshot_hash();
     require(metric.throughput.bytes_per_second >= 10000.0, "candidate throughput is below the hard gate threshold");
@@ -531,7 +532,7 @@ int main(int argc, char** argv) {
     metrics_json << "{\"candidate_count\":" << metrics.size() << ",\"selected_candidate\":\"hybrid\",\"selected_compression_ratio\":"
                  << (selected_available ? metrics[2].compression_ratio : 0.0) << ",\"selected_offset_coverage\":"
                  << (selected_available && metrics[2].token_count != 0U ? static_cast<double>(metrics[2].offset_covered_tokens) /
-                                                                            metrics[2].token_count
+                                                                            static_cast<double>(metrics[2].token_count)
                                                                           : 0.0)
                  << ",\"efficiency_threshold_bytes_per_second\":10000,\"selected_efficiency_threshold\":1.05,\"status\":\""
                  << (passed ? "PASS" : "FAIL") << "\"}\n";

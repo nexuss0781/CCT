@@ -15,6 +15,11 @@
 namespace cct {
 namespace {
 
+constexpr std::size_t kMaximumSftSerializedBytes = 64U * 1024U * 1024U;
+constexpr std::size_t kMaximumSftExamples = 1'000'000U;
+constexpr std::size_t kMaximumSftFields = 32U;
+constexpr std::size_t kMaximumSftFieldBytes = 4U * 1024U * 1024U;
+
 void require(const bool condition, const std::string& message) {
     if (!condition) throw SftError(message);
 }
@@ -23,7 +28,8 @@ std::string hex_encode(const std::string& value) {
     static constexpr char digits[] = "0123456789abcdef";
     std::string output;
     output.reserve(value.size() * 2U);
-    for (const unsigned char byte : value) {
+    for (const char raw_byte : value) {
+        const auto byte = static_cast<unsigned char>(raw_byte);
         output.push_back(digits[byte >> 4U]);
         output.push_back(digits[byte & 0x0fU]);
     }
@@ -205,19 +211,26 @@ std::string SftManifest::serialize() const {
 }
 
 SftManifest SftManifest::deserialize(const std::string& serialized) {
+    require(serialized.size() <= kMaximumSftSerializedBytes, "SFT manifest exceeds byte budget");
     std::istringstream input(serialized);
     std::string line;
     require(std::getline(input, line) && line == "CCT_SFT_MANIFEST_V1", "unsupported SFT manifest version");
     SftManifest manifest;
     std::string declared_hash;
+    std::size_t parsed_lines = 0U;
     while (std::getline(input, line)) {
+        require(++parsed_lines <= kMaximumSftExamples + 2U, "SFT manifest line count exceeds budget");
+        require(line.size() <= kMaximumSftFieldBytes, "SFT manifest line exceeds field budget");
         if (line.empty()) continue;
         const auto fields = split(line, '|');
+        require(fields.size() <= kMaximumSftFields, "SFT manifest field count exceeds budget");
+        for (const auto& field_value : fields) require(field_value.size() <= kMaximumSftFieldBytes, "SFT manifest field exceeds budget");
         require(!fields.empty(), "malformed SFT manifest line");
         if (fields[0] == "H") {
             require(fields.size() == 2U, "malformed SFT manifest header");
             declared_hash = hex_decode(fields[1]);
         } else if (fields[0] == "E") {
+            require(manifest.examples.size() < kMaximumSftExamples, "SFT example count exceeds budget");
             require(fields.size() == 21U, "malformed SFT example field count");
             std::vector<std::string> values(fields.begin() + 1, fields.end());
             SftInstructionExample example;
@@ -310,12 +323,18 @@ std::vector<double> SftModel::features(const std::string& input) const {
     if (config_.feature_dim > 1U) result[1] = std::min(4.0, static_cast<double>(input.size()) / 16.0);
     if (config_.feature_dim > 2U) {
         std::size_t letters = 0;
-        for (const unsigned char byte : input) if ((byte >= 'A' && byte <= 'Z') || (byte >= 'a' && byte <= 'z')) ++letters;
+        for (const char raw_byte : input) {
+            const auto byte = static_cast<unsigned char>(raw_byte);
+            if ((byte >= 'A' && byte <= 'Z') || (byte >= 'a' && byte <= 'z')) ++letters;
+        }
         result[2] = input.empty() ? 0.0 : static_cast<double>(letters) / static_cast<double>(input.size());
     }
     if (config_.feature_dim > 3U) {
         std::size_t digits = 0;
-        for (const unsigned char byte : input) if (byte >= '0' && byte <= '9') ++digits;
+        for (const char raw_byte : input) {
+            const auto byte = static_cast<unsigned char>(raw_byte);
+            if (byte >= '0' && byte <= '9') ++digits;
+        }
         result[3] = input.empty() ? 0.0 : static_cast<double>(digits) / static_cast<double>(input.size());
     }
     if (config_.feature_dim > 4U) result[4] = input.find("positive") != std::string::npos || input.find("invoice") != std::string::npos ? 1.0 : (input.find('{') != std::string::npos || input.find('[') != std::string::npos ? 0.5 : 0.0);
@@ -323,7 +342,11 @@ std::vector<double> SftModel::features(const std::string& input) const {
     if (config_.feature_dim > 6U) result[6] = input.find("deny") != std::string::npos || input.find("secret") != std::string::npos ? 1.0 : 0.0;
     if (config_.feature_dim > 7U) {
         std::uint64_t hash = 1469598103934665603ULL;
-        for (const unsigned char byte : input) { hash ^= byte; hash *= 1099511628211ULL; }
+        for (const char raw_byte : input) {
+            const auto byte = static_cast<unsigned char>(raw_byte);
+            hash ^= byte;
+            hash *= 1099511628211ULL;
+        }
         result[7] = static_cast<double>(hash % 1000U) / 1000.0;
     }
     return result;
@@ -617,16 +640,19 @@ std::string SftAdapterRegistry::serialize() const {
 }
 
 SftAdapterRegistry SftAdapterRegistry::deserialize(const std::string& serialized) {
+    require(serialized.size() <= kMaximumSftSerializedBytes, "SFT registry exceeds byte budget");
     std::istringstream input(serialized);
     std::string version;
     std::size_t count = 0;
     input >> version >> count;
     require(version == "CCT_SFT_REGISTRY_V1", "unsupported SFT registry version");
+    require(count <= kMaximumSftExamples, "SFT adapter count exceeds budget");
     std::string line;
     std::getline(input, line);
     SftAdapterRegistry registry;
     for (std::size_t index = 0; index < count; ++index) {
         require(static_cast<bool>(std::getline(input, line)), "truncated SFT registry");
+        require(line.size() <= kMaximumSftFieldBytes * 2U, "SFT adapter payload exceeds field budget");
         std::istringstream adapter_stream(hex_decode(line));
         registry.register_adapter(SftAdapter::load(adapter_stream));
     }

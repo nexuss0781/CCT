@@ -87,6 +87,13 @@ void test_manifest_roundtrip_and_barriers() {
         evaluator_rejected = true;
     }
     require(evaluator_rejected, "evaluator-only preference leakage was accepted");
+    bool oversized_rejected = false;
+    try {
+        static_cast<void>(PreferenceManifest::deserialize("CCT_PREFERENCE_MANIFEST_V1\nH|00\nR|rubric|v1|4097|criterion|0|0\n"));
+    } catch (const PreferenceError&) {
+        oversized_rejected = true;
+    }
+    require(oversized_rejected, "oversized preference rubric criterion count was accepted");
 }
 
 void test_dpo_learning_and_resume() {

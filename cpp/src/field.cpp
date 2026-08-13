@@ -162,11 +162,27 @@ std::size_t cell_count(const std::vector<std::size_t>& shape) {
 }
 
 double cfl_limit(const SolverConfig& config) {
-    if (config.wave_speed <= 0.0 || config.spacing.empty()) {
-        throw NumericalError("wave speed and spacing must be positive");
+    if (config.wave_speed <= 0.0 || config.spacing.empty() || config.shape.size() != config.spacing.size() ||
+        std::any_of(config.spacing.begin(), config.spacing.end(), [](double value) { return !std::isfinite(value) || value <= 0.0; })) {
+        throw NumericalError("wave speed, shape, and spacing must be positive and finite");
     }
     const auto minimum = *std::min_element(config.spacing.begin(), config.spacing.end());
     return minimum / (config.wave_speed * std::sqrt(static_cast<double>(config.shape.size())));
+}
+
+double global_stability_limit(const SolverConfig& config) {
+    if (!std::isfinite(config.maximum_abs_potential) || config.maximum_abs_potential < 0.0) {
+        throw StabilityError("maximum absolute potential must be finite and non-negative");
+    }
+    const auto spatial_term = std::accumulate(config.spacing.begin(), config.spacing.end(), 0.0, [&](const double sum, const double spacing) {
+        if (!std::isfinite(spacing) || spacing <= 0.0) throw StabilityError("spacing must be finite and positive");
+        return sum + (kPi * kPi) / (spacing * spacing);
+    });
+    const auto angular_frequency_squared = config.wave_speed * config.wave_speed * spatial_term + config.maximum_abs_potential;
+    if (!std::isfinite(angular_frequency_squared) || angular_frequency_squared <= 0.0) {
+        throw StabilityError("global stability spectrum is invalid");
+    }
+    return 2.0 / std::sqrt(angular_frequency_squared);
 }
 
 void validate_stability(const SolverConfig& config) {
@@ -176,10 +192,10 @@ void validate_stability(const SolverConfig& config) {
     if (config.cfl_safety <= 0.0 || config.cfl_safety > 1.0) {
         throw StabilityError("cfl safety must be in (0, 1]");
     }
-    const auto limit = cfl_limit(config) * config.cfl_safety;
+    const auto limit = std::min(cfl_limit(config), global_stability_limit(config)) * config.cfl_safety;
     if (config.dt > limit + 1e-12) {
         std::ostringstream message;
-        message << "dt=" << config.dt << " exceeds CFL safety limit=" << limit;
+        message << "dt=" << config.dt << " exceeds conservative global stability limit=" << limit;
         throw StabilityError(message.str());
     }
 }
@@ -406,10 +422,19 @@ std::vector<double> Solver::normalize_source(const std::vector<double>& source) 
 
 std::vector<double> Solver::normalize_potential(const std::vector<double>& potential) const {
     const auto count = cell_count(config_.shape);
-    if (potential.empty()) return zeros(count);
-    if (potential.size() == 1) return std::vector<double>(count, potential[0]);
-    require_size(potential, count, "potential");
-    return potential;
+    std::vector<double> normalized;
+    if (potential.empty()) normalized = zeros(count);
+    else if (potential.size() == 1) normalized = std::vector<double>(count, potential[0]);
+    else {
+        require_size(potential, count, "potential");
+        normalized = potential;
+    }
+    for (const auto value : normalized) {
+        if (!std::isfinite(value) || std::abs(value) > config_.maximum_abs_potential + 1e-12) {
+            throw StabilityError("potential exceeds the configured global stability domain");
+        }
+    }
+    return normalized;
 }
 
 FieldState Solver::initialize(const std::vector<double>& phi0,
@@ -558,7 +583,8 @@ void Solver::save_config(const std::string& path) const {
     stream << "  \"dt\": " << config_.dt << ",\n";
     stream << "  \"boundary\": \"" << boundary_name(config_.boundary) << "\",\n";
     stream << "  \"method\": \"" << method_name(config_.method) << "\",\n";
-    stream << "  \"cfl_safety\": " << config_.cfl_safety << "\n}\n";
+    stream << "  \"cfl_safety\": " << config_.cfl_safety << ",\n";
+    stream << "  \"maximum_abs_potential\": " << config_.maximum_abs_potential << "\n}\n";
 }
 
 SolverConfig Solver::load_config(const std::string& path) {
@@ -581,6 +607,9 @@ SolverConfig Solver::load_config(const std::string& path) {
     config.boundary = boundary == "periodic" ? Boundary::Periodic : boundary == "dirichlet" ? Boundary::Dirichlet : Boundary::Neumann;
     config.method = method == "leapfrog" ? Method::Leapfrog : Method::RK4;
     config.cfl_safety = parse_number(text, "cfl_safety");
+    if (text.find("\"maximum_abs_potential\"") != std::string::npos) {
+        config.maximum_abs_potential = parse_number(text, "maximum_abs_potential");
+    }
     return config;
 }
 
@@ -656,6 +685,110 @@ OneStepLossGradients leapfrog_operator_loss_gradients(
             gradients.source[index] = dloss_dphi * dt_factor;
             gradients.potential[index] = dloss_dphi * (-dt_factor * state.phi[index]);
         }
+    }
+    return gradients;
+}
+
+TemporalRolloutGradients temporal_rollout_loss_gradients(
+    const Solver& solver,
+    const FieldState& initial,
+    const std::vector<std::vector<double>>& source_sequence,
+    const std::vector<double>& potential,
+    const std::vector<std::vector<double>>& targets,
+    const double finite_difference_epsilon) {
+    if (finite_difference_epsilon <= 0.0 || !std::isfinite(finite_difference_epsilon)) {
+        throw NumericalError("temporal gradient finite-difference epsilon must be positive and finite");
+    }
+    const auto count = cell_count(solver.config().shape);
+    require_size(initial.phi, count, "initial phi");
+    require_size(initial.psi, count, "initial psi");
+    if (source_sequence.empty() || source_sequence.size() != targets.size()) {
+        throw NumericalError("temporal gradient source and target rollout lengths do not match");
+    }
+    auto expand = [&](const std::vector<double>& values, const char* name) {
+        if (values.empty()) return zeros(count);
+        if (values.size() == 1U) return std::vector<double>(count, values.front());
+        require_size(values, count, name);
+        return values;
+    };
+    std::vector<std::vector<double>> normalized_sources;
+    normalized_sources.reserve(source_sequence.size());
+    for (const auto& source : source_sequence) normalized_sources.push_back(expand(source, "source"));
+    const auto normalized_potential = expand(potential, "potential");
+    const auto objective_denominator = static_cast<double>(source_sequence.size() * count);
+    std::vector<FieldState> states{initial};
+    states.reserve(source_sequence.size() + 1U);
+    for (std::size_t step_index = 0; step_index < source_sequence.size(); ++step_index) {
+        states.push_back(solver.step(states.back(), normalized_sources[step_index], normalized_potential));
+        require_size(targets[step_index], count, "temporal target");
+    }
+    TemporalRolloutGradients gradients;
+    gradients.source.assign(source_sequence.size(), std::vector<double>(count, 0.0));
+    gradients.potential.assign(count, 0.0);
+    std::vector<double> lambda_phi(count, 0.0);
+    std::vector<double> lambda_psi(count, 0.0);
+    for (std::size_t step_index = source_sequence.size(); step_index-- > 0U;) {
+        const auto& next = states[step_index + 1U];
+        for (std::size_t index = 0; index < count; ++index) {
+            const auto difference = next.phi[index] - targets[step_index][index];
+            gradients.loss += difference * difference / objective_denominator;
+            lambda_phi[index] += 2.0 * difference / objective_denominator;
+        }
+        const auto& current = states[step_index];
+        auto step_with = [&](const FieldState& state, const std::vector<double>& source, const std::vector<double>& potential_value) {
+            return solver.step(state, source, potential_value);
+        };
+        std::vector<double> previous_lambda_phi(count, 0.0);
+        std::vector<double> previous_lambda_psi(count, 0.0);
+        auto accumulate_state_column = [&](const FieldState& plus, const FieldState& minus, const std::size_t index,
+                                           std::vector<double>& target_lambda) {
+            double value = 0.0;
+            for (std::size_t output = 0; output < count; ++output) {
+                value += lambda_phi[output] * (plus.phi[output] - minus.phi[output]) / (2.0 * finite_difference_epsilon);
+                value += lambda_psi[output] * (plus.psi[output] - minus.psi[output]) / (2.0 * finite_difference_epsilon);
+            }
+            target_lambda[index] += value;
+        };
+        for (std::size_t index = 0; index < count; ++index) {
+            auto plus = current;
+            auto minus = current;
+            plus.phi[index] += finite_difference_epsilon;
+            minus.phi[index] -= finite_difference_epsilon;
+            accumulate_state_column(step_with(plus, normalized_sources[step_index], normalized_potential),
+                                    step_with(minus, normalized_sources[step_index], normalized_potential), index, previous_lambda_phi);
+            plus = current;
+            minus = current;
+            plus.psi[index] += finite_difference_epsilon;
+            minus.psi[index] -= finite_difference_epsilon;
+            accumulate_state_column(step_with(plus, normalized_sources[step_index], normalized_potential),
+                                    step_with(minus, normalized_sources[step_index], normalized_potential), index, previous_lambda_psi);
+            auto source_plus = normalized_sources[step_index];
+            auto source_minus = normalized_sources[step_index];
+            source_plus[index] += finite_difference_epsilon;
+            source_minus[index] -= finite_difference_epsilon;
+            const auto source_plus_state = step_with(current, source_plus, normalized_potential);
+            const auto source_minus_state = step_with(current, source_minus, normalized_potential);
+            for (std::size_t output = 0; output < count; ++output) {
+                gradients.source[step_index][index] += lambda_phi[output] * (source_plus_state.phi[output] - source_minus_state.phi[output]) /
+                                                       (2.0 * finite_difference_epsilon);
+                gradients.source[step_index][index] += lambda_psi[output] * (source_plus_state.psi[output] - source_minus_state.psi[output]) /
+                                                       (2.0 * finite_difference_epsilon);
+            }
+            auto potential_plus = normalized_potential;
+            auto potential_minus = normalized_potential;
+            potential_plus[index] += finite_difference_epsilon;
+            potential_minus[index] -= finite_difference_epsilon;
+            const auto potential_plus_state = step_with(current, normalized_sources[step_index], potential_plus);
+            const auto potential_minus_state = step_with(current, normalized_sources[step_index], potential_minus);
+            for (std::size_t output = 0; output < count; ++output) {
+                gradients.potential[index] += lambda_phi[output] * (potential_plus_state.phi[output] - potential_minus_state.phi[output]) /
+                                              (2.0 * finite_difference_epsilon);
+                gradients.potential[index] += lambda_psi[output] * (potential_plus_state.psi[output] - potential_minus_state.psi[output]) /
+                                              (2.0 * finite_difference_epsilon);
+            }
+        }
+        lambda_phi = std::move(previous_lambda_phi);
+        lambda_psi = std::move(previous_lambda_psi);
     }
     return gradients;
 }

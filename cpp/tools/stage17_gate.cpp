@@ -1,5 +1,6 @@
 #include "cct/inference.hpp"
 #include "cct/release.hpp"
+#include "cct/nlp_trainer.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -32,7 +33,8 @@ std::int64_t gate_clock() { return 1000000; }
 
 std::string escape_json(const std::string& value) {
     std::ostringstream output;
-    for (const unsigned char character : value) {
+    for (const char raw_character : value) {
+        const auto character = static_cast<unsigned char>(raw_character);
         if (character == '"' || character == '\\') output << '\\';
         if (character == '\n') output << "\\n";
         else if (character == '\r') output << "\\r";
@@ -140,7 +142,15 @@ int main(int argc, char** argv) {
     std::filesystem::create_directories(output);
     std::vector<Check> checks;
     PilotReleaseController controller(&gate_clock);
-    const auto release_scope = make_scope();
+    auto release_scope = make_scope();
+    const auto artifacts_root = output.parent_path().parent_path();
+    const auto approved_checkpoint = artifacts_root / "stage-16" / "cpp-gate" / "checkpoint-fixture" / "model.checkpoint";
+    const auto approved_tokenizer = artifacts_root / "stage-16" / "cpp-gate" / "checkpoint-fixture" / "tokenizer.snapshot";
+    require(std::filesystem::exists(approved_checkpoint) && std::filesystem::exists(approved_tokenizer),
+            "Stage 16 checkpoint artifacts are required for release activation");
+    release_scope.approved_model_artifact_path = approved_checkpoint.string();
+    release_scope.approved_tokenizer_artifact_path = approved_tokenizer.string();
+    release_scope.artifact_hash = nlp_checkpoint_hash(read_file(approved_checkpoint.string()));
     controller.freeze_artifacts(release_scope);
     add_enrollment(controller);
 
@@ -303,6 +313,18 @@ int main(int argc, char** argv) {
         return "{\"technical\":true,\"security\":true,\"product\":true,\"governance\":true,\"decision\":\"PASS — bounded production\",\"scope_hash_bound\":true,\"public_launch_authorized\":false}";
     }));
 
+    checks.push_back(run_check("approved_release_activates_checkpoint_backend", [&]() {
+        InferenceService service;
+        controller.activate_release(service);
+        auto request = inference_request("approved-release-activation");
+        request.input = "alpha";
+        const auto response = service.handle(request, inference_auth());
+        require(response.error_code.empty() && response.backend_identity.find("checkpoint-backed-") == 0U &&
+                    service.deployment_status().active_release_id == controller.scope().release_id,
+                "approved release did not load and execute its checkpoint artifact");
+        return "{\"approved_release\":true,\"checkpoint_loaded\":true,\"artifact_digest_verified\":true,\"backend_execution\":true}";
+    }));
+
     const bool passed = !checks.empty() && std::all_of(checks.begin(), checks.end(), [](const auto& check) { return check.status == "PASS"; });
     std::ostringstream checks_json;
     checks_json << "[\n";
@@ -313,7 +335,7 @@ int main(int argc, char** argv) {
     }
     checks_json << "\n]\n";
     write_file(output / "checks.json", checks_json.str());
-    write_file(output / "release_manifest.json", controller.serialize_release_manifest() + "\n");
+    controller.save_release_manifest((output / "release_manifest.json").string());
     write_file(output / "phase_decisions.json", "{\"r0\":true,\"r1\":true,\"r2\":true,\"r3\":true,\"r4\":true,\"r5\":true,\"sequential\":true}\n");
     write_file(output / "shadow_report.json", "{\"control_candidate_comparison\":true,\"side_effects\":false,\"tenant_isolation\":true,\"policy_isolation\":true}\n");
     write_file(output / "pilot_report.json", "{\"allowlist\":true,\"quotas\":true,\"expiration\":true,\"approved_group\":true,\"unauthorized_denied\":true}\n");
@@ -330,7 +352,7 @@ int main(int argc, char** argv) {
     report << "# Stage 17 Controlled Pilot and Production Release Gate Report\n\n**Status:** `" << (passed ? "PASS — bounded production" : "FAIL") << "`  \n**Checks:** " << checks.size()
            << "  \n**Release:** `release-stage17-cct-nlp-answer`  \n**Scope:** declared low-risk `answer` task only  \n**Terminal stage:** no automatic Stage 18\n\nThe gate covers immutable artifact freeze, locked offline parity, shadow comparison without side effects, quality and citation thresholds, adversarial and privacy negatives, bounded pilot allowlists and quotas, human review and escalation, SLO quality/safety/latency/availability/cost, isolation, rollback rehearsal, incident containment and resume approval, deletion propagation, drift detection and ownership, Stage 0–16 regression boundaries, and technical/security/product/governance approval signatures.\n\nExternal actions, host execution, secret access, unrestricted tools, online learning, high-consequence decisions, and scope expansion are not authorized by this release.\n";
     write_file(output / "report.md", report.str());
-    write_file(output / "audit.json", controller.serialize_audit() + "\n");
+    controller.save_audit((output / "audit.json").string());
     std::cout << "{\"status\":\"" << (passed ? "PASS" : "FAIL") << "\",\"decision\":\"" << (passed ? "PASS — bounded production" : "FAIL")
               << "\",\"output\":\"" << output.string() << "\",\"checks\":" << checks.size() << "}\n";
     return passed ? 0 : 1;

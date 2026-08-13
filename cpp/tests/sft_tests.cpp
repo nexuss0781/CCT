@@ -173,6 +173,13 @@ void test_fail_closed_examples_and_finite_metrics() {
         malformed_rejected = true;
     }
     require(malformed_rejected, "unsupported SFT manifest version was accepted");
+    bool oversized_registry_rejected = false;
+    try {
+        static_cast<void>(SftAdapterRegistry::deserialize("CCT_SFT_REGISTRY_V1 1000001\n"));
+    } catch (const SftError&) {
+        oversized_registry_rejected = true;
+    }
+    require(oversized_registry_rejected, "oversized SFT adapter count was accepted");
     const auto evaluation = model.evaluate({example("eval", "classify", "positive", "positive", false, true)}, schema);
     require(evaluation.finite && std::isfinite(evaluation.cross_entropy), "SFT evaluation is not finite");
 }

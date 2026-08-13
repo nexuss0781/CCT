@@ -20,6 +20,7 @@ struct SolverConfig {
     Boundary boundary = Boundary::Periodic;
     Method method = Method::Leapfrog;
     double cfl_safety = 0.9;
+    double maximum_abs_potential = 1.0;
 };
 
 struct FieldState {
@@ -61,15 +62,19 @@ std::string boundary_name(Boundary boundary);
 std::string method_name(Method method);
 
 double cfl_limit(const SolverConfig& config);
+/** Returns a conservative global bound for the configured spatial operator and bounded potential. */
+double global_stability_limit(const SolverConfig& config);
 void validate_stability(const SolverConfig& config);
 std::size_t cell_count(const std::vector<std::size_t>& shape);
 
 std::vector<double> frequency_axis(std::size_t n, double spacing);
+/** Finite-difference semantics apply the requested periodic, Dirichlet, or Neumann boundary closure. */
 std::vector<double> finite_difference_laplacian(
     const std::vector<double>& field,
     const std::vector<std::size_t>& shape,
     const std::vector<double>& spacing,
     Boundary boundary);
+/** Spectral semantics are periodic Fourier modes only; non-periodic boundaries are rejected by SpectralSolver. */
 std::vector<double> spectral_laplacian(
     const std::vector<double>& field,
     const std::vector<std::size_t>& shape,
@@ -161,6 +166,7 @@ protected:
         const std::vector<double>& potential) const override;
 };
 
+/** Derivatives of one leapfrog step only; this type is not a temporal rollout adjoint. */
 struct OneStepLossGradients {
     std::vector<double> source;
     std::vector<double> potential;
@@ -172,6 +178,25 @@ OneStepLossGradients leapfrog_operator_loss_gradients(
     const std::vector<double>& source,
     const std::vector<double>& potential,
     const std::vector<double>& target);
+
+/**
+ * Full multi-step loss sensitivities. The implementation is a deterministic
+ * central-difference local-Jacobian adjoint oracle across the complete rollout;
+ * it is intentionally separate from the optimized one-step helper.
+ */
+struct TemporalRolloutGradients {
+    std::vector<std::vector<double>> source;
+    std::vector<double> potential;
+    double loss = 0.0;
+};
+
+TemporalRolloutGradients temporal_rollout_loss_gradients(
+    const Solver& solver,
+    const FieldState& initial,
+    const std::vector<std::vector<double>>& source_sequence,
+    const std::vector<double>& potential,
+    const std::vector<std::vector<double>>& targets,
+    double finite_difference_epsilon = 1e-6);
 
 std::vector<double> bounded_local_potential(
     const std::vector<double>& raw,

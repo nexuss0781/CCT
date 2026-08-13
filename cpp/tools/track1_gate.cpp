@@ -39,7 +39,8 @@ void write_file(const std::filesystem::path& path, const std::string& content) {
 
 std::string escape_json(const std::string& value) {
     std::ostringstream output;
-    for (const unsigned char character : value) {
+    for (const char raw_character : value) {
+        const auto character = static_cast<unsigned char>(raw_character);
         if (character == '"' || character == '\\') output << '\\';
         if (character == '\n') output << "\\n";
         else if (character == '\r') output << "\\r";
@@ -187,9 +188,12 @@ int main(int argc, char** argv) {
 
     checks.push_back(run_check("evaluation_contract_complete", [&]() {
         require(prepared != nullptr && prepared->evaluation_contract().pretrain_metrics.size() == 3U &&
-                    prepared->evaluation_contract().qa_metrics.size() == 7U && prepared->evaluation_contract().required_slices.size() == 3U,
-                "Track 1 evaluation contract is incomplete");
-        return "{\"pretrain_metrics\":3,\"qa_metrics\":7,\"required_slices\":3,\"answerability_and_abstention\":true}";
+                    prepared->evaluation_contract().qa_metrics.size() == 7U && prepared->evaluation_contract().required_slices.size() == 3U &&
+                    prepared->evaluation_contract().pretrain_task == "target_token_prediction" &&
+                    prepared->evaluation_contract().pretrain_evaluation_scope == "not_answer_quality" &&
+                    prepared->evaluation_contract().qa_task == "answer_span_and_answerability",
+                "Track 1 evaluation contract is incomplete or overclaims answer quality");
+        return "{\"pretrain_metrics\":3,\"qa_metrics\":7,\"required_slices\":3,\"answerability_and_abstention\":true,\"pretrain_scope\":\"target_token_prediction_only\"}";
     }));
 
     const bool passed = !checks.empty() && std::all_of(checks.begin(), checks.end(), [](const auto& check) { return check.status == "PASS"; });

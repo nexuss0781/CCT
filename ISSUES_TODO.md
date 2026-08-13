@@ -67,39 +67,41 @@ The corrected implementation is in `cpp/src/sequence.cpp`, with permanent covera
 
 ## FIELD-001 — Numerical stability is local, not a global CFL guarantee
 
-**Priority:** P1. **Status:** `[ ] OPEN`.
+**Priority:** P1. **Status:** `[x] FIXED`.
 
-**Evidence:** `cpp/src/field.cpp` and `cpp/include/cct/field.hpp`. The solver validates some dimensions and timestep values, but the repository’s architecture prose previously described a global CFL guarantee, adaptive time stepping, and learned PDE behavior that are not implemented as an end-to-end contract. The FFT path is periodic; the finite-difference path has boundary-specific behavior. The field helper can be numerically correct for the tested configuration while remaining unvalidated for arbitrary shape, spacing, wave speed, method, and boundary combinations.
+**Evidence:** `SolverConfig::maximum_abs_potential` declares the bounded potential domain. `global_stability_limit()` uses a conservative maximum-wavenumber spectral bound plus the potential bound; `validate_stability()` rejects timesteps outside the combined CFL/global domain, and runtime potential normalization rejects non-finite or out-of-domain values. The field regression sweeps Leapfrog/RK4, periodic/Dirichlet/Neumann, one- and two-dimensional grids, valid rollouts, finite-state checks, and rejection beyond the declared boundary.
 
-**Impact:** Stability and spectral claims cannot be generalized from the current small gate fixtures to arbitrary resolutions or learned parameter ranges.
+**Impact:** Stability claims are now scoped to the explicit bounded-potential and fixed-step solver contract rather than generalized to unconstrained learned parameters.
 
-**Remediation:** State the discrete operator and boundary condition mathematically. Compute or enforce method-specific stability domains. Reject parameter combinations outside the domain. Add resolution, timestep, wave-speed, potential, source, and boundary sweeps with energy-growth and finite-state thresholds.
+**Remediation:** Completed in native C++20 with an explicit conservative domain, boundary-specific operator semantics, persisted configuration, and matrix regression evidence.
 
-**Required regression:** A matrix test must cover periodic, Dirichlet, and Neumann configurations, every solver method, multiple dimensions, and timesteps at and beyond the declared boundary. The gate must distinguish expected instability rejection from an implementation failure.
+**Required regression:** Completed by `global_stability_domain_and_semantics` in `cct_tests`.
 
 ## FIELD-002 — Spectral and finite-difference semantics are not equivalent
 
-**Priority:** P1. **Status:** `[ ] OPEN`.
+**Priority:** P1. **Status:** `[x] FIXED`.
 
-**Evidence:** `cpp/src/field.cpp`. The spectral Laplacian uses FFTW periodic modes, while finite differences use explicit grid-neighbor operators. There is no general parity contract across boundary conditions, grid shapes, spacing, and wavenumber conventions.
+**Evidence:** The public field contract now states that FFTW spectral semantics are periodic Fourier modes only, while finite-difference semantics apply the requested periodic, Dirichlet, or Neumann closure. The regression verifies close parity on a resolved periodic manufactured mode and explicitly verifies non-periodic divergence rather than treating the methods as interchangeable.
 
-**Impact:** A result produced by the spectral path cannot be treated as a drop-in equivalent to the finite-difference path. Optimizer or model comparisons may measure discretization differences rather than CCT behavior.
+**Impact:** Cross-method comparisons are now required to declare the discretization domain and cannot silently attribute boundary/discretization differences to architecture behavior.
 
-**Remediation:** Define the discrete Fourier convention, normalization, Nyquist handling, and boundary mapping. Add a manufactured-solution parity suite and record the domain where parity is expected.
+**Remediation:** Completed with explicit normalization/Nyquist implementation, periodic-only spectral construction, boundary-specific finite differences, and manufactured parity/domain tests.
 
 ## FIELD-003 — Field gradients are one-step helpers, not full temporal adjoints
 
-**Priority:** P2. **Status:** `[ ] OPEN`.
+**Priority:** P2. **Status:** `[x] FIXED`.
 
-**Evidence:** The exported `leapfrog_operator_loss_gradients` helper differentiates a declared one-step operator. There is no general multi-step reverse-time adjoint through an entire field trajectory, adaptive timestep schedule, or learned potential sequence.
+**Evidence:** `TemporalRolloutGradients` and `temporal_rollout_loss_gradients()` now define a complete fixed-step multi-target rollout objective and reverse-time local-Jacobian adjoint oracle across every source timestep and shared potential. The existing one-step helper is explicitly documented as one-step-only. The regression compares every temporal source and potential derivative and the aggregate loss against direct central finite differences.
 
-**Impact:** One-step gradient correctness must not be described as proof of trainable PDE evolution across long horizons.
+**Impact:** One-step gradients are no longer presented as long-horizon evidence; temporal training experiments have a separate full-rollout contract and deterministic oracle.
 
-**Remediation:** Add a trajectory loss and reverse-time adjoint contract, or explicitly restrict all field-gradient claims to the one-step helper.
+**Remediation:** Completed for the fixed-step solver domain. Adaptive timestep schedules are outside this API by contract and are not claimed.
 
 ## CAUSAL-001 — Causal graph validity does not enforce temporal causality
 
-**Priority:** P1. **Status:** `[ ] OPEN`.
+**Priority:** P1. **Status:** `[x] FIXED`.
+
+**Evidence:** `CausalStoreConfig::temporal_policy` defaults to `StrictEarlier`, rejects present parent edges whose timestamp is not earlier than the child, supports explicit same-time policy, and persists in V2 snapshots with V1 default migration. The encoder reports excluded future-parent edges explicitly.
 
 **Evidence:** `cpp/src/causal.cpp:90-128` validates parent existence, explicit unresolved status, and event-level uniqueness. `validate_acyclic()` checks a DAG at lines 191–214. It does not reject a present parent whose timestamp is later than the child. The encoder can exclude future parents when `prevent_future_leakage` is enabled at lines 389–396, but that silently drops graph edges instead of rejecting an invalid causal graph.
 
@@ -111,7 +113,9 @@ The corrected implementation is in `cpp/src/sequence.cpp`, with permanent covera
 
 ## CAUSAL-002 — Parent hypotheses are supplied, so learner evidence is not structural discovery
 
-**Priority:** P1. **Status:** `[ ] OPEN`.
+**Priority:** P1. **Status:** `[x] FIXED — hypothesis-conditioned contract`.
+
+**Evidence:** The causal learner is now documented and treated as hypothesis-conditioned structural regression, not graph discovery. Its public evaluation is not used to claim edge discovery or causal identification; discovery requires a separate future contract.
 
 **Evidence:** `CausalEventLearner::fit()` receives `parent_hypotheses` and stores them directly at `cpp/src/causal.cpp:621-632`. The learner fits coefficients for supplied edges; it does not discover the graph. Confidence is a normalized coefficient signal at lines 672–689.
 
@@ -121,7 +125,9 @@ The corrected implementation is in `cpp/src/sequence.cpp`, with permanent covera
 
 ## CAUSAL-003 — Ridge solver uses normal equations and unbounded dense elimination
 
-**Priority:** P1. **Status:** `[ ] OPEN`.
+**Priority:** P1. **Status:** `[x] FIXED`.
+
+**Evidence:** `CausalEventLearner::solve_ridge()` now uses bounded Householder QR on an explicitly regularized augmented system, scale-aware regularization, finite checks, feature/sample budgets, and a diagonal condition threshold with explicit ill-conditioned failure.
 
 **Evidence:** `cpp/src/causal.cpp:587-618` forms \(X^TX\), adds a fixed `1e-7` diagonal term, then performs Gauss-Jordan elimination. There is no scale-aware regularization, condition estimate, pivot tolerance tied to matrix norm, or bounded dimension.
 
@@ -131,7 +137,9 @@ The corrected implementation is in `cpp/src/sequence.cpp`, with permanent covera
 
 ## CAUSAL-004 — Synthetic causal fixture contains an intentionally inconsistent visible edge
 
-**Priority:** P2. **Status:** `[ ] OPEN`.
+**Priority:** P2. **Status:** `[x] FIXED`.
+
+**Evidence:** `CausalDataset::invalid_fixture` is set when the intentionally contradictory visible edge is appended. Downstream code can reject or isolate this fixture instead of treating it as valid causal evidence.
 
 **Evidence:** `SyntheticCausalGenerator::generate()` constructs visible events from the truth graph at lines 549–560 and then appends event 3 as a parent of event 1 at lines 562–565. The generated relation is inconsistent with the earlier-variable truth ordering and can create a temporal contradiction.
 
@@ -157,17 +165,19 @@ The corrected implementation is in `cpp/src/sequence.cpp`, with permanent covera
 
 ## TRAIN-002 — The baseline comparison is computationally and parametrically non-matched
 
-**Priority:** P1. **Status:** `[ ] OPEN`.
+**Priority:** P1. **Status:** `[x] FIXED`.
 
-**Evidence:** `cpp/src/baselines.cpp:241-267` trains baselines with finite-difference gradients, requiring two full forward evaluations per parameter per epoch. The dense baseline allocates key/value vectors and copies parameter ranges inside each time step at lines 83–128. The baseline and CCT parameter layouts and optimizer paths differ.
+**Evidence:** Stage 5 now trains all five model kinds through `train_reference_finite_difference()` with one shared deterministic finite-difference optimizer, learning rate, clip norm, epochs, batch/context data, and split protocol. The gate enforces a 10% parameter-count match, reports parameter deltas, resource memory, separate wall time, and rejects mismatch.
 
-**Impact:** Runtime, memory, optimizer quality, and parameter count are confounded. A baseline loss comparison cannot support an architecture-efficiency claim without a shared budget and independently equivalent training procedure.
+**Impact:** The comparison no longer treats heterogeneous optimizer paths as architecture evidence. Results remain a small native reference comparison and do not claim broad efficiency superiority.
 
-**Remediation:** Add an analytic-gradient or common autodiff/reference path for each baseline, report parameter count and FLOPs, equalize optimizer, steps, tokens, batch, context, and validation protocol, and measure wall time separately from model quality.
+**Remediation:** Completed with common reference training and matched-comparison gate evidence.
 
 ## TRAIN-003 — Finite-gradient checks do not cover every optimizer update
 
-**Priority:** P1. **Status:** `[ ] OPEN`.
+**Priority:** P1. **Status:** `[x] FIXED`.
+
+**Evidence:** Each trainer step now validates gradient shape and every gradient value, computes next moments and parameters transactionally, validates both moment vectors and all updated parameters before commit, validates validation metrics, and only then advances optimizer state/history. NLP tests cover finite-gradient, optimizer, resume, and malformed-checkpoint failure paths.
 
 **Evidence:** The sequence and NLP trainers check selected finite quantities, but the optimizer update contract is not a general post-update invariant across every parameter vector, gradient accumulator, and checkpoint-resume boundary.
 
@@ -177,17 +187,19 @@ The corrected implementation is in `cpp/src/sequence.cpp`, with permanent covera
 
 ## TRAIN-004 — Per-step validation can dominate training cost
 
-**Priority:** P2. **Status:** `[ ] OPEN`.
+**Priority:** P2. **Status:** `[x] FIXED`.
 
-**Evidence:** The native trainer evaluation path can run validation through the full validation set during training-step reporting. The current source does not define a cadence or amortized validation budget in the core contract.
+**Evidence:** `NlpOptimizerConfig::validation_interval_steps` now defines an explicit positive validation cadence. `NlpTrainingPoint` records whether validation ran and separates training and validation elapsed time. The checkpoint format persists the cadence and timing fields while accepting legacy rows with deterministic defaults. The native NLP regression configures a two-step interval and proves that step one skips validation while step two evaluates it.
 
-**Impact:** Reported training throughput and wall time can be dominated by repeated evaluation, especially for long sequences and large vocabulary softmaxes.
+**Impact:** The core trainer contract no longer silently couples every optimization step to full validation. Throughput measurements can distinguish optimization time from evaluation time, and evaluation cadence is reproducible from the checkpoint.
 
-**Remediation:** Separate optimization steps from evaluation cadence. Record training-only and evaluation-only time, tokens per second, peak memory, and total wall time.
+**Remediation:** Completed in native C++20 with cadence validation, candidate-model evaluation before state publication, persisted configuration, and regression evidence in `cct_nlp_trainer_tests`.
 
 ## TRAIN-005 — Checkpoint writes need atomicity and durable publication
 
-**Priority:** P1. **Status:** `[ ] OPEN`.
+**Priority:** P1. **Status:** `[x] FIXED`.
+
+**Evidence:** `NlpTrainer::save_checkpoint()` now uses exclusive `mkstemp` publication, complete writes, file `fsync`, atomic rename, and parent-directory `fsync`; checkpoint loading enforces byte and structural budgets. Existing resume and checkpoint integrity tests pass, and Stage 11/12 gates exercise the path.
 
 **Evidence:** `cpp/src/nlp_trainer.cpp` serializes checkpoints directly through file streams. The Track 1 runner creates the output directory but does not establish a general temporary-file, flush, fsync, atomic-rename, and manifest-publication protocol for every checkpoint.
 
@@ -197,27 +209,29 @@ The corrected implementation is in `cpp/src/sequence.cpp`, with permanent covera
 
 ## TRAIN-006 — Track 1 evaluation is target-token prediction, not answer quality
 
-**Priority:** P1. **Status:** `[ ] OPEN`.
+**Priority:** P1. **Status:** `[x] FIXED AS EXPLICIT SCOPE`.
 
-**Evidence:** `cpp/tools/track1_train.cpp` records answer-target next-token metrics and explicitly does not implement constrained answer decoding, exact match, or F1.
+**Evidence:** The native `Track1EvaluationContract` and durable training report now publish `pretrain_task=target_token_prediction`, `pretrain_evaluation_scope=not_answer_quality`, and the separate QA task/metric contract. The runner explicitly states that answer exact-match and F1 are not claimed; the Track 1 tests and gate reject an incomplete or overclaiming contract.
 
-**Impact:** The SQuAD result cannot be interpreted as question-answering quality or answerability performance. This is an evaluation-boundary issue, not a failed training run.
+**Impact:** Track 1 results cannot be misread as human answer quality. A future constrained decoder/evaluator remains a separate capability addition, not hidden inside the current metric.
 
-**Remediation:** Add a separate decoder and evaluator for answer span or no-answer prediction. Require EM, token-level F1, answerability calibration, and unanswerable rejection metrics before using QA language.
+**Remediation:** Completed as an evaluation-boundary fix by requiring explicit scope language before QA claims are allowed.
 
 ## TRAIN-007 — Pretraining token cap is implemented as a byte cap
 
-**Priority:** P1. **Status:** `[ ] OPEN`.
+**Priority:** P1. **Status:** `[x] FIXED FOR BYTE_FALLBACK_V1`.
 
-**Evidence:** `cpp/src/track1.cpp:463-470` sets `cap` from `pretrain_token_cap` but increments `tokens` by `text.size()` and writes raw bytes. The manifest field is named `pretrain_train_tokens` even though the value is bounded by bytes before tokenizer encoding.
+**Evidence:** Track 1 counts the actual V1 byte-fallback tokenizer units: every retained byte and every inserted newline delimiter consumes one unit. The durable manifest now publishes `pretrain_token_count_mode=byte_fallback_v1`, and tests cover ASCII, newline, Unicode-boundary, cap, and deterministic replay behavior.
 
-**Impact:** The declared 2,000,000-token budget is not a 2,000,000-token budget. Dataset size and training comparisons are misreported, especially for multibyte and whitespace-heavy text.
+**Impact:** The declared budget is exact and auditable for the tokenizer contract actually used by Track 1. The manifest no longer implies a generic external tokenizer-token budget.
 
-**Remediation:** Tokenize before capping and count target tokens, or rename all fields and reports to bytes. Add ASCII, Unicode, whitespace, and boundary fixtures proving the contract.
+**Remediation:** Completed by making the tokenizer/counting mode explicit and versioned. A different tokenizer requires a new count mode and independent budget contract.
 
 ## TRAIN-008 — Dataset hash and checkpoint identity do not prove semantic model compatibility
 
-**Priority:** P2. **Status:** `[ ] OPEN`.
+**Priority:** P2. **Status:** `[x] FIXED for the native NLP contract`.
+
+**Evidence:** NLP checkpoints now bind a canonical `cct-training-contract-v1` digest covering model kind/configuration, objective and loss-mask policy, optimizer/scheduler, seed, tokenizer hash, dataset hash, and code contract. Tampering the digest is rejected by `nlp_trainer_tests`; Track 1 reports carry the contract digest and path-independent checkpoint references.
 
 **Evidence:** `NlpDataset::build()` hashes token sequences, context length, and tokenizer hash. The identity contract must also bind model architecture version, optimizer version, loss-mask version, numerical mode, and source transformation policy wherever those affect training semantics.
 
@@ -243,7 +257,9 @@ The corrected implementation is in `cpp/src/sequence.cpp`, with permanent covera
 
 ## CORPUS-002 — Byte truncation can create invalid UTF-8 and invalid structured data
 
-**Priority:** P1. **Status:** `[ ] OPEN`.
+**Priority:** P1. **Status:** `[x] FIXED for text-file ingestion`.
+
+**Evidence:** `GovernedCorpus::ingest_file()` now truncates only at a UTF-8 boundary before governance processing. A multibyte boundary regression passes and rejects partial lead-byte retention; structured dataset parsers retain their own structural validation contracts.
 
 **Evidence:** `GovernedCorpus::ingest_file()` truncates the byte string directly at `cpp/src/corpus.cpp:112-121` when `max_bytes` is nonzero.
 
@@ -253,17 +269,19 @@ The corrected implementation is in `cpp/src/sequence.cpp`, with permanent covera
 
 ## CORPUS-003 — Contamination and near-duplicate detection are incomplete and quadratic
 
-**Priority:** P1. **Status:** `[ ] OPEN`.
+**Priority:** P1. **Status:** `[x] FIXED FOR THE GOVERNED_CORPUS_V2 CONTRACT`.
 
-**Evidence:** `detect_contamination()` checks only evaluator-only records at lines 129–137. `has_near_duplicate()` computes set-Jaccard against every accepted record at lines 338–357. It is order-insensitive, loses multiplicity, and has no index.
+**Evidence:** GovernedCorpus now maintains normalized-hash and word-posting indexes, checks exact/near/subspan contamination across every protected split pair, preserves same-split duplicate rejection, and rebuilds indexes after V1/V2 deserialization. Cross-train/validation ingestion is rejected with `split_contamination`; public detection accepts the candidate split; tests cover exact, near, evaluator, and cross-split cases.
 
-**Impact:** Train/validation contamination can escape the generic corpus boundary, and the near-duplicate policy has both false negatives and false positives while scaling as approximately `O(R^2)`.
+**Impact:** Contamination is no longer limited to evaluator-only records or an all-record quadratic scan. The deterministic Jaccard threshold and split policy are explicit in the native contract.
 
-**Remediation:** Maintain split-aware exact and n-gram/minhash indexes, compare all protected split pairs, record thresholds and decisions, and bound memory and runtime.
+**Remediation:** Completed for the current governed-corpus scale with bounded vector/parser budgets and indexed candidate retrieval.
 
 ## CORPUS-004 — Normalization is byte-oriented and locale-sensitive
 
-**Priority:** P2. **Status:** `[ ] OPEN`.
+**Priority:** P2. **Status:** `[x] FIXED for deterministic byte-preserving normalization`.
+
+**Evidence:** Corpus normalization now uses explicit ASCII whitespace folding and ASCII lowercase conversion, preserving non-ASCII UTF-8 bytes and avoiding process-locale-dependent `ctype` behavior. The corpus and Stage 9/10 tests pass with stable hashes and lineage.
 
 **Evidence:** `normalize()` iterates bytes, calls `std::tolower`, and collapses `std::isspace` at `cpp/src/corpus.cpp:210-224`. This is not Unicode case folding or Unicode whitespace normalization.
 
@@ -273,13 +291,13 @@ The corrected implementation is in `cpp/src/sequence.cpp`, with permanent covera
 
 ## CORPUS-005 — Custom PII and code labels are not a policy-grade classifier
 
-**Priority:** P2. **Status:** `[ ] OPEN`.
+**Priority:** P2. **Status:** `[x] FIXED AS HEURISTIC-HINT CONTRACT`.
 
-**Evidence:** `labels_for()` marks records through simple substring and enum checks at `cpp/src/corpus.cpp:310-329`.
+**Evidence:** Corpus labels now use explicit `pii_candidate` and `code_candidate` names, retain the legacy `code` alias only for compatibility, strengthen deterministic credential/email/structured-code markers, preserve original-content classification before raw PII purge, and document the candidate nature in the native test contract.
 
-**Impact:** Labels can be used downstream as if they were validated classifications, although they are only heuristics.
+**Impact:** Downstream consumers cannot treat these values as policy-grade classifications without an additional review/classifier step; PII records remain quarantined and raw content is purged.
 
-**Remediation:** Rename them as heuristic hints, attach confidence and version, or replace them with a governed classifier and review protocol.
+**Remediation:** Completed by making the labels heuristic candidates rather than authoritative classifications and covering PII/code labels in corpus regressions.
 
 ## TRACK1-001 — Track 1 acquisition uses shell interpolation and non-atomic downloads
 
@@ -503,7 +521,9 @@ The corrected implementation is in `cpp/src/sequence.cpp`, with permanent covera
 
 ## INF-006 — Hard-coded policy and release metadata bypass configuration intent
 
-**Priority:** P2. **Status:** `[ ] OPEN`.
+**Priority:** P2. **Status:** `[x] FIXED`.
+
+**Evidence:** Inference service default release ID and artifact digest are explicit `InferenceConfig` fields and are validated before registration. The service no longer registers or activates a hard-coded release identity in its constructor; inference and release tests cover configured metadata routing.
 
 **Evidence:** `execute()` constructs a fixed `ProductUseCase` with ID `Stage16 bounded inference`, fixed allowed operations, owner, and expiry at `cpp/src/inference.cpp:362-368`. Model routing registers a fixed `stage16-default` release in the constructor at lines 194–203.
 
@@ -525,9 +545,11 @@ The corrected implementation is in `cpp/src/sequence.cpp`, with permanent covera
 
 ## RELEASE-001 — Release controller is a state machine, not deployment integration
 
-**Priority:** P1. **Status:** `[ ] OPEN`.
+**Priority:** P1. **Status:** `[x] FIXED`.
 
-**Evidence:** `cpp/src/release.cpp` records release identities, approvals, shadow logs, rollback, deletion, drift, and review records in in-memory or serialized structures. It does not load or swap model artifacts, route external traffic, enforce process isolation, or integrate with a deployment scheduler.
+**Evidence:** `PilotReleaseController::activate_release()` now requires an approved terminal decision and explicit checkpoint/tokenizer artifact paths, registers a digest-bound `DeploymentRelease`, and activates it through `InferenceService`. The inference service verifies the checkpoint SHA-256, loads the native checkpoint backend transactionally, updates model/tokenizer/index identity, and clears model-dependent state and cache. Release tests and the Stage 17 gate execute a real checkpoint-backed request through the approved release.
+
+**Historical evidence:** `cpp/src/release.cpp` previously recorded release identities, approvals, shadow logs, rollback, deletion, drift, and review records without loading or swapping model artifacts.
 
 **Impact:** A release gate can show correct governance bookkeeping while the actual serving process remains unchanged.
 
@@ -535,9 +557,11 @@ The corrected implementation is in `cpp/src/sequence.cpp`, with permanent covera
 
 ## RELEASE-002 — Release and snapshot persistence lacks atomic publication
 
-**Priority:** P1. **Status:** `[ ] OPEN`.
+**Priority:** P1. **Status:** `[x] FIXED`.
 
-**Evidence:** Release, causal, knowledge, and memory save paths use direct `ofstream` writes rather than a common atomic publication protocol.
+**Evidence:** Release manifest and audit saves, causal snapshots, knowledge snapshots, and memory snapshots now use exclusive temporary files, complete writes, file `fsync`, atomic rename, and parent-directory `fsync`. Release tests verify manifest/audit publication and temporary-file cleanup; memory and knowledge regressions verify publication and reload.
+
+**Historical evidence:** Release and causal save paths previously used direct `ofstream` writes.
 
 **Impact:** Interrupted persistence can create partial but discoverable release or state artifacts.
 
@@ -549,9 +573,11 @@ The corrected implementation is in `cpp/src/sequence.cpp`, with permanent covera
 
 ## BUILD-001 — Expanded warnings expose portability debt
 
-**Priority:** P2. **Status:** `[ ] OPEN`.
+**Priority:** P2. **Status:** `[x] FIXED`.
 
-**Evidence:** An expanded warning build with `-Wconversion -Wsign-conversion -Wshadow -Wdouble-promotion -Wformat=2` failed in `cpp/src/baselines.cpp` because unsigned size offsets are converted to signed iterator difference types. The ordinary strict build passes because those warning classes are not enabled.
+**Evidence:** The expanded profile `-Wconversion -Wsign-conversion -Wshadow -Wdouble-promotion -Wformat=2` now compiles every native library, test, and Stage 0–17/Track 1 target with `-Werror`. Baseline parameter slices use checked difference-type conversion; remaining gate and serializer byte/index conversions are explicit.
+
+**Historical evidence:** The profile previously failed in `cpp/src/baselines.cpp` on unsigned iterator offsets.
 
 **Impact:** The code is less portable across compilers and warning profiles than the current gate suggests.
 
@@ -559,9 +585,11 @@ The corrected implementation is in `cpp/src/sequence.cpp`, with permanent covera
 
 ## BUILD-002 — CMake does not make the review warning policy self-contained
 
-**Priority:** P2. **Status:** `[ ] OPEN`.
+**Priority:** P2. **Status:** `[x] FIXED`.
 
-**Evidence:** The review needed to inject `-Wall -Wextra -Wpedantic -Werror` through `CMAKE_CXX_FLAGS`. A user invoking the repository’s ordinary CMake command can receive a weaker warning policy than the stated contract.
+**Evidence:** `cpp/CMakeLists.txt` exposes `CCT_STRICT_WARNINGS` (default `ON`) and applies the shared `CCT_WARNING_OPTIONS` to every target. Both the ordinary strict build and the expanded warning build are now reproducible without injecting the baseline warning policy through `CMAKE_CXX_FLAGS`.
+
+**Historical evidence:** The review previously needed to inject `-Wall -Wextra -Wpedantic -Werror` through `CMAKE_CXX_FLAGS`.
 
 **Impact:** The claimed strict build is command-dependent and can silently regress.
 
@@ -589,7 +617,9 @@ The corrected implementation is in `cpp/src/sequence.cpp`, with permanent covera
 
 ## TEST-003 — No property-based or fuzz test coverage for custom parsers and serializers
 
-**Priority:** P1. **Status:** `[ ] OPEN`.
+**Priority:** P1. **Status:** `[x] FIXED for bounded deterministic mutation contract`.
+
+**Evidence:** `cct_parser_mutation_tests` is registered in CTest and mutates valid causal, memory, knowledge, and tokenizer snapshots through truncation, prefix, NUL, trailing-data, and byte mutations. It requires bounded fail-closed rejection and rejects non-standard exception escapes; the target passes under strict and expanded warning builds.
 
 **Evidence:** Track 1, knowledge, memory, causal, tokenizer, and trainer checkpoint formats use custom parsers and serializers. The current tests cover selected fixtures but no fuzz/property campaign is wired into CTest.
 
@@ -599,7 +629,9 @@ The corrected implementation is in `cpp/src/sequence.cpp`, with permanent covera
 
 ## DOC-001 — Stage specifications, status documents, and implementation claims have drifted
 
-**Priority:** P1. **Status:** `[ ] OPEN`.
+**Priority:** P1. **Status:** `[x] FIXED for current authority and consistency contract`.
+
+**Evidence:** `SPEC/Goal.md`, `SPEC/Todo.md`, and `SPEC/Status.md` are now the authority set; `cct_documentation_consistency_tests` verifies the native C++20 contract, all Stage 0–17 files, status rows, architecture terms, and identity-envelope contract. Historical records are labeled as historical or bounded rather than silently promoted.
 
 **Evidence:** The repository contains multiple stage maps and historical specification trees. The earlier Architecture document described Rust/JAX/Python layers and unimplemented mathematical components, while the actual code is native C++20. The current audit corrected `Architecture.md`, but `Goal.md`, `Todo.md`, `SPEC/Goal.md`, `SPEC/Todo.md`, `Stages/`, and artifact status records still require a single authority and reconciliation.
 
@@ -609,7 +641,9 @@ The corrected implementation is in `cpp/src/sequence.cpp`, with permanent covera
 
 ## ARTIFACT-001 — Historical reports reference ephemeral checkpoint paths
 
-**Priority:** P1. **Status:** `[ ] OPEN`.
+**Priority:** P1. **Status:** `[x] FIXED for path-independent reporting`.
+
+**Evidence:** The historical Track 1 report no longer contains `/tmp` paths; it records unavailable historical artifacts with preserved hashes. `artifacts/track1/real-training/release_validation_bundle.json` provides durable repository-relative checkpoint/tokenizer references, hashes, sizes, and release-loader evidence.
 
 **Evidence:** Track 1 training reports and operational documentation include historical `/tmp` checkpoint paths. Those paths do not exist in a fresh checkout and are not durable release artifacts.
 
@@ -619,7 +653,9 @@ The corrected implementation is in `cpp/src/sequence.cpp`, with permanent covera
 
 ## ARTIFACT-002 — Gate output is not universally linked to source and environment identity
 
-**Priority:** P2. **Status:** `[ ] OPEN`.
+**Priority:** P2. **Status:** `[x] FIXED for registered native gates`.
+
+**Evidence:** CTest wraps Stage 0–17 and Track 1 gate executables with `cct_gate_envelope`, which publishes schema, source commit, compiler/build type, executable path and SHA-256, checks/output paths, exit status, and timestamp. The wrapper uses native fork/exec and atomic publication.
 
 **Evidence:** Some gates write compact `checks.json` and reports, while historical records vary in environment, configuration, and artifact linkage. The repository does not enforce one manifest schema across every stage gate.
 
@@ -633,39 +669,41 @@ The corrected implementation is in `cpp/src/sequence.cpp`, with permanent covera
 
 ## API-001 — Public APIs expose mutable state and use exception-only failure semantics
 
-**Priority:** P2. **Status:** `[ ] OPEN`.
+**Priority:** P2. **Status:** `[x] FIXED FOR THE CURRENT NATIVE API CONTRACT`.
 
-**Evidence:** Several public methods return mutable vectors or throw general subsystem exceptions for validation and persistence. Inference, memory, corpus, and causal layers mix expected user rejection with exceptional control flow.
+**Evidence:** Stateful collection accessors return const references or value copies; mutation is exposed only through named mutators. Public headers document borrowed-reference lifetime and subsystem-specific exception categories, while inference responses use stable typed error codes and policy decisions for expected request outcomes. Snapshot and persistence failures remain exceptions for invariant/corruption paths.
 
-**Impact:** Callers cannot uniformly distinguish invalid input, unavailable dependency, corruption, policy denial, and programmer error. Exception-heavy control paths complicate service integration.
+**Impact:** The current API has an explicit ownership and failure boundary rather than implying that returned containers are caller-mutable or that every rejection is indistinguishable.
 
-**Remediation:** Define typed result/error categories at subsystem boundaries, preserve exceptions for invariant violations, and document ownership and thread-safety for every returned object.
+**Remediation:** Completed for the current native C++ API without introducing an artificial universal result wrapper over invariant exceptions.
 
 ## API-002 — State, cache, and persistence thread-safety contracts are undocumented
 
-**Priority:** P1. **Status:** `[ ] OPEN`.
+**Priority:** P1. **Status:** `[x] FIXED AS DOCUMENTED OWNERSHIP CONTRACT`.
 
-**Evidence:** Mutable containers in inference, memory, knowledge, release, and corpus classes have no synchronization or explicit single-thread ownership in the public headers.
+**Evidence:** InferenceService documents internal recursive-mutex serialization of state, cache, queue, metrics, and audit operations. KnowledgePlane, PersistentMemory, CausalEventStore, and other borrowed-reference stores document external synchronization requirements, read-only concurrency limits, mutation invalidation, and snapshot overlap restrictions. Existing inference concurrency/cancellation tests and sanitizer unit shard exercise the synchronized service boundary.
 
-**Impact:** A caller can reasonably assume safe service use when concurrent access is undefined.
+**Impact:** Callers now have explicit service-safe versus externally synchronized ownership rules; no store is silently advertised as thread-safe.
 
-**Remediation:** Document single-thread ownership or add synchronization. Add thread-sanitizer tests with concurrent reads, writes, resets, snapshots, and retrieval.
+**Remediation:** Completed for the current architecture through precise public contracts and existing stress/sanitizer evidence.
 
 ## API-003 — Serialization formats lack size budgets and version migration strategy
 
-**Priority:** P1. **Status:** `[ ] OPEN`.
+**Priority:** P1. **Status:** `[x] FIXED FOR CURRENT V1/V2 FORMATS`.
 
-**Evidence:** Causal, memory, knowledge, tokenizer, trainer, and Track 1 serializers carry version strings but often parse counts and payloads without maximum budgets or migration code.
+**Evidence:** Causal, memory, knowledge, tokenizer, NLP, production, multimodal, scaling, deliberation, corpus, preference, and SFT loaders now enforce total-byte, count, dimension, string, and parameter budgets before allocation. Supported legacy versions migrate explicitly where applicable; unsupported versions and unknown structural fields fail closed. Parser mutation and subsystem regressions cover canonical replay, legacy compatibility, oversized counts, and tamper rejection.
 
-**Impact:** Corrupt or hostile artifacts can cause excessive allocation, and future schema changes can fail ambiguously.
+**Impact:** Hostile or corrupt artifacts cannot trigger unbounded parser allocation within the supported native formats, and schema compatibility is explicit rather than accidental.
 
-**Remediation:** Add per-field and total-file limits, schema migrations, explicit unknown-field policy, canonical encoding, and compatibility tests across supported versions.
+**Remediation:** Completed for all current serialization entry points; a future schema must add a versioned migration and budget contract before acceptance.
 
 ## API-004 — `const_cast` is used to mutate manifest source records during construction
 
-**Priority:** P3. **Status:** `[ ] OPEN`.
+**Priority:** P3. **Status:** `[x] FIXED`.
 
-**Evidence:** `Track1Pipeline` constructs `manifest_.sources` and then uses `const_cast` with `source_at()` at `cpp/src/track1.cpp:427-441` to fill acquisition metadata.
+**Evidence:** `Track1Pipeline` now uses a non-const `source_at(std::vector<Track1Source>&, ...)` overload for manifest initialization and preparation. The source implementation contains no `const_cast<Track1Source&>` mutation path, and the expanded warning build compiles the Track 1 targets cleanly.
+
+**Historical evidence:** Manifest source metadata was previously filled through `const_cast` with `source_at()`.
 
 **Impact:** The code weakens const-correctness and makes future refactoring unsafe or misleading.
 
@@ -686,14 +724,14 @@ The corrected implementation is in `cpp/src/sequence.cpp`, with permanent covera
 ## P1 remediation sequence
 
 - [x] Fix `TRAIN-001` model identity by explicitly naming and separating the Track 1 recurrence from `SelectiveSequenceCore`.
-- [ ] Fix `INF-002`, `INF-003`, `INF-004`, and `INF-005` before any concurrency or streaming claim.
+- [x] Fix `INF-002`, `INF-003`, `INF-004`, and `INF-005`; checkpoint streaming, cancellation, synchronization, outcome accounting, and bounded state/cache tests pass.
 - [x] Fix `TRACK1-002`, `TRACK1-003`, and `TRACK1-005` before full-source production acquisition.
 - [x] Fix `TRACK1-004` by publishing a manifest-bound mirror/upstream source attestation.
 - [ ] Resolve `KNOW-001` by adding a production semantic embedding/index backend; the deterministic provider remains an explicit baseline.
 - [x] Fix `KNOW-002` and `KNOW-003` before factual-grounding claims; the exact-span and all-eligible-conflict regressions pass.
 - [x] Fix `MEMORY-001`, `MEMORY-003`, and `MEMORY-004`; `MEMORY-002` remains a measured linear-scan baseline limitation.
-- [ ] Fix `RELEASE-001` and `RELEASE-002` before deployment claims.
-- [ ] Add parser fuzzing and real-artifact black-box gates under `TEST-001` and `TEST-003`.
+- [x] Fix `RELEASE-001` and `RELEASE-002`; approved checkpoint activation and atomic release/snapshot publication tests pass.
+- [ ] Add bounded parser mutation coverage under `TEST-003`; real checkpoint activation is now covered by Stage 16/17 and release black-box tests under `TEST-001`.
 - [ ] Reconcile all status and specification files under `DOC-001`.
 
 ## P2/P3 hardening sequence

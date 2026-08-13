@@ -13,6 +13,11 @@
 namespace cct {
 namespace {
 
+constexpr std::size_t kMaximumPreferenceSerializedBytes = 64U * 1024U * 1024U;
+constexpr std::size_t kMaximumPreferenceRecords = 1'000'000U;
+constexpr std::size_t kMaximumPreferenceCriteria = 4096U;
+constexpr std::size_t kMaximumPreferenceFieldBytes = 4U * 1024U * 1024U;
+
 void require(const bool condition, const std::string& message) {
     if (!condition) throw PreferenceError(message);
 }
@@ -21,7 +26,8 @@ std::string hex_encode(const std::string& value) {
     static constexpr char digits[] = "0123456789abcdef";
     std::string output;
     output.reserve(value.size() * 2U);
-    for (const unsigned char byte : value) {
+    for (const char raw_byte : value) {
+        const auto byte = static_cast<unsigned char>(raw_byte);
         output.push_back(digits[byte >> 4U]);
         output.push_back(digits[byte & 0x0fU]);
     }
@@ -213,15 +219,21 @@ std::string PreferenceManifest::serialize() const {
 }
 
 PreferenceManifest PreferenceManifest::deserialize(const std::string& serialized) {
+    require(serialized.size() <= kMaximumPreferenceSerializedBytes, "preference manifest exceeds byte budget");
     std::istringstream input(serialized);
     std::string line;
     require(std::getline(input, line) && line == "CCT_PREFERENCE_MANIFEST_V1", "unsupported preference manifest version");
     std::string declared_hash;
     std::vector<PreferenceRubric> rubrics;
     std::vector<PreferenceRecord> records;
+    std::size_t parsed_lines = 0U;
     while (std::getline(input, line)) {
+        require(++parsed_lines <= kMaximumPreferenceRecords * 2U + 2U, "preference manifest line count exceeds budget");
+        require(line.size() <= kMaximumPreferenceFieldBytes, "preference manifest line exceeds field budget");
         if (line.empty()) continue;
         const auto parts = split(line, '|');
+        require(parts.size() <= 32U, "preference manifest field count exceeds budget");
+        for (const auto& part : parts) require(part.size() <= kMaximumPreferenceFieldBytes, "preference manifest field exceeds budget");
         require(parts.size() >= 2U, "malformed preference manifest line");
         if (parts[0] == "H") {
             require(parts.size() == 2U, "malformed preference manifest hash");
@@ -233,6 +245,8 @@ PreferenceManifest PreferenceManifest::deserialize(const std::string& serialized
             rubric.rubric_id = field(values, 0U);
             rubric.version = field(values, 1U);
             const auto criterion_count = static_cast<std::size_t>(std::stoull(field(values, 2U)));
+            require(criterion_count <= kMaximumPreferenceCriteria, "preference rubric criterion count exceeds budget");
+            require(rubrics.size() < kMaximumPreferenceRecords, "preference rubric count exceeds budget");
             require(values.size() == criterion_count + 5U, "preference rubric criterion count mismatch");
             for (std::size_t index = 0U; index < criterion_count; ++index) rubric.criteria.push_back(field(values, 3U + index));
             rubric.allows_ties = parse_bool(field(values, 3U + criterion_count));
@@ -240,6 +254,7 @@ PreferenceManifest PreferenceManifest::deserialize(const std::string& serialized
             rubrics.push_back(std::move(rubric));
         } else if (parts[0] == "P") {
             require(parts.size() == 19U, "malformed preference record field count");
+            require(records.size() < kMaximumPreferenceRecords, "preference record count exceeds budget");
             const std::vector<std::string> values(parts.begin() + 1, parts.end());
             PreferenceRecord record;
             record.preference_id = field(values, 0U); record.prompt_and_context = field(values, 1U); record.candidate_a = field(values, 2U);
@@ -305,7 +320,11 @@ std::vector<double> PreferenceModel::features(const std::string& prompt, const s
     if (config_.feature_dim > 6U) result[6] = contains_any(prompt, {"unsafe", "secret", "payment", "execute", "unknown", "missing", "evidence"}) ? 1.0 : 0.0;
     if (config_.feature_dim > 7U) {
         std::uint64_t hash = 1469598103934665603ULL;
-        for (const unsigned char byte : prompt + "\n" + candidate) { hash ^= byte; hash *= 1099511628211ULL; }
+        for (const char raw_byte : prompt + "\n" + candidate) {
+            const auto byte = static_cast<unsigned char>(raw_byte);
+            hash ^= byte;
+            hash *= 1099511628211ULL;
+        }
         result[7] = static_cast<double>(hash % 1000U) / 1000.0;
     }
     return result;

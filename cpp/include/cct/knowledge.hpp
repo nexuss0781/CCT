@@ -208,6 +208,15 @@ struct GroundingReviewSummary {
     bool expert_review_present = false;
 };
 
+/**
+ * Thread-safety contract: KnowledgePlane has no internal mutex. Concurrent const
+ * operations are valid only while no thread mutates the instance; every mutation
+ * and any const operation that updates audit or metrics requires caller-provided
+ * exclusive synchronization. `records()`, `audit()`, and `metrics()` return
+ * borrowed references and must not outlive or overlap a mutation. Serialization
+ * and deserialization are deterministic V1 operations and reject malformed input.
+ * Failure contract: invalid records, queries, and snapshots throw KnowledgeError.
+ */
 class KnowledgePlane {
 public:
     explicit KnowledgePlane(KnowledgeIndexConfig config = {}, KnowledgeEmbeddingProvider embedding_provider = {});
