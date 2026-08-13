@@ -136,10 +136,12 @@ int main(int argc, char** argv) {
         fixture_pipeline.prepare();
         require(fixture_pipeline.report().passed && fixture_pipeline.manifest().pretrain_train_tokens == 20U &&
                     fixture_pipeline.manifest().sft_train_examples == 2U && fixture_pipeline.manifest().sft_evaluation_examples == 2U &&
-                    fixture_pipeline.manifest().final_test_examples == 4U,
+                    fixture_pipeline.manifest().final_test_examples == 4U && fixture_pipeline.manifest().manifest_digest.size() == 64U,
                 "Track 1 preparation counts or cap are wrong");
+        for (const auto& source : fixture_pipeline.manifest().sources)
+            require(source.attestation_digest.size() == 64U, "Track 1 source attestation is missing");
         prepared = &fixture_pipeline;
-        return "{\"pretrain_byte_tokens\":20,\"sft_train\":2,\"sft_evaluation\":2,\"final_test\":4,\"passed\":true}";
+        return "{\"pretrain_byte_tokens\":20,\"sft_train\":2,\"sft_evaluation\":2,\"final_test\":4,\"source_attestations\":5,\"passed\":true}";
     }));
 
     checks.push_back(run_check("split_isolation_and_contamination", [&]() {
@@ -204,8 +206,8 @@ int main(int argc, char** argv) {
     write_file(output / "source_manifest.json", prepared == nullptr ? "{}\n" : prepared->serialize_manifest());
     write_file(output / "preparation_report.json", prepared == nullptr ? "{}\n" : prepared->serialize_report());
     write_file(output / "evaluation_contract.json", prepared == nullptr ? "{}\n" : prepared->serialize_evaluation_contract());
-    write_file(output / "README.md", "# Track 1 Acquisition Gate\n\nThis gate uses local copies of Hugging Face response pages and validates the pinned GEM flat-file SQuAD acquisition metadata, native parser, byte-token cap, balanced selection, final-test isolation, deterministic replay, and fail-closed acquisition controls used by remote Track 1 preparation.\n");
-    write_file(output / "release_record.json", "{\"track\":\"track1\",\"status\":\"" + std::string(passed ? "PASS" : "FAIL") + "\",\"pretraining\":\"WikiText-2\",\"fine_tuning\":\"SQuAD 2.0\",\"final_test_is_frozen\":true,\"training_authorized\":false}\n");
+    write_file(output / "README.md", "# Track 1 Acquisition Gate\n\nThis gate uses local copies of pinned Hugging Face response pages and validates the native bounded JSON parser, exact direct-file row counts, unique temporary-file publication, durable cache-integrity sidecars, source-attestation digests, byte-cap behavior, balanced selection, final-test isolation, deterministic replay, and fail-closed acquisition controls used by remote Track 1 preparation.\n");
+    write_file(output / "release_record.json", "{\"track\":\"track1\",\"status\":\"" + std::string(passed ? "PASS" : "FAIL") + "\",\"pretraining\":\"WikiText-2\",\"fine_tuning\":\"SQuAD 2.0\",\"final_test_is_frozen\":true,\"source_attestation\":true,\"training_authorized\":false}\n");
     std::cout << "{\"status\":\"" << (passed ? "PASS" : "FAIL") << "\",\"checks\":" << checks.size() << ",\"output\":\"" << output.string() << "\"}\n";
     return passed ? 0 : 1;
 }

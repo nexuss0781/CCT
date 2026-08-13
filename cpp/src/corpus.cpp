@@ -366,6 +366,8 @@ CorpusRecord GovernedCorpus::process_record(CorpusRecord record) const {
         record.redacted = true;
         record.normalized_content = "[redacted]";
         record.reason_codes.push_back("pii_detected");
+        record.reason_codes.push_back("raw_content_purged");
+        record.content.clear();
     }
     record.normalized_hash = sha256(record.normalized_content);
     record.transformation_chain = {"utf8-whitespace-v1", "lowercase-v1"};
@@ -426,7 +428,7 @@ const SourcePolicy& GovernedCorpus::source(const std::string& source_id) const {
 
 std::string GovernedCorpus::serialize() const {
     std::ostringstream output;
-    output << "CCT_GOVERNED_CORPUS_V1\n";
+    output << "CCT_GOVERNED_CORPUS_V2\n";
     output << sources_.size() << '\n';
     for (const auto& item : sources_) {
         output << quote(item.source_id) << ' ' << quote(item.source_uri) << ' ' << quote(item.license_or_consent) << ' '
@@ -436,9 +438,10 @@ std::string GovernedCorpus::serialize() const {
     }
     output << records_.size() << '\n';
     for (const auto& item : records_) {
+        const auto persisted_content = item.pii_detected ? std::string{} : item.content;
         output << quote(item.record_id) << ' ' << quote(item.source_id) << ' ' << quote(item.source_uri) << ' '
                << quote(item.license_or_consent) << ' ' << quote(item.jurisdiction) << ' ' << quote(item.collection_method) << ' '
-               << quote(item.collection_timestamp) << ' ' << quote(item.privacy_classification) << ' ' << quote(item.content) << ' '
+               << quote(item.collection_timestamp) << ' ' << quote(item.privacy_classification) << ' ' << quote(persisted_content) << ' '
                << quote(item.normalized_content) << ' ' << quote(item.content_hash) << ' ' << quote(item.normalized_hash) << ' ';
         write_strings(output, item.transformation_chain);
         output << ' ';
@@ -466,7 +469,8 @@ GovernedCorpus GovernedCorpus::deserialize(const std::string& text) {
     std::istringstream input(text);
     std::string header;
     std::getline(input, header);
-    require(header == "CCT_GOVERNED_CORPUS_V1", "invalid governed corpus header");
+    const bool version_one = header == "CCT_GOVERNED_CORPUS_V1";
+    require(version_one || header == "CCT_GOVERNED_CORPUS_V2", "invalid governed corpus header");
     GovernedCorpus corpus;
     std::size_t count = 0;
     input >> count;
@@ -495,6 +499,12 @@ GovernedCorpus GovernedCorpus::deserialize(const std::string& text) {
             item.opt_out >> item.evaluator_only >> item.pii_detected >> item.redacted >> item.near_duplicate >> item.quarantined >>
             item.deleted >> decision >> split >> data_class;
         item.reason_codes = read_strings(input);
+        if (item.pii_detected) {
+            item.content.clear();
+            item.normalized_content = "[redacted]";
+            if (std::find(item.reason_codes.begin(), item.reason_codes.end(), "raw_content_purged") == item.reason_codes.end())
+                item.reason_codes.push_back("raw_content_purged");
+        }
         item.decision = static_cast<CorpusDecision>(decision);
         item.split = static_cast<CorpusSplit>(split);
         item.data_class = static_cast<CorpusDataClass>(data_class);

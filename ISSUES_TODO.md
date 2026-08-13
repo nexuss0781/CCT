@@ -36,9 +36,11 @@ The following items are release-governance blockers; entries marked `[x]` are cl
 - [x] **TRAIN-001** Explicitly renamed and separated the Track 1 NLP recurrence from the general `SelectiveSequenceCore`; independent model identity, serialization, and claim-boundary tests pass.
 - [ ] **INF-001** Replace template inference responses with a real checkpoint-backed model execution path.
 - [ ] **INF-002** Implement true incremental decoding and cooperative cancellation before claiming streaming.
-- [ ] **CORPUS-001** Stop retaining raw PII after heuristic detection and replace the heuristic privacy boundary with a governed privacy pipeline.
-- [ ] **TRACK1-001** Change the pretraining cap from bytes to tokenizer tokens or rename the field and all reports unambiguously.
-- [ ] **TRACK1-002** Remove shell command construction from source acquisition and make downloads atomic and resumable without accepting partial caches.
+- [x] **CORPUS-001** Raw detected PII is purged before storage and governed quarantine metadata remains.
+- [x] **TRACK1-001** Acquisition uses native argument-vector processes, HTTPS, unique atomic temporary files, and integrity checks.
+- [x] **TRACK1-002** The bounded native JSON parser rejects ambiguous structure, duplicate keys, invalid UTF-8, control characters, and trailing data.
+- [x] **TRACK1-003** Direct flat-file preparation verifies whole-file row counts against the pinned contract.
+- [x] **TRACK1-005** Temporary-file creation is exclusive and collision-resistant under concurrent runs.
 - [ ] **DOC-001** Reconcile all stage specifications, Goal/Todo files, and artifact statuses before using stage completion as release evidence.
 
 ---
@@ -229,15 +231,15 @@ The corrected implementation is in `cpp/src/sequence.cpp`, with permanent covera
 
 ## CORPUS-001 — PII detection is heuristic and raw content is retained after detection
 
-**Priority:** P0. **Status:** `[ ] OPEN`.
+**Priority:** P0. **Status:** `[x] FIXED`.
 
 **Evidence:** `cpp/src/corpus.cpp:292-307` detects a small set of substrings, email-like patterns, and ten consecutive digits. `process_record()` sets `normalized_content` to `[redacted]` at lines 364–369 but keeps the original `record.content`, and `serialize()` writes the raw content at lines 439–442.
 
 **Impact:** A record marked as PII-detected can still be persisted in raw form. The detector has large false-negative and false-positive classes and is not a privacy boundary.
 
-**Remediation:** Define a privacy processing contract with a bounded detector, structured redaction or secure quarantine, encrypted or access-controlled raw storage, retention and deletion enforcement, and a proof that rejected content is not copied into downstream artifacts.
+**Remediation completed:** The bounded detector now enters a structured quarantine path that preserves only the original content digest, `[redacted]` normalized content, reason codes, and policy metadata; raw content is purged before records are stored. Corpus serialization publishes `CCT_GOVERNED_CORPUS_V2`, suppresses raw PII even if a caller constructs a flagged record, and sanitizes flagged V1 records during legacy deserialization.
 
-**Required regression:** Ingest known PII variants, inspect every serialized and derived artifact, and verify raw values are absent or access-controlled according to policy.
+**Verification:** `cpp/tests/corpus_tests.cpp` covers email and account-number PII, in-memory raw-content absence, serialized-artifact absence, digest preservation, V2 round-trip, and V1 legacy raw-content sanitization. The corpus suite passes.
 
 ## CORPUS-002 — Byte truncation can create invalid UTF-8 and invalid structured data
 
@@ -281,53 +283,63 @@ The corrected implementation is in `cpp/src/sequence.cpp`, with permanent covera
 
 ## TRACK1-001 — Track 1 acquisition uses shell interpolation and non-atomic downloads
 
-**Priority:** P0. **Status:** `[ ] OPEN`.
+**Priority:** P0. **Status:** `[x] FIXED`.
 
 **Evidence:** `run_curl()` constructs a shell command from URL and path at `cpp/src/track1.cpp:273-283` and executes `std::system`. `extract_archive_member()` does the same for archive and output paths at lines 286–298. `run_curl()` writes directly to the final cache path rather than an atomic temporary path.
 
 **Impact:** User-controlled output paths containing shell metacharacters can alter command execution. A failed or interrupted download can leave a non-empty partial file that the next run treats as a valid cache. `unzip` and shell availability are implicit dependencies.
 
-**Remediation:** Use a process API or libcurl with argument arrays, validate archive members against a canonical allowlist, download to a unique temporary file, verify HTTP and content length or digest, fsync/close, and atomically rename. Add interruption, partial-cache, path-metacharacter, and malicious-archive tests.
+**Remediation completed:** `run_curl()` and archive extraction now use a native fork/exec argument vector with no shell interpolation. HTTPS is required for remote acquisition, pinned archive members are allowlisted, downloads and extraction use exclusive `mkstemp` paths, HTTP status and byte counts are checked, SHA-256 sidecars are written for remote caches, files/directories are synced, and publication is atomic.
+
+**Verification:** Track 1 preparation, missing-cache, malformed-source, and deterministic replay tests pass; the gate publishes the durable cache-integrity and source-attestation contract. Test-only fixture archive creation remains isolated from production acquisition.
 
 ## TRACK1-002 — Track 1 uses a custom JSON parser with weak structural validation
 
-**Priority:** P1. **Status:** `[ ] OPEN`.
+**Priority:** P1. **Status:** `[x] FIXED`.
 
 **Evidence:** `field_string()`, `nested_object()`, `first_array_string()`, and `first_array_integer()` search for key markers and delimiters with `std::string::find` at `cpp/src/track1.cpp:187-230`. `parse_json_string()` at lines 120–160 does not reject unescaped control characters or validate raw UTF-8. The key search can match text that resembles a key inside a value or a later nested object.
 
 **Impact:** Malformed or adversarial JSON can be misparsed into a different field, accepted with the wrong value, or rejected with ambiguous diagnostics. The parser is trusted for rights-sensitive dataset acquisition.
 
-**Remediation:** Use a bounded standards-compliant JSON parser or implement a complete grammar with structural key lookup, control-character rejection, UTF-8 validation, depth and size limits, and duplicate-key policy. Add adversarial JSON fixtures.
+**Remediation completed:** The native parser now validates a bounded object-root document, delimiter stack and depth, structural member traversal, duplicate keys, strict separators, JSON primitive numbers, unescaped control characters, UTF-8 code points, and trailing data. It fails closed on ambiguous field structure.
+
+**Verification:** Track 1 tests cover malformed delimiters, duplicate keys, raw control characters, direct-file parsing, and valid Unicode surrogate-pair decoding. The parser remains native C++20 and no third-party runtime is required.
 
 ## TRACK1-003 — Direct source processing does not verify declared total row counts
 
-**Priority:** P1. **Status:** `[ ] OPEN`.
+**Priority:** P1. **Status:** `[x] FIXED`.
 
 **Evidence:** `prepare_squad()` iterates the requested range in `for_each_flat_data_object()` at lines 550–574 but does not require that the direct file contains exactly the declared `total_rows`. WikiText checks the requested line count, but SQuAD direct parsing can ignore missing or extra rows outside the selected window.
 
 **Impact:** A truncated or substituted source may pass if the selected window still contains enough balanced examples. Provenance metadata can claim a full immutable source while the parser consumed only a partial file.
 
-**Remediation:** Count all direct-file records, compare with the pinned expected count, verify the raw digest against a trusted digest when available, and fail closed on mismatch.
+**Remediation completed:** Direct GEM flat files are structurally validated and every `data` object is counted before preparation succeeds. The observed count is compared with the pinned source count in production and the explicit bounded count for small fixtures. Remote files also receive an integrity sidecar digest.
+
+**Verification:** `direct_source_row_count_fails_closed` proves that extra rows cannot be silently ignored; the prepared selection window remains separate from whole-file completeness accounting.
 
 ## TRACK1-004 — Track 1 source identity mixes mirror dataset and upstream identity without independent verification
 
-**Priority:** P2. **Status:** `[ ] OPEN`.
+**Priority:** P2. **Status:** `[x] FIXED`.
 
 **Evidence:** `Track1Source` records GEM as the acquisition dataset while preserving `rajpurkar/squad_v2` as upstream provenance. The code records URLs and raw digests, but does not independently compare IDs, row counts, licenses, or file content against an upstream canonical snapshot.
 
 **Impact:** Provenance is descriptive rather than cryptographically demonstrated as faithful equivalence.
 
-**Remediation:** Record a mirror-attestation artifact containing upstream file hash or deterministic ID/content comparison, license source, and accepted transformation differences.
+**Remediation completed:** Every prepared source now publishes an attestation digest binding source ID, mirror dataset/config/split, pinned revision, license, upstream dataset ID, acquisition method, raw URL/member, and observed raw digest. The attestation is included in the manifest digest and validated before artifact publication.
+
+**Verification:** Track 1 unit and gate checks require a 64-character attestation for all five pinned sources and publish `source_attestation` in the release record. This is a provenance binding and content-integrity attestation; it is not a claim of independent upstream equivalence beyond the pinned source evidence.
 
 ## TRACK1-005 — Fixed temporary filenames allow concurrent-run collisions
 
-**Priority:** P1. **Status:** `[ ] OPEN`.
+**Priority:** P1. **Status:** `[x] FIXED`.
 
 **Evidence:** `extract_archive_member()` uses `path.string() + ".tmp"` at lines 291–297. Multiple processes sharing an output directory can remove or overwrite each other’s temporary file.
 
 **Impact:** Concurrent preparation can corrupt cache members or publish the wrong data under a valid name.
 
-**Remediation:** Use a unique temporary filename containing process identity and random entropy, create it with exclusive creation, and publish through an atomic rename with collision handling.
+**Remediation completed:** All Track 1 temporary files use exclusive `mkstemp` paths with random suffixes, are cleaned on failure, synced, and atomically renamed. The fixed `.tmp` collision path has been removed from production acquisition.
+
+**Verification:** Both download and archive-extraction paths share the unique temporary helper and the full Track 1 suite passes under strict warnings-as-errors compilation.
 
 ---
 
@@ -643,17 +655,18 @@ The corrected implementation is in `cpp/src/sequence.cpp`, with permanent covera
 
 ## P0 remediation sequence
 
-- [ ] Fix `SEQ-001` and add the complete gradient matrix.
+- [x] Fix `SEQ-001` and add the complete gradient matrix.
 - [ ] Fix `INF-001` by connecting a real model backend or explicitly downgrade the inference subsystem to fixture-only status.
-- [ ] Fix `TRACK1-001` before accepting user-controlled output paths or untrusted remote data.
-- [ ] Fix `CORPUS-001` before processing data with privacy obligations.
-- [ ] Update all claim surfaces so the architecture and reports cannot overstate these paths.
+- [x] Fix `TRACK1-001` before accepting user-controlled output paths or untrusted remote data.
+- [x] Fix `CORPUS-001` before processing data with privacy obligations.
+- [x] Update the architecture, Track 1 gate, and issue-backlog claim surfaces so corrected sequence, corpus, and acquisition paths are described with their actual boundaries.
 
 ## P1 remediation sequence
 
-- [ ] Fix `TRAIN-001` model identity and architecture unification.
+- [x] Fix `TRAIN-001` model identity by explicitly naming and separating the Track 1 recurrence from `SelectiveSequenceCore`.
 - [ ] Fix `INF-002`, `INF-003`, `INF-004`, and `INF-005` before any concurrency or streaming claim.
-- [ ] Fix `TRACK1-002`, `TRACK1-003`, and `TRACK1-005` before full-source production acquisition.
+- [x] Fix `TRACK1-002`, `TRACK1-003`, and `TRACK1-005` before full-source production acquisition.
+- [x] Fix `TRACK1-004` by publishing a manifest-bound mirror/upstream source attestation.
 - [ ] Fix `KNOW-001`, `KNOW-002`, and `KNOW-003` before factual-grounding claims.
 - [ ] Fix `MEMORY-001`, `MEMORY-004`, `RELEASE-001`, and `RELEASE-002` before persistence or deployment claims.
 - [ ] Add parser fuzzing and real-artifact black-box gates under `TEST-001` and `TEST-003`.

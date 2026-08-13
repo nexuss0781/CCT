@@ -5,6 +5,7 @@
 #include <fstream>
 #include <iostream>
 #include <set>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -112,8 +113,10 @@ void test_prepare_counts_caps_and_isolation() {
     const std::set<std::string> train(pipeline.manifest().train_ids.begin(), pipeline.manifest().train_ids.end());
     for (const auto& id : pipeline.manifest().evaluation_ids) require(!train.contains(id), "SFT evaluation overlaps training");
     for (const auto& id : pipeline.manifest().final_test_ids) require(!train.contains(id), "final test overlaps training");
-    require(pipeline.manifest().manifest_digest.size() == 64U && pipeline.serialize_manifest().find("wikitext2_pretrain_train") != std::string::npos,
+    require(pipeline.manifest().manifest_digest.size() == 64U && pipeline.serialize_manifest().find("wikitext2_pretrain_train") != std::string::npos &&
+                pipeline.serialize_manifest().find("attestation_digest") != std::string::npos,
             "Track 1 manifest identity or source provenance is missing");
+    for (const auto& source : pipeline.manifest().sources) require(source.attestation_digest.size() == 64U, "source attestation digest is missing");
 }
 
 void test_deterministic_replay() {
@@ -146,6 +149,65 @@ void test_direct_flat_file_parser() {
             "GEM flat-file preparation did not preserve balanced categories and final-test rows");
 }
 
+void test_direct_source_row_count_fails_closed() {
+    const auto root = std::filesystem::path("/tmp/cct-track1-row-count");
+    std::filesystem::remove_all(root);
+    create_flat_fixture(root);
+    const auto path = root / "raw" / "squad2_sft_train_source_train.json";
+    std::ifstream input(path, std::ios::binary);
+    require(static_cast<bool>(input), "could not read direct row-count fixture");
+    std::ostringstream content;
+    content << input.rdbuf();
+    auto document = content.str();
+    const auto array_end = document.rfind("]}");
+    require(array_end != std::string::npos, "direct row-count fixture has no data-array close");
+    document.insert(array_end, R"(,{"id":"extra","title":"Extra","context":"Extra context.","question":"Extra question?","answers":{"text":[],"answer_start":[]}})");
+    write(path, document);
+    bool rejected = false;
+    try { Track1Pipeline(fixture_config(root)).prepare(); } catch (const Track1Error&) { rejected = true; }
+    require(rejected, "direct source row-count mismatch was accepted");
+}
+
+void test_duplicate_json_keys_fail_closed() {
+    const auto root = std::filesystem::path("/tmp/cct-track1-duplicate-key");
+    std::filesystem::remove_all(root);
+    create_flat_fixture(root);
+    const auto path = root / "raw" / "squad2_sft_train_source_train.json";
+    std::ifstream input(path, std::ios::binary);
+    require(static_cast<bool>(input), "could not read duplicate-key fixture");
+    std::ostringstream content;
+    content << input.rdbuf();
+    auto document = content.str();
+    const std::string marker = R"("id":"a1")";
+    const auto marker_position = document.find(marker);
+    require(marker_position != std::string::npos, "duplicate-key fixture marker is missing");
+    document.insert(marker_position + marker.size(), R"(,"id":"duplicate")");
+    write(path, document);
+    bool rejected = false;
+    try { Track1Pipeline(fixture_config(root)).prepare(); } catch (const Track1Error&) { rejected = true; }
+    require(rejected, "duplicate JSON key was accepted by the Track 1 parser");
+}
+
+void test_control_character_json_fails_closed() {
+    const auto root = std::filesystem::path("/tmp/cct-track1-control-character");
+    std::filesystem::remove_all(root);
+    create_flat_fixture(root);
+    const auto path = root / "raw" / "squad2_sft_train_source_train.json";
+    std::ifstream input(path, std::ios::binary);
+    require(static_cast<bool>(input), "could not read control-character fixture");
+    std::ostringstream content;
+    content << input.rdbuf();
+    auto document = content.str();
+    const std::string title = R"("title":"One")";
+    const auto title_position = document.find(title);
+    require(title_position != std::string::npos, "control-character fixture marker is missing");
+    document.replace(title_position, title.size(), std::string(R"("title":"One)") + '\n' + "bad\\\"");
+    write(path, document);
+    bool rejected = false;
+    try { Track1Pipeline(fixture_config(root)).prepare(); } catch (const Track1Error&) { rejected = true; }
+    require(rejected, "raw control character in JSON string was accepted");
+}
+
 void test_missing_cache_fails_closed() {
     const auto root = std::filesystem::path("/tmp/cct-track1-missing");
     std::filesystem::remove_all(root);
@@ -171,6 +233,9 @@ int main() {
         {"prepare_counts_caps_and_isolation", test_prepare_counts_caps_and_isolation},
         {"deterministic_replay", test_deterministic_replay},
         {"direct_flat_file_parser", test_direct_flat_file_parser},
+        {"direct_source_row_count_fails_closed", test_direct_source_row_count_fails_closed},
+        {"duplicate_json_keys_fail_closed", test_duplicate_json_keys_fail_closed},
+        {"control_character_json_fails_closed", test_control_character_json_fails_closed},
         {"missing_cache_fails_closed", test_missing_cache_fails_closed},
         {"malformed_source_fails_closed", test_malformed_source_fails_closed}};
     std::size_t passed = 0U;

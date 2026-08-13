@@ -56,8 +56,34 @@ void test_rights_privacy_and_quality_fail_closed() {
     corpus.register_source({"unresolved", "https://unresolved.invalid/source", "unknown", "unknown", "unknown", "unknown", "high-risk", "quarantine", false, false, false, false});
     const auto unresolved = corpus.ingest("unresolved-record", "unresolved", "unresolved source text with enough length", CorpusSplit::Train, CorpusDataClass::GeneralText);
     require(unresolved.decision == CorpusDecision::Quarantine && unresolved.quarantined, "unresolved rights were not quarantined");
-    const auto pii = corpus.ingest("pii-record", "pg1342", "customer email alice@example.com and bank account 1234567890", CorpusSplit::Train, CorpusDataClass::GeneralText);
-    require(pii.decision == CorpusDecision::Quarantine && pii.pii_detected && pii.redacted, "PII record was not redacted and quarantined");
+    const std::string pii_content = "customer email alice@example.com and bank account 1234567890";
+    const auto pii = corpus.ingest("pii-record", "pg1342", pii_content, CorpusSplit::Train, CorpusDataClass::GeneralText);
+    require(pii.decision == CorpusDecision::Quarantine && pii.pii_detected && pii.redacted && pii.content.empty() &&
+                pii.normalized_content == "[redacted]" && pii.content_hash == GovernedCorpus::content_sha256(pii_content) &&
+                std::find(pii.reason_codes.begin(), pii.reason_codes.end(), "raw_content_purged") != pii.reason_codes.end(),
+            "PII record retained raw content or lost its quarantine digest");
+    const auto serialized = corpus.serialize();
+    require(serialized.find("alice@example.com") == std::string::npos && serialized.find("CCT_GOVERNED_CORPUS_V2") == 0U,
+            "serialized corpus retained raw PII or did not publish the privacy schema version");
+    const auto restored = GovernedCorpus::deserialize(serialized);
+    const auto restored_records = restored.all_records();
+    const auto restored_pii = std::find_if(restored_records.begin(), restored_records.end(),
+                                           [](const auto& record) { return record.record_id == "pii-record"; });
+    require(restored_pii != restored_records.end(), "serialized PII quarantine record was lost");
+    require(restored_pii->content.empty() && restored_pii->normalized_content == "[redacted]",
+            "deserialized PII quarantine record restored raw content");
+    auto legacy = serialized;
+    legacy.replace(0U, std::string("CCT_GOVERNED_CORPUS_V2").size(), "CCT_GOVERNED_CORPUS_V1");
+    const auto empty_redacted = std::string("\"\" \"[redacted]\"");
+    const auto legacy_content_position = legacy.find(empty_redacted);
+    require(legacy_content_position != std::string::npos, "could not construct legacy raw-PII fixture");
+    legacy.replace(legacy_content_position, empty_redacted.size(), "\"" + pii_content + "\" \"[redacted]\"");
+    const auto legacy_restored = GovernedCorpus::deserialize(legacy);
+    const auto legacy_records = legacy_restored.all_records();
+    const auto legacy_pii = std::find_if(legacy_records.begin(), legacy_records.end(),
+                                         [](const auto& record) { return record.record_id == "pii-record"; });
+    require(legacy_pii != legacy_records.end() && legacy_pii->content.empty(),
+            "legacy corpus deserialization restored raw PII");
     const auto short_record = corpus.ingest("short-record", "pg1342", "tiny", CorpusSplit::Train, CorpusDataClass::GeneralText);
     require(short_record.decision == CorpusDecision::Reject &&
                 std::find(short_record.reason_codes.begin(), short_record.reason_codes.end(), "quality_length") != short_record.reason_codes.end(),
