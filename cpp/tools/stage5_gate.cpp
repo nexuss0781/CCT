@@ -216,6 +216,12 @@ Stage5ModelConfig matched_model_config(Stage5ModelKind kind, std::size_t vocabul
     return best;
 }
 
+#if defined(CCT_SANITIZER_SHARD)
+constexpr std::size_t kComparisonTrainingSteps = 2U;
+#else
+constexpr std::size_t kComparisonTrainingSteps = 20U;
+#endif
+
 ModelResult train_model(Stage5ModelKind kind, const Batch& train, const Batch& validation,
                         std::size_t vocabulary, std::uint64_t manifest_fingerprint, std::size_t target_parameters) {
     const auto config = matched_model_config(kind, vocabulary, target_parameters);
@@ -223,7 +229,7 @@ ModelResult train_model(Stage5ModelKind kind, const Batch& train, const Batch& v
     const auto before = model.evaluate(train.inputs, train.targets, train.masks);
     const auto started = std::chrono::steady_clock::now();
     model.train_reference_finite_difference(train.inputs, train.targets, train.masks,
-                                            Stage5TrainConfig{20, 0.12, 10.0, 0, manifest_fingerprint});
+                                            Stage5TrainConfig{kComparisonTrainingSteps, 0.12, 10.0, 0, manifest_fingerprint});
     const auto finished = std::chrono::steady_clock::now();
     const auto after = model.evaluate(train.inputs, train.targets, train.masks);
     const auto validation_result = model.evaluate(validation.inputs, validation.targets, validation.masks);
@@ -305,7 +311,13 @@ std::string code_safety_check(const std::string& code_fixture) {
 }
 
 std::string memory_check() {
-    PersistentMemory memory(MemoryConfig{4, 32, 0.0, 181, true});
+    MemoryConfig memory_config;
+    memory_config.embedding_dim = 4U;
+    memory_config.max_active_records = 32U;
+    memory_config.minimum_confidence = 0.0;
+    memory_config.chain_seed = 181U;
+    memory_config.immediate_deletion = true;
+    PersistentMemory memory(memory_config);
     const auto report = cct::evaluate_stage5_memory_augmentation(memory);
     require(report.no_memory_hits == 0 && report.memory_hits == 1 && report.evidence_ids_attributed,
             "Stage 5 memory augmentation did not return attributed evidence");
@@ -422,7 +434,8 @@ int main(int argc, char** argv) {
            << "**Commit:** `" << commit << "`  \n"
            << "**Dirty tree at gate execution:** `" << (dirty.empty() ? "False" : "True") << "`\n\n"
            << "## Methodology\n\n"
-           << "The gate uses two hash-addressed Project Gutenberg text fixtures, a repository-owned C++ fixture, a byte-fallback vocabulary, a compact deterministic token benchmark, five parameter-matched native model configurations, one shared finite-difference reference optimizer with identical steps, learning rate, clip norm, batch, context, and splits, Stage 4 frozen-memory retrieval, checkpoint replay, long-context finite-metric checks, static code safety checks, and evaluator-only canary separation. No generated code is executed.\n\n"
+                          << "The gate uses two hash-addressed Project Gutenberg text fixtures, a repository-owned C++ fixture, a byte-fallback vocabulary, a compact deterministic token benchmark, five parameter-matched native model configurations, one shared finite-difference reference optimizer with identical steps, learning rate, clip norm, batch, context, and splits, Stage 4 frozen-memory retrieval, checkpoint replay, long-context finite-metric checks, static code safety checks, and evaluator-only canary separation. The Release gate uses 20 comparison steps; the ASan/UBSan shard uses a bounded 2-step traversal of every model path to keep instrumentation runtime finite. No generated code is executed.\n\n"
+
            << "## Matched configurations\n\n| Model | Before CE | After CE | Validation CE | Validation accuracy | Parameters | Target parameters | Absolute delta | State memory |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|\n";
     for (const auto& result : model_results) {
         report << "| " << result.name << " | " << result.before_cross_entropy << " | " << result.after_cross_entropy

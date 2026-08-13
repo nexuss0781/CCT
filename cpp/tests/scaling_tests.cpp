@@ -114,7 +114,13 @@ void test_matched_models_and_memory_context() {
         require(after.cross_entropy < before.cross_entropy && model.parameter_count() > 0 && model.state_memory_bytes() > 0,
                 "matched Stage 5 model failed to train or report resources");
     }
-    cct::PersistentMemory memory(cct::MemoryConfig{4, 16, 0.0, 91, true});
+    cct::MemoryConfig memory_config;
+    memory_config.embedding_dim = 4U;
+    memory_config.max_active_records = 16U;
+    memory_config.minimum_confidence = 0.0;
+    memory_config.chain_seed = 91U;
+    memory_config.immediate_deletion = true;
+    cct::PersistentMemory memory(memory_config);
     const auto report = cct::evaluate_stage5_memory_augmentation(memory);
     require(report.no_memory_hits == 0 && report.memory_hits == 1 && report.evidence_ids_attributed && report.retrieval_latency_ms >= 0.0,
             "Stage 5 memory attribution report failed");

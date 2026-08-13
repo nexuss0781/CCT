@@ -6,6 +6,8 @@
 #include <cstdint>
 #include <map>
 #include <optional>
+#include <unordered_map>
+#include <unordered_set>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -51,6 +53,7 @@ struct MemoryRecord {
 
 struct MemoryConfig {
     std::size_t embedding_dim = 4;
+    std::string embedding_backend = "external-supplied-v1";
     std::size_t max_active_records = 1024;
     double minimum_confidence = 0.0;
     std::uint64_t chain_seed = 1469598103934665603ULL;
@@ -60,6 +63,8 @@ struct MemoryConfig {
 };
 
 struct MemoryQuery {
+    /** Optional normalized lexical query used by the indexed content path. */
+    std::optional<std::string> text;
     std::vector<double> embedding;
     std::optional<LogicalTime> valid_at;
     std::optional<LogicalTime> created_after;
@@ -180,6 +185,8 @@ public:
                                MemoryId memory_id, const std::string& reason = "causal_event");
 
     std::vector<MemoryHit> retrieve(const MemoryQuery& query) const;
+    /** Deterministic O(M) correctness oracle used to measure indexed recall. */
+    std::vector<MemoryHit> retrieve_linear_oracle(const MemoryQuery& query) const;
     CitationBinding bind_citation(const std::string& claim_id, const std::vector<MemoryHit>& hits,
                                   CitationSupport support = CitationSupport::Supported) const;
     EvidenceContext evidence_context(const MemoryQuery& query) const;
@@ -210,6 +217,7 @@ private:
     std::map<MemoryId, std::vector<MemoryRecord>> versions_;
     std::map<MemoryId, MemoryRecord> active_;
     std::uint64_t next_sequence_ = 1;
+    std::unordered_map<std::string, std::unordered_set<MemoryId>> content_index_;
 
     void validate_record(const MemoryRecord& record) const;
     void append_event(MemoryEvent event);
@@ -221,6 +229,10 @@ private:
     std::string event_digest(const MemoryEvent& event) const;
     bool valid_at(const MemoryRecord& record, const MemoryQuery& query) const;
     double cosine_similarity(const std::vector<double>& left, const std::vector<double>& right) const;
+    double lexical_similarity(const std::string& query, const std::string& content) const;
+    std::vector<MemoryHit> retrieve_internal(const MemoryQuery& query, bool use_index) const;
+    void index_record_terms(const MemoryRecord& record);
+    void rebuild_retrieval_index();
     void reset_state();
     std::vector<MemoryId> deferred_deletions_;
 };

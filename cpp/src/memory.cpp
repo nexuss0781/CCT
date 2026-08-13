@@ -2,6 +2,7 @@
 #include "cct/corpus.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cerrno>
 #include <cstdio>
 #include <filesystem>
@@ -35,6 +36,22 @@ std::uint64_t mix_hash(std::uint64_t state, std::uint64_t value) {
 std::uint64_t hash_bytes(std::uint64_t state, const std::string& value) {
     for (const auto character : value) state = mix_hash(state, static_cast<unsigned char>(character));
     return state;
+}
+
+std::vector<std::string> memory_terms(const std::string& text) {
+    std::vector<std::string> result;
+    std::string current;
+    for (const char raw_character : text) {
+        const auto character = static_cast<unsigned char>(raw_character);
+        if (std::isalnum(character) != 0U) {
+            current.push_back(static_cast<char>(std::tolower(character)));
+        } else if (!current.empty()) {
+            result.push_back(current);
+            current.clear();
+        }
+    }
+    if (!current.empty()) result.push_back(current);
+    return result;
 }
 
 std::uint64_t double_bits(double value) {
@@ -299,6 +316,7 @@ MemoryDecision MemoryWriteController::decide(const MemoryRecord& candidate,
 PersistentMemory::PersistentMemory(MemoryConfig config)
     : config_(std::move(config)), encoder_(config_.embedding_dim), write_controller_(config_.novelty_threshold, config_.quarantine_threshold), next_sequence_(1) {
     require(config_.embedding_dim > 0, "memory embedding dimension must be positive");
+    require(!config_.embedding_backend.empty(), "memory embedding backend must be named");
     require(config_.max_active_records > 0, "memory capacity must be positive");
     require(finite(config_.minimum_confidence) && config_.minimum_confidence >= 0.0 && config_.minimum_confidence <= 1.0,
             "invalid memory confidence threshold");
@@ -367,6 +385,7 @@ void PersistentMemory::apply_event(const MemoryEvent& event, bool validate_chain
     if (event.type == MemoryEventType::Append || (event.type == MemoryEventType::Quarantine && versions.empty())) {
         require(versions.empty(), "append event targets an existing memory");
         versions.push_back(event.record);
+        index_record_terms(event.record);
         if (event.record.status == MemoryStatus::Active) active_[event.record.memory_id] = event.record;
         return;
     }
@@ -377,6 +396,7 @@ void PersistentMemory::apply_event(const MemoryEvent& event, bool validate_chain
         versions.back().status = MemoryStatus::Superseded;
         active_.erase(event.target_id);
         versions.push_back(event.record);
+        index_record_terms(event.record);
         if (event.record.status == MemoryStatus::Active) active_[event.target_id] = event.record;
         return;
     }
@@ -386,6 +406,7 @@ void PersistentMemory::apply_event(const MemoryEvent& event, bool validate_chain
         active_.erase(event.target_id);
     }
     versions.push_back(event.record);
+    index_record_terms(event.record);
     if (event.record.status == MemoryStatus::Active) active_[event.target_id] = event.record;
 }
 
@@ -557,37 +578,81 @@ double PersistentMemory::cosine_similarity(const std::vector<double>& left, cons
     return dot / std::sqrt(left_norm * right_norm);
 }
 
-std::vector<MemoryHit> PersistentMemory::retrieve(const MemoryQuery& query) const {
+double PersistentMemory::lexical_similarity(const std::string& query, const std::string& content) const {
+    const auto query_values = memory_terms(query);
+    const auto content_values = memory_terms(content);
+    if (query_values.empty() || content_values.empty()) return 0.0;
+    const std::unordered_set<std::string> content_set(content_values.begin(), content_values.end());
+    std::size_t matches = 0U;
+    const std::unordered_set<std::string> query_set(query_values.begin(), query_values.end());
+    for (const auto& term : query_set) {
+        if (content_set.contains(term)) ++matches;
+    }
+    const auto query_unique = query_set.size();
+    return query_unique == 0U ? 0.0 : static_cast<double>(matches) / static_cast<double>(query_unique);
+}
+
+void PersistentMemory::index_record_terms(const MemoryRecord& record) {
+    if (record.status == MemoryStatus::Deleted || record.status == MemoryStatus::Quarantined) return;
+    const auto values = memory_terms(record.content);
+    const std::unordered_set<std::string> unique_values(values.begin(), values.end());
+    for (const auto& term : unique_values) content_index_[term].insert(record.memory_id);
+}
+
+void PersistentMemory::rebuild_retrieval_index() {
+    content_index_.clear();
+    for (const auto& [memory_id, record] : active_) {
+        (void)memory_id;
+        index_record_terms(record);
+    }
+    for (const auto& [memory_id, versions] : versions_) {
+        (void)memory_id;
+        for (const auto& record : versions) index_record_terms(record);
+    }
+}
+
+std::vector<MemoryHit> PersistentMemory::retrieve(const MemoryQuery& query) const { return retrieve_internal(query, true); }
+
+std::vector<MemoryHit> PersistentMemory::retrieve_linear_oracle(const MemoryQuery& query) const { return retrieve_internal(query, false); }
+
+std::vector<MemoryHit> PersistentMemory::retrieve_internal(const MemoryQuery& query, const bool use_index) const {
     require(query.embedding.empty() || query.embedding.size() == config_.embedding_dim,
             "memory query embedding dimension mismatch");
-    struct Candidate {
-        MemoryHit hit;
+    std::unordered_set<MemoryId> indexed_ids;
+    if (use_index && query.text.has_value()) {
+        for (const auto& term : memory_terms(*query.text)) {
+            const auto found = content_index_.find(term);
+            if (found != content_index_.end()) indexed_ids.insert(found->second.begin(), found->second.end());
+        }
+    }
+    const auto candidate_allowed = [&](const MemoryId id) {
+        return !use_index || !query.text.has_value() || indexed_ids.contains(id);
     };
+    struct Candidate { MemoryHit hit; };
     std::vector<Candidate> candidates;
+    const auto append_candidate = [&](const MemoryRecord& record) {
+        if (record.status == MemoryStatus::Deleted || record.status == MemoryStatus::Quarantined ||
+            (record.status == MemoryStatus::Superseded && !query.include_history) ||
+            record.confidence < query.minimum_confidence || !valid_at(record, query) ||
+            (query.source_id.has_value() && record.source.source_id != *query.source_id) ||
+            (query.event_id.has_value() && std::find(record.event_ids.begin(), record.event_ids.end(), *query.event_id) == record.event_ids.end()) ||
+            (query.conflict_group.has_value() && record.conflict_group != *query.conflict_group)) return;
+        const auto lexical = query.text.has_value() ? lexical_similarity(*query.text, record.content) : 0.0;
+        if (query.text.has_value() && lexical <= 0.0) return;
+        const auto vector = query.embedding.empty() ? 0.0 : cosine_similarity(query.embedding, record.embedding);
+        const auto score = query.embedding.empty() ? lexical : (query.text.has_value() ? 0.5 * lexical + 0.5 * vector : vector);
+        candidates.push_back({{record.memory_id, record.version, score, record.source, record.source.span_start,
+                               record.source.span_end, record.confidence, record.status, record.conflict_group, record.checksum, record.checksum_digest}});
+    };
     if (query.include_history) {
         for (const auto& [memory_id, versions] : versions_) {
-            for (const auto& record : versions) {
-                if (record.status == MemoryStatus::Deleted || record.status == MemoryStatus::Quarantined) continue;
-                if (record.status == MemoryStatus::Superseded && !query.include_history) continue;
-                if (record.confidence < query.minimum_confidence || !valid_at(record, query)) continue;
-                if (query.source_id.has_value() && record.source.source_id != *query.source_id) continue;
-                if (query.event_id.has_value() && std::find(record.event_ids.begin(), record.event_ids.end(), *query.event_id) == record.event_ids.end()) continue;
-                if (query.conflict_group.has_value() && record.conflict_group != *query.conflict_group) continue;
-                const auto score = query.embedding.empty() ? 0.0 : cosine_similarity(query.embedding, record.embedding);
-                candidates.push_back({{record.memory_id, record.version, score, record.source, record.source.span_start,
-                                       record.source.span_end, record.confidence, record.status, record.conflict_group, record.checksum, record.checksum_digest}});
-            }
+            if (!candidate_allowed(memory_id)) continue;
+            for (const auto& record : versions) append_candidate(record);
         }
     } else {
         for (const auto& [memory_id, record] : active_) {
-            (void)memory_id;
-            if (record.status != MemoryStatus::Active || record.confidence < query.minimum_confidence || !valid_at(record, query)) continue;
-            if (query.source_id.has_value() && record.source.source_id != *query.source_id) continue;
-            if (query.event_id.has_value() && std::find(record.event_ids.begin(), record.event_ids.end(), *query.event_id) == record.event_ids.end()) continue;
-            if (query.conflict_group.has_value() && record.conflict_group != *query.conflict_group) continue;
-            const auto score = query.embedding.empty() ? 0.0 : cosine_similarity(query.embedding, record.embedding);
-            candidates.push_back({{record.memory_id, record.version, score, record.source, record.source.span_start,
-                                   record.source.span_end, record.confidence, record.status, record.conflict_group, record.checksum, record.checksum_digest}});
+            if (!candidate_allowed(memory_id)) continue;
+            append_candidate(record);
         }
     }
     std::sort(candidates.begin(), candidates.end(), [](const Candidate& left, const Candidate& right) {
@@ -683,6 +748,7 @@ void PersistentMemory::reset_state() {
     event_log_.clear();
     versions_.clear();
     active_.clear();
+    content_index_.clear();
     next_sequence_ = 1;
     deferred_deletions_.clear();
 }
@@ -695,6 +761,7 @@ void PersistentMemory::rebuild_from_log() {
         event_log_.push_back(event);
         next_sequence_ = event.sequence + 1;
     }
+    rebuild_retrieval_index();
 }
 
 std::string PersistentMemory::canonical_state_export() const {
@@ -721,10 +788,10 @@ std::string PersistentMemory::log_export() const {
 
 std::string PersistentMemory::serialize_snapshot() const {
     std::ostringstream output;
-    output << "CCT_MEMORY_SNAPSHOT_V2\n" << std::setprecision(17);
+    output << "CCT_MEMORY_SNAPSHOT_V3\n" << std::setprecision(17);
     output << "CONFIG " << config_.embedding_dim << ' ' << config_.max_active_records << ' '
            << config_.minimum_confidence << ' ' << config_.chain_seed << ' ' << config_.novelty_threshold << ' '
-           << config_.quarantine_threshold << ' ' << (config_.immediate_deletion ? 1 : 0) << '\n';
+           << config_.quarantine_threshold << ' ' << (config_.immediate_deletion ? 1 : 0) << ' ' << std::quoted(config_.embedding_backend) << '\n';
     for (const auto& event : event_log_) {
         output << "EVENT " << event.sequence << ' ' << event_type_value(event.type) << ' ' << event.target_id << ' '
                << event.previous_version << ' ' << std::quoted(event.reason) << ' ' << event.previous_event_checksum << ' '
@@ -743,7 +810,8 @@ PersistentMemory PersistentMemory::deserialize_snapshot(const std::string& snaps
     std::getline(input, header);
     const bool version_one = header == "CCT_MEMORY_SNAPSHOT_V1";
     const bool version_two = header == "CCT_MEMORY_SNAPSHOT_V2";
-    require(version_one || version_two, "invalid memory snapshot header");
+    const bool version_three = header == "CCT_MEMORY_SNAPSHOT_V3";
+    require(version_one || version_two || version_three, "invalid memory snapshot header");
     std::string token;
     MemoryConfig config;
     int immediate_deletion = 0;
@@ -751,15 +819,16 @@ PersistentMemory PersistentMemory::deserialize_snapshot(const std::string& snaps
     require(token == "CONFIG" && config.embedding_dim > 0U && config.embedding_dim <= 4096U && config.max_active_records > 0U &&
                 config.max_active_records <= maximum_records && finite(config.minimum_confidence) && config.minimum_confidence >= 0.0 && config.minimum_confidence <= 1.0,
             "invalid memory snapshot configuration");
-    if (version_two) {
+    if (version_two || version_three) {
         input >> config.novelty_threshold >> config.quarantine_threshold >> immediate_deletion;
         require(static_cast<bool>(input) && finite(config.novelty_threshold) && config.novelty_threshold >= 0.0 && finite(config.quarantine_threshold) &&
                     config.quarantine_threshold >= 0.0 && config.quarantine_threshold <= 1.0,
-                "invalid V2 memory snapshot thresholds");
+                "invalid V2/V3 memory snapshot thresholds");
+        if (version_three) input >> std::quoted(config.embedding_backend);
     } else {
         input >> immediate_deletion;
     }
-    require(static_cast<bool>(input), "truncated memory snapshot configuration");
+    require(static_cast<bool>(input) && !config.embedding_backend.empty(), "truncated memory snapshot configuration");
     config.immediate_deletion = immediate_deletion != 0;
     PersistentMemory memory(config);
     std::uint64_t legacy_previous_checksum = config.chain_seed;
@@ -772,10 +841,10 @@ PersistentMemory PersistentMemory::deserialize_snapshot(const std::string& snaps
             event.previous_event_checksum >> event.event_checksum;
         require(static_cast<bool>(input) && event_type <= event_type_value(MemoryEventType::Quarantine), "invalid memory event header");
         event.type = static_cast<MemoryEventType>(event_type);
-        if (version_two) {
+        if (version_two || version_three) {
             input >> std::quoted(event.previous_event_digest) >> std::quoted(event.event_digest);
         }
-        event.record = read_record(input, version_two);
+        event.record = read_record(input, version_two || version_three);
         require(static_cast<bool>(input), "truncated memory snapshot event");
         require(event.record.embedding.size() <= 4096U && event.record.event_ids.size() <= maximum_records &&
                     event.record.causal_parents.size() <= maximum_records,

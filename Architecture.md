@@ -113,7 +113,7 @@ It chooses the nonlinear fit only when training error is less than 90% of the li
 
 Persistent memory is an append-oriented event log. Records contain content, embeddings, event references, causal parents, validity intervals, provenance spans, confidence, status, retention, and conflict group. Updates, tombstones, quarantines, capacity expiry, replay, and snapshots are represented as events.
 
-The current encoder produces deterministic hash-derived vectors from the supplied embedding and record metadata. It is not a learned semantic encoder. Retrieval scans active records linearly and ranks by cosine similarity, confidence, version, and ID. Citation binding verifies that the active record version and stored checksum still match the retrieved hit.
+Memory storage and integrity use a deterministic checksum encoder, while retrieval vectors are supplied by the caller under the versioned `MemoryConfig::embedding_backend` contract (`external-supplied-v1` by default). Text queries use an indexed normalized-term posting path, and `retrieve_linear_oracle()` remains available for recall/correctness measurement; vector queries remain exact cosine ranking over the supplied vectors. Citation binding verifies that the active record version and stored checksum still match the retrieved hit. The interface does not claim semantic quality for the default external vector source.
 
 ### 4.6 Native language training
 
@@ -151,7 +151,7 @@ The following connections remain outside the verified implementation boundary:
 2. `ModelRoute::Hybrid` and `ModelRoute::Transformer` remain controlled fixture route identities; they do not load independent transformer or hybrid model artifacts.
 3. Retrieval output is governed document content with citation verification; it is not evidence that the checkpoint model generated or reasoned over the document.
 4. The Track 1 trainer uses the explicitly separate `Track1CctRecurrence` path and does not use the general complex or normalized sequence-core modes; its claims are reported independently.
-5. Memory retrieval uses a deterministic hash encoder and linear scan rather than a learned embedding model and indexed search.
+5. Memory retrieval has a versioned externally supplied-vector contract and an indexed lexical path with a linear correctness oracle; the default implementation does not claim a learned semantic embedding model.
 6. The mathematical manifold, topological memory, eigenmode reasoning, learned metric, variational inference, and claimed scaling laws are not implemented as end-to-end components.
 
 ## 6. Complexity and resource reality
@@ -184,7 +184,7 @@ The second priority is honest system integration: route only configured model ar
 
 The third priority is mathematical validation: formulate the actual discrete operator, state the boundary conditions and timestep domain, prove or test stability in that domain, compare against matched baselines, and remove unsupported complexity, geometry, topology, and scaling claims until their implementations and measurements exist.
 
-The fourth priority is data and persistence hardening: replace heuristic privacy checks and custom parsers with bounded, standards-compliant validation, strengthen checksums and atomic persistence, and add indexed retrieval and scalable deduplication.
+The fourth priority is data and persistence hardening: keep heuristic privacy checks explicitly labeled as candidates, use bounded fail-closed parsers, strengthen checksums and atomic persistence, and maintain indexed retrieval with deterministic correctness oracles.
 
 ## 9. Verification commands
 
@@ -198,7 +198,7 @@ cmake --build build-review --parallel 2
 ctest --test-dir build-review --output-on-failure
 ```
 
-The review build completed with **37/37 tests passing**. A sanitizer build reached the test phase after demoting a GCC sanitizer-build `array-bounds` warning, but the full sanitizer run exceeded the review timeout during the slower stage tests and was stopped. This is recorded as a validation limitation, not a sanitizer pass.
+The current review replay completed with **39/39 registered Release tests passing**, the expanded-warning profile passing, a 20-target ASan/UBSan unit shard passing, and the complete 19-gate ASan/UBSan shard passing after the Stage 5 gate was bounded to a 2-step instrumentation traversal while Release retains the full 20-step comparison. This is sanitizer evidence for the exercised native paths, not a claim of production readiness.
 
 ## References
 
