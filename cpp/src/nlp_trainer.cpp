@@ -144,7 +144,7 @@ NlpModelKind model_kind_from_number(const std::size_t value) {
 
 std::string nlp_model_kind_name(const NlpModelKind kind) {
     switch (kind) {
-        case NlpModelKind::CCT: return "cct";
+        case NlpModelKind::Track1CctRecurrence: return "track1_cct_recurrence";
         case NlpModelKind::DenseCausalAttention: return "dense_causal_attention";
         case NlpModelKind::GRU: return "gru";
         case NlpModelKind::DiagonalSSM: return "diagonal_ssm";
@@ -224,7 +224,7 @@ std::size_t NextTokenModel::dense_offset() const noexcept { return cct_offset();
 std::size_t NextTokenModel::head_offset() const noexcept {
     const auto hidden = config_.hidden_dim;
     const auto input = config_.embedding_dim;
-    if (config_.kind == NlpModelKind::CCT) return cct_offset() + 4U * hidden * input + 3U * hidden;
+    if (config_.kind == NlpModelKind::Track1CctRecurrence) return cct_offset() + 4U * hidden * input + 3U * hidden;
     if (config_.kind == NlpModelKind::GRU) return gru_offset() + 3U * (hidden * input + hidden * hidden + hidden);
     if (config_.kind == NlpModelKind::DiagonalSSM) return ssm_offset() + hidden + hidden * input;
     return dense_offset() + 3U * hidden * input;
@@ -239,7 +239,7 @@ std::size_t NextTokenModel::expected_parameter_count() const noexcept {
     const auto vocabulary = config_.vocabulary_size;
     const auto embedding = vocabulary * input;
     const auto head = vocabulary * hidden + vocabulary;
-    if (config_.kind == NlpModelKind::CCT) return embedding + 4U * hidden * input + 3U * hidden + head;
+    if (config_.kind == NlpModelKind::Track1CctRecurrence) return embedding + 4U * hidden * input + 3U * hidden + head;
     if (config_.kind == NlpModelKind::GRU) return embedding + 3U * (hidden * input + hidden * hidden + hidden) + head;
     if (config_.kind == NlpModelKind::DiagonalSSM) return embedding + hidden + hidden * input + head;
     return embedding + 3U * hidden * input + head;
@@ -251,7 +251,7 @@ void NextTokenModel::initialize() {
     const auto scale = 1.0 / std::sqrt(static_cast<double>(config_.embedding_dim + config_.hidden_dim));
     std::normal_distribution<double> distribution(0.0, scale);
     for (auto& parameter : parameters_) parameter = distribution(generator);
-    if (config_.kind == NlpModelKind::CCT) {
+    if (config_.kind == NlpModelKind::Track1CctRecurrence) {
         for (std::size_t index = 0; index < config_.hidden_dim; ++index) {
             parameters_[cct_offset() + 2U * config_.hidden_dim * config_.embedding_dim + index] = 2.0;
         }
@@ -277,7 +277,7 @@ void NextTokenModel::validate_sequence(const NlpSequence& sequence) const {
     }
 }
 
-std::vector<std::vector<double>> forward_cct(const std::vector<double>& parameters, const NlpModelConfig& config,
+std::vector<std::vector<double>> forward_track1_cct_recurrence(const std::vector<double>& parameters, const NlpModelConfig& config,
                                              const NlpSequence& sequence) {
     const auto input = config.embedding_dim;
     const auto hidden = config.hidden_dim;
@@ -433,7 +433,7 @@ std::vector<std::vector<double>> forward_dense(const std::vector<double>& parame
 
 std::vector<std::vector<double>> model_forward(const std::vector<double>& parameters, const NlpModelConfig& config,
                                                const NlpSequence& sequence) {
-    if (config.kind == NlpModelKind::CCT) return forward_cct(parameters, config, sequence);
+    if (config.kind == NlpModelKind::Track1CctRecurrence) return forward_track1_cct_recurrence(parameters, config, sequence);
     if (config.kind == NlpModelKind::GRU) return forward_gru(parameters, config, sequence);
     if (config.kind == NlpModelKind::DiagonalSSM) return forward_ssm(parameters, config, sequence);
     return forward_dense(parameters, config, sequence);
@@ -461,7 +461,7 @@ double cross_entropy_from_logits(const std::vector<std::vector<double>>& logits,
     return loss / static_cast<double>(count);
 }
 
-NlpGradientResult cct_gradients(const std::vector<double>& parameters, const NlpModelConfig& config,
+NlpGradientResult track1_cct_gradients(const std::vector<double>& parameters, const NlpModelConfig& config,
                                 const NlpSequence& sequence) {
     const auto input = config.embedding_dim;
     const auto hidden = config.hidden_dim;
@@ -586,7 +586,7 @@ NlpGradientResult cct_gradients(const std::vector<double>& parameters, const Nlp
 
 NlpGradientResult NextTokenModel::loss_and_gradients(const NlpSequence& sequence) const {
     validate_sequence(sequence);
-    if (config_.kind == NlpModelKind::CCT) return cct_gradients(parameters_, config_, sequence);
+    if (config_.kind == NlpModelKind::Track1CctRecurrence) return track1_cct_gradients(parameters_, config_, sequence);
     const auto base_loss = loss_only(sequence);
     const auto original = parameters_;
     std::vector<double> gradients(original.size(), 0.0);
@@ -669,7 +669,7 @@ void NextTokenModel::apply_gradient(const std::vector<double>& gradients, const 
 }
 
 void NextTokenModel::save_model(std::ostream& stream) const {
-    stream << "NLP_MODEL_V2\n" << model_kind_number(config_.kind) << ' ' << config_.vocabulary_size << ' '
+    stream << "NLP_MODEL_V3\n" << model_kind_number(config_.kind) << ' ' << config_.vocabulary_size << ' '
            << config_.embedding_dim << ' ' << config_.hidden_dim << ' ' << config_.context_length << ' ' << config_.seed << '\n'
            << parameters_.size() << '\n' << std::setprecision(17);
     for (const auto value : parameters_) stream << value << ' ';
@@ -678,7 +678,8 @@ void NextTokenModel::save_model(std::ostream& stream) const {
 
 NextTokenModel NextTokenModel::load_model(std::istream& stream) {
     std::string header;
-    require(static_cast<bool>(stream >> header) && header == "NLP_MODEL_V2", "invalid NLP model checkpoint header");
+    require(static_cast<bool>(stream >> header) && (header == "NLP_MODEL_V2" || header == "NLP_MODEL_V3"),
+            "invalid NLP model checkpoint header");
     std::size_t kind = 0;
     NlpModelConfig config;
     require(static_cast<bool>(stream >> kind >> config.vocabulary_size >> config.embedding_dim >> config.hidden_dim >>

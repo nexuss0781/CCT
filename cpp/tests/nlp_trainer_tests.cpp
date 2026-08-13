@@ -6,6 +6,7 @@
 #include <iostream>
 #include <limits>
 #include <stdexcept>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -55,20 +56,20 @@ double relative_error(const double analytical, const double numerical) {
 }
 
 void test_objective_mask_and_finite_metrics() {
-    auto model = NextTokenModel(model_config(NlpModelKind::CCT));
+    auto model = NextTokenModel(model_config(NlpModelKind::Track1CctRecurrence));
     const auto item = sequence("objective", {256, 257, 258, 259, 260});
     const auto gradient = model.loss_and_gradients(item);
     require(std::isfinite(gradient.cross_entropy) && gradient.token_count == 4U && std::isfinite(gradient.gradient_norm),
-            "CCT categorical objective is not finite or mask count is wrong");
+            "Track 1 categorical objective is not finite or mask count is wrong");
     const auto evaluation = model.evaluate({item});
     require(evaluation.finite && std::isfinite(evaluation.perplexity) && evaluation.token_count == 4U,
-            "CCT evaluation metrics are not finite");
+            "Track 1 evaluation metrics are not finite");
     const auto masked = NlpSequence{"masked", item.record_id, item.input_ids, item.target_ids, {1, 0, 0, 0, 0}};
     require(model.loss_and_gradients(masked).token_count == 1U, "loss mask did not exclude inactive targets");
 }
 
-void test_cct_gradient_finite_difference() {
-    const auto config = model_config(NlpModelKind::CCT, 11);
+void test_track1_recurrence_gradient_finite_difference() {
+    const auto config = model_config(NlpModelKind::Track1CctRecurrence, 11);
     const auto item = sequence("gradient", {256, 257, 258, 259, 260});
     const auto model = NextTokenModel(config);
     const auto analytical = model.loss_and_gradients(item);
@@ -87,8 +88,30 @@ void test_cct_gradient_finite_difference() {
         minus.set_parameter_vector(minus_values);
         const auto numerical = (plus.loss_only(item) - minus.loss_only(item)) / 2e-5;
         require(relative_error(analytical.gradients[index], numerical) <= 1e-4,
-                "CCT analytic gradient disagrees with finite difference at parameter " + std::to_string(index));
+                "Track 1 analytic gradient disagrees with finite difference at parameter " + std::to_string(index));
     }
+}
+
+void test_track1_model_identity_and_serialization() {
+    const auto model = NextTokenModel(model_config(NlpModelKind::Track1CctRecurrence, 29));
+    require(model.kind() == NlpModelKind::Track1CctRecurrence, "Track 1 model kind changed at construction");
+    require(model.name() == "track1_cct_recurrence", "Track 1 model identity name is ambiguous");
+    std::ostringstream serialized;
+    model.save_model(serialized);
+    const auto content = serialized.str();
+    require(content.rfind("NLP_MODEL_V3\n", 0U) == 0U, "new model serialization did not publish V3 identity");
+    std::istringstream current_stream(content);
+    const auto restored = NextTokenModel::load_model(current_stream);
+    require(restored.kind() == NlpModelKind::Track1CctRecurrence && restored.name() == model.name(),
+            "V3 model identity did not survive serialization");
+    require(restored.parameter_vector() == model.parameter_vector(), "V3 model parameters changed across serialization");
+    auto legacy = content;
+    legacy.replace(0U, 12U, "NLP_MODEL_V2");
+    std::istringstream legacy_stream(legacy);
+    const auto legacy_restored = NextTokenModel::load_model(legacy_stream);
+    require(legacy_restored.kind() == NlpModelKind::Track1CctRecurrence &&
+                legacy_restored.name() == "track1_cct_recurrence",
+            "legacy model checkpoint did not map to the explicit Track 1 identity");
 }
 
 void test_optimizer_direction_and_schedule() {
@@ -97,7 +120,7 @@ void test_optimizer_direction_and_schedule() {
     optimizer.learning_rate = 0.02;
     optimizer.warmup_steps = 2;
     optimizer.total_steps = 10;
-    NlpTrainer trainer(model_config(NlpModelKind::CCT, 13), optimizer, data.tokenizer_hash, data.dataset_hash);
+    NlpTrainer trainer(model_config(NlpModelKind::Track1CctRecurrence, 13), optimizer, data.tokenizer_hash, data.dataset_hash);
     const auto before = trainer.evaluate(data.validation).cross_entropy;
     const auto first = trainer.train_step(data);
     const auto second = trainer.train_step(data);
@@ -109,7 +132,7 @@ void test_optimizer_direction_and_schedule() {
 
 void test_deterministic_initialization_and_controls() {
     const auto data = dataset();
-    for (const auto kind : {NlpModelKind::CCT, NlpModelKind::DenseCausalAttention, NlpModelKind::GRU, NlpModelKind::DiagonalSSM}) {
+    for (const auto kind : {NlpModelKind::Track1CctRecurrence, NlpModelKind::DenseCausalAttention, NlpModelKind::GRU, NlpModelKind::DiagonalSSM}) {
         const auto first = NextTokenModel(model_config(kind, 19));
         const auto second = NextTokenModel(model_config(kind, 19));
         require(first.parameter_vector() == second.parameter_vector(), "same seed did not initialize deterministically");
@@ -125,9 +148,9 @@ void test_checkpoint_resume_exactness_and_fail_closed() {
     optimizer.learning_rate = 0.01;
     optimizer.warmup_steps = 1;
     optimizer.total_steps = 8;
-    auto uninterrupted = NlpTrainer(model_config(NlpModelKind::CCT, 23), optimizer, data.tokenizer_hash, data.dataset_hash);
+    auto uninterrupted = NlpTrainer(model_config(NlpModelKind::Track1CctRecurrence, 23), optimizer, data.tokenizer_hash, data.dataset_hash);
     uninterrupted.train_steps(data, 5);
-    auto interrupted = NlpTrainer(model_config(NlpModelKind::CCT, 23), optimizer, data.tokenizer_hash, data.dataset_hash);
+    auto interrupted = NlpTrainer(model_config(NlpModelKind::Track1CctRecurrence, 23), optimizer, data.tokenizer_hash, data.dataset_hash);
     interrupted.train_steps(data, 2);
     interrupted.save_checkpoint("artifacts/stage-11-test-checkpoint.bin");
     const auto restored = NlpTrainer::load_checkpoint("artifacts/stage-11-test-checkpoint.bin", data.tokenizer_hash, data.dataset_hash);
@@ -161,7 +184,7 @@ void test_checkpoint_resume_exactness_and_fail_closed() {
 }
 
 void test_invalid_masks_and_nonfinite_parameters_fail_closed() {
-    auto model = NextTokenModel(model_config(NlpModelKind::CCT));
+    auto model = NextTokenModel(model_config(NlpModelKind::Track1CctRecurrence));
     auto invalid = sequence("invalid", {256, 257, 258});
     invalid.loss_mask = {0, 0, 0};
     bool rejected = false;
@@ -187,7 +210,8 @@ void test_invalid_masks_and_nonfinite_parameters_fail_closed() {
 int main() {
     const std::vector<std::pair<std::string, void (*)()>> tests{
         {"objective_mask_and_finite_metrics", test_objective_mask_and_finite_metrics},
-        {"cct_gradient_finite_difference", test_cct_gradient_finite_difference},
+        {"track1_recurrence_gradient_finite_difference", test_track1_recurrence_gradient_finite_difference},
+        {"track1_model_identity_and_serialization", test_track1_model_identity_and_serialization},
         {"optimizer_direction_and_schedule", test_optimizer_direction_and_schedule},
         {"deterministic_initialization_and_controls", test_deterministic_initialization_and_controls},
         {"checkpoint_resume_exactness_and_fail_closed", test_checkpoint_resume_exactness_and_fail_closed},
