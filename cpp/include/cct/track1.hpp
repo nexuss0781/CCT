@@ -35,6 +35,7 @@ struct Track1Source {
     std::string acquisition_type = "hf_rows";
     std::string raw_file_url;
     std::string archive_member;
+    std::string attestation_digest;
 };
 
 struct Track1Config {

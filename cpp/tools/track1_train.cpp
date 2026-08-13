@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <fcntl.h>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -18,6 +19,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <unistd.h>
 
 namespace {
 
@@ -81,15 +83,37 @@ std::string read_file(const std::filesystem::path& path) {
     return output.str();
 }
 
+std::filesystem::path unique_temporary_path(const std::filesystem::path& target) {
+    std::filesystem::create_directories(target.parent_path());
+    std::string pattern = target.string() + ".tmp.XXXXXX";
+    std::vector<char> mutable_pattern(pattern.begin(), pattern.end());
+    mutable_pattern.push_back('\0');
+    const auto descriptor = mkstemp(mutable_pattern.data());
+    require(descriptor >= 0, "cannot create unique temporary report file for " + target.string());
+    require(close(descriptor) == 0, "cannot close unique temporary report file for " + target.string());
+    return std::filesystem::path(mutable_pattern.data());
+}
+
 void write_file(const std::filesystem::path& path, const std::string& content) {
-    std::filesystem::create_directories(path.parent_path());
-    const auto temporary = path.string() + ".tmp";
-    std::ofstream output(temporary, std::ios::binary);
-    require(static_cast<bool>(output), "cannot write " + temporary);
-    output << content;
-    output.close();
-    require(static_cast<bool>(output), "cannot finish " + temporary);
-    std::filesystem::rename(temporary, path);
+    const auto temporary = unique_temporary_path(path);
+    try {
+        {
+            std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+            require(static_cast<bool>(output), "cannot write " + temporary.string());
+            output.write(content.data(), static_cast<std::streamsize>(content.size()));
+            require(static_cast<bool>(output), "cannot finish " + temporary.string());
+        }
+        const auto descriptor = open(temporary.c_str(), O_RDONLY);
+        require(descriptor >= 0 && fsync(descriptor) == 0, "cannot sync report file " + temporary.string());
+        require(close(descriptor) == 0, "cannot close synced report file " + temporary.string());
+        std::error_code error;
+        std::filesystem::rename(temporary, path, error);
+        require(!error, "cannot atomically publish report " + path.string() + ": " + error.message());
+    } catch (...) {
+        std::error_code ignored;
+        std::filesystem::remove(temporary, ignored);
+        throw;
+    }
 }
 
 std::string json_escape(const std::string& value) {

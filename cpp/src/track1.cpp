@@ -4,6 +4,7 @@
 #include <array>
 #include <chrono>
 #include <cctype>
+#include <cerrno>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -14,6 +15,9 @@
 #include <stdexcept>
 #include <thread>
 #include <utility>
+#include <fcntl.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 namespace cct {
 namespace {
@@ -30,16 +34,81 @@ std::string read_file(const std::filesystem::path& path) {
     return content.str();
 }
 
+std::filesystem::path unique_temporary_path(const std::filesystem::path& target) {
+    std::filesystem::create_directories(target.parent_path());
+    std::string pattern = target.string() + ".tmp.XXXXXX";
+    std::vector<char> mutable_pattern(pattern.begin(), pattern.end());
+    mutable_pattern.push_back('\0');
+    const auto descriptor = mkstemp(mutable_pattern.data());
+    require(descriptor >= 0, "cannot create unique temporary file for " + target.string());
+    require(close(descriptor) == 0, "cannot close unique temporary file for " + target.string());
+    return std::filesystem::path(mutable_pattern.data());
+}
+
+void sync_file(const std::filesystem::path& path) {
+    const auto descriptor = open(path.c_str(), O_RDONLY);
+    require(descriptor >= 0, "cannot open file for durable sync: " + path.string());
+    require(fsync(descriptor) == 0, "cannot sync file: " + path.string());
+    require(close(descriptor) == 0, "cannot close synced file: " + path.string());
+}
+
+void sync_directory(const std::filesystem::path& path) {
+    const auto directory = path.parent_path().empty() ? std::filesystem::path(".") : path.parent_path();
+    const auto descriptor = open(directory.c_str(), O_RDONLY | O_DIRECTORY);
+    require(descriptor >= 0, "cannot open directory for durable sync: " + directory.string());
+    require(fsync(descriptor) == 0, "cannot sync directory: " + directory.string());
+    require(close(descriptor) == 0, "cannot close synced directory: " + directory.string());
+}
+
+void publish_file_atomically(const std::filesystem::path& temporary, const std::filesystem::path& destination) {
+    sync_file(temporary);
+    std::error_code error;
+    std::filesystem::rename(temporary, destination, error);
+    require(!error, "cannot atomically publish " + destination.string() + ": " + error.message());
+    sync_directory(destination);
+}
+
 void write_file_atomic(const std::filesystem::path& path, const std::string& content) {
-    std::filesystem::create_directories(path.parent_path());
-    const auto temporary = path.string() + ".tmp";
-    {
-        std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
-        require(static_cast<bool>(output), "cannot write " + temporary);
-        output.write(content.data(), static_cast<std::streamsize>(content.size()));
-        require(static_cast<bool>(output), "cannot finish " + temporary);
+    const auto temporary = unique_temporary_path(path);
+    try {
+        {
+            std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+            require(static_cast<bool>(output), "cannot write " + temporary.string());
+            output.write(content.data(), static_cast<std::streamsize>(content.size()));
+            require(static_cast<bool>(output), "cannot finish " + temporary.string());
+        }
+        publish_file_atomically(temporary, path);
+    } catch (...) {
+        std::error_code ignored;
+        std::filesystem::remove(temporary, ignored);
+        throw;
     }
-    std::filesystem::rename(temporary, path);
+}
+
+int run_process(const std::vector<std::string>& arguments, const std::filesystem::path& stdout_path) {
+    require(!arguments.empty() && !arguments.front().empty(), "native process arguments are empty");
+    const auto descriptor = open(stdout_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    require(descriptor >= 0, "cannot open native process output " + stdout_path.string());
+    std::vector<char*> argv;
+    argv.reserve(arguments.size() + 1U);
+    for (const auto& argument : arguments) argv.push_back(const_cast<char*>(argument.c_str()));
+    argv.push_back(nullptr);
+    const auto child = fork();
+    require(child >= 0, "cannot fork native process for " + arguments.front());
+    if (child == 0) {
+        if (dup2(descriptor, STDOUT_FILENO) < 0) _exit(126);
+        if (close(descriptor) < 0) _exit(126);
+        execvp(argv.front(), argv.data());
+        _exit(127);
+    }
+    require(close(descriptor) == 0, "cannot close native process output " + stdout_path.string());
+    int status = 0;
+    while (waitpid(child, &status, 0) < 0) {
+        if (errno != EINTR) throw Track1Error("cannot wait for native process " + arguments.front());
+    }
+    if (WIFEXITED(status)) return WEXITSTATUS(status);
+    if (WIFSIGNALED(status)) return 128 + WTERMSIG(status);
+    return 125;
 }
 
 std::string json_escape(const std::string& value) {
@@ -110,6 +179,40 @@ void append_codepoint(std::string& output, const unsigned int codepoint) {
     }
 }
 
+void require_valid_utf8(const std::string& value) {
+    for (std::size_t position = 0U; position < value.size();) {
+        const auto byte = static_cast<unsigned char>(value[position]);
+        if (byte <= 0x7FU) {
+            ++position;
+            continue;
+        }
+        std::size_t width = 0U;
+        unsigned int codepoint = 0U;
+        if (byte >= 0xC2U && byte <= 0xDFU) {
+            width = 2U;
+            codepoint = byte & 0x1FU;
+        } else if (byte >= 0xE0U && byte <= 0xEFU) {
+            width = 3U;
+            codepoint = byte & 0x0FU;
+        } else if (byte >= 0xF0U && byte <= 0xF4U) {
+            width = 4U;
+            codepoint = byte & 0x07U;
+        } else {
+            throw Track1Error("invalid UTF-8 leading byte in JSON string");
+        }
+        require(position + width <= value.size(), "truncated UTF-8 sequence in JSON string");
+        for (std::size_t offset = 1U; offset < width; ++offset) {
+            const auto continuation = static_cast<unsigned char>(value[position + offset]);
+            require((continuation & 0xC0U) == 0x80U, "invalid UTF-8 continuation in JSON string");
+            codepoint = (codepoint << 6U) | (continuation & 0x3FU);
+        }
+        require(!(width == 3U && codepoint < 0x800U) && !(width == 4U && codepoint < 0x10000U) &&
+                    !(codepoint >= 0xD800U && codepoint <= 0xDFFFU) && codepoint <= 0x10FFFFU,
+                "invalid UTF-8 code point in JSON string");
+        position += width;
+    }
+}
+
 unsigned int hex_digit(const char character) {
     if (character >= '0' && character <= '9') return static_cast<unsigned int>(character - '0');
     if (character >= 'a' && character <= 'f') return static_cast<unsigned int>(character - 'a' + 10);
@@ -124,8 +227,12 @@ std::string parse_json_string(const std::string& text, std::size_t& position) {
     std::string value;
     while (position < text.size()) {
         const char character = text[position++];
-        if (character == '"') return value;
+        if (character == '"') {
+            require_valid_utf8(value);
+            return value;
+        }
         if (character != '\\') {
+            require(static_cast<unsigned char>(character) >= 0x20U, "unescaped JSON control character");
             value.push_back(character);
             continue;
         }
@@ -162,10 +269,11 @@ std::string parse_json_string(const std::string& text, std::size_t& position) {
 
 std::size_t matching_delimiter(const std::string& text, const std::size_t start, const char open, const char close) {
     require(start < text.size() && text[start] == open, "JSON delimiter start is invalid");
-    std::size_t depth = 0U;
+    std::vector<char> delimiters{open};
+    constexpr std::size_t maximum_json_depth = 128U;
     bool in_string = false;
     bool escaped = false;
-    for (std::size_t position = start; position < text.size(); ++position) {
+    for (std::size_t position = start + 1U; position < text.size(); ++position) {
         const char character = text[position];
         if (in_string) {
             if (escaped) escaped = false;
@@ -173,113 +281,273 @@ std::size_t matching_delimiter(const std::string& text, const std::size_t start,
             else if (character == '"') in_string = false;
             continue;
         }
-        if (character == '"') in_string = true;
-        else if (character == open) ++depth;
-        else if (character == close) {
-            require(depth > 0U, "JSON delimiter depth underflow");
-            --depth;
-            if (depth == 0U) return position;
+        if (character == '"') {
+            in_string = true;
+        } else if (character == '{' || character == '[') {
+            require(delimiters.size() < maximum_json_depth, "JSON nesting depth exceeds limit");
+            delimiters.push_back(character);
+        } else if (character == '}' || character == ']') {
+            require(!delimiters.empty() && ((delimiters.back() == '{' && character == '}') ||
+                                            (delimiters.back() == '[' && character == ']')),
+                    "mismatched JSON delimiter");
+            delimiters.pop_back();
+            if (delimiters.empty()) {
+                require(character == close, "JSON delimiter closed with the wrong type");
+                return position;
+            }
         }
     }
     throw Track1Error("unterminated JSON delimiter");
 }
 
-std::string field_string(const std::string& object, const std::string& key, const bool required = true) {
-    const auto marker = '"' + key + '"';
-    const auto key_position = object.find(marker);
-    if (key_position == std::string::npos) {
-        require(!required, "missing JSON field " + key);
-        return {};
+struct JsonSpan {
+    bool found = false;
+    std::size_t start = 0U;
+    std::size_t end = 0U;
+};
+
+bool valid_json_number(const std::string& token) {
+    std::size_t position = 0U;
+    if (position < token.size() && token[position] == '-') ++position;
+    if (position >= token.size()) return false;
+    if (token[position] == '0') {
+        ++position;
+        if (position < token.size() && std::isdigit(static_cast<unsigned char>(token[position])) != 0) return false;
+    } else {
+        if (std::isdigit(static_cast<unsigned char>(token[position])) == 0) return false;
+        while (position < token.size() && std::isdigit(static_cast<unsigned char>(token[position])) != 0) ++position;
     }
-    auto position = skip_space(object, object.find(':', key_position + marker.size()) + 1U);
-    return parse_json_string(object, position);
+    if (position < token.size() && token[position] == '.') {
+        ++position;
+        const auto fraction_start = position;
+        while (position < token.size() && std::isdigit(static_cast<unsigned char>(token[position])) != 0) ++position;
+        if (position == fraction_start) return false;
+    }
+    if (position < token.size() && (token[position] == 'e' || token[position] == 'E')) {
+        ++position;
+        if (position < token.size() && (token[position] == '+' || token[position] == '-')) ++position;
+        const auto exponent_start = position;
+        while (position < token.size() && std::isdigit(static_cast<unsigned char>(token[position])) != 0) ++position;
+        if (position == exponent_start) return false;
+    }
+    return position == token.size();
+}
+
+std::size_t skip_json_value(const std::string& text, std::size_t position) {
+    position = skip_space(text, position);
+    require(position < text.size(), "JSON value is missing");
+    if (text[position] == '"') {
+        static_cast<void>(parse_json_string(text, position));
+        return position;
+    }
+    if (text[position] == '{' || text[position] == '[') {
+        const auto close = text[position] == '{' ? '}' : ']';
+        return matching_delimiter(text, position, text[position], close) + 1U;
+    }
+    const auto start = position;
+    while (position < text.size() && text[position] != ',' && text[position] != '}' && text[position] != ']' &&
+           std::isspace(static_cast<unsigned char>(text[position])) == 0)
+        ++position;
+    require(position > start, "JSON primitive value is empty");
+    const auto primitive = text.substr(start, position - start);
+    require(primitive == "true" || primitive == "false" || primitive == "null" || valid_json_number(primitive),
+            "unsupported JSON primitive value");
+    return position;
+}
+
+JsonSpan json_field_span(const std::string& object, const std::string& key, const bool required = true) {
+    auto position = skip_space(object, 0U);
+    require(position < object.size() && object[position] == '{', "JSON object is missing");
+    const auto object_end = matching_delimiter(object, position, '{', '}');
+    ++position;
+    JsonSpan result;
+    bool expect_member = true;
+    while (position < object_end) {
+        position = skip_space(object, position);
+        require(position < object_end, "JSON object has a trailing comma");
+        require(expect_member && object[position] == '"', "JSON object member key is invalid");
+        const auto member_key = parse_json_string(object, position);
+        position = skip_space(object, position);
+        require(position < object_end && object[position] == ':', "JSON object member colon is missing");
+        ++position;
+        const auto value_start = skip_space(object, position);
+        const auto value_end = skip_json_value(object, value_start);
+        if (member_key == key) {
+            require(!result.found, "duplicate JSON object member: " + key);
+            result = {true, value_start, value_end};
+        }
+        position = skip_space(object, value_end);
+        if (position == object_end) {
+            expect_member = false;
+            break;
+        }
+        require(position < object_end && object[position] == ',', "JSON object member separator is missing");
+        ++position;
+        expect_member = true;
+    }
+    require(!expect_member, "JSON object is empty or malformed");
+    require(result.found || !required, "missing JSON field " + key);
+    return result;
+}
+
+void validate_json_document(const std::string& document) {
+    constexpr std::size_t maximum_json_bytes = 512U * 1024U * 1024U;
+    require(document.size() <= maximum_json_bytes, "JSON document exceeds the Track 1 size limit");
+    const auto start = skip_space(document, 0U);
+    require(start < document.size() && document[start] == '{', "JSON document root must be an object");
+    const auto end = matching_delimiter(document, start, '{', '}');
+    require(skip_space(document, end + 1U) == document.size(), "JSON document has trailing data");
+}
+
+std::string field_string(const std::string& object, const std::string& key, const bool required = true) {
+    const auto field = json_field_span(object, key, required);
+    if (!field.found) return {};
+    auto position = field.start;
+    const auto value = parse_json_string(object, position);
+    require(position == field.end, "JSON string field has trailing value data: " + key);
+    return value;
 }
 
 std::string nested_object(const std::string& object, const std::string& key) {
-    const auto marker = '"' + key + '"';
-    const auto key_position = object.find(marker);
-    require(key_position != std::string::npos, "missing JSON object field " + key);
-    const auto colon = object.find(':', key_position + marker.size());
-    require(colon != std::string::npos, "missing JSON object colon " + key);
-    const auto start = object.find('{', colon + 1U);
-    require(start != std::string::npos, "missing JSON object value " + key);
-    return object.substr(start, matching_delimiter(object, start, '{', '}') - start + 1U);
+    const auto field = json_field_span(object, key);
+    require(field.start < object.size() && object[field.start] == '{', "JSON field is not an object: " + key);
+    require(matching_delimiter(object, field.start, '{', '}') + 1U == field.end, "JSON object field boundary is invalid: " + key);
+    return object.substr(field.start, field.end - field.start);
 }
 
 std::string first_array_string(const std::string& object, const std::string& key) {
-    const auto marker = '"' + key + '"';
-    const auto key_position = object.find(marker);
-    require(key_position != std::string::npos, "missing JSON array field " + key);
-    const auto colon = object.find(':', key_position + marker.size());
-    const auto start = skip_space(object, object.find('[', colon + 1U) + 1U);
-    if (start < object.size() && object[start] == ']') return {};
-    auto position = start;
-    return parse_json_string(object, position);
+    const auto field = json_field_span(object, key);
+    require(field.start < object.size() && object[field.start] == '[', "JSON field is not an array: " + key);
+    const auto array_end = matching_delimiter(object, field.start, '[', ']');
+    require(array_end + 1U == field.end, "JSON array field boundary is invalid: " + key);
+    auto position = skip_space(object, field.start + 1U);
+    if (position == array_end) return {};
+    require(object[position] == '"', "JSON array string element is invalid: " + key);
+    const auto value = parse_json_string(object, position);
+    position = skip_space(object, position);
+    require(position == array_end, "JSON array string field must contain exactly one element: " + key);
+    return value;
 }
 
 std::size_t first_array_integer(const std::string& object, const std::string& key) {
-    const auto marker = '"' + key + '"';
-    const auto key_position = object.find(marker);
-    require(key_position != std::string::npos, "missing JSON array field " + key);
-    const auto colon = object.find(':', key_position + marker.size());
-    const auto start = skip_space(object, object.find('[', colon + 1U) + 1U);
-    if (start < object.size() && object[start] == ']') return 0U;
-    const auto end = object.find_first_not_of("0123456789", start);
-    require(end != start, "invalid JSON array integer");
-    return static_cast<std::size_t>(std::stoull(object.substr(start, end - start)));
+    const auto field = json_field_span(object, key);
+    require(field.start < object.size() && object[field.start] == '[', "JSON field is not an array: " + key);
+    const auto array_end = matching_delimiter(object, field.start, '[', ']');
+    require(array_end + 1U == field.end, "JSON array field boundary is invalid: " + key);
+    auto position = skip_space(object, field.start + 1U);
+    if (position == array_end) return 0U;
+    const auto start = position;
+    while (position < array_end && std::isdigit(static_cast<unsigned char>(object[position])) != 0) ++position;
+    require(position > start, "JSON array integer element is invalid: " + key);
+    const auto value = static_cast<std::size_t>(std::stoull(object.substr(start, position - start)));
+    position = skip_space(object, position);
+    require(position == array_end, "JSON array integer field must contain exactly one element: " + key);
+    return value;
 }
 
 std::vector<std::string> row_objects(const std::string& page) {
-    const auto rows_key = page.find("\"rows\"");
-    require(rows_key != std::string::npos, "Hugging Face response has no rows field");
-    const auto array_start = page.find('[', rows_key);
-    require(array_start != std::string::npos, "Hugging Face rows field is not an array");
+    validate_json_document(page);
+    const auto rows_field = json_field_span(page, "rows");
+    require(rows_field.start < page.size() && page[rows_field.start] == '[', "Hugging Face rows field is not an array");
+    const auto array_start = rows_field.start;
     const auto array_end = matching_delimiter(page, array_start, '[', ']');
+    require(array_end + 1U == rows_field.end, "Hugging Face rows field boundary is invalid");
     std::vector<std::string> rows;
     std::size_t position = array_start + 1U;
+    bool expect_value = true;
     while (position < array_end) {
         position = skip_space(page, position);
         if (position >= array_end) break;
-        if (page[position] == ',') { ++position; continue; }
+        if (!expect_value) {
+            require(page[position] == ',', "Hugging Face row separator is invalid");
+            ++position;
+            expect_value = true;
+            continue;
+        }
         require(page[position] == '{', "Hugging Face row is not an object");
         const auto end = matching_delimiter(page, position, '{', '}');
         rows.push_back(page.substr(position, end - position + 1U));
         position = end + 1U;
+        expect_value = false;
     }
+    require(!expect_value, "Hugging Face rows array has a trailing comma");
     return rows;
 }
 
 template <typename Callback>
-void for_each_flat_data_object(const std::string& document, Callback&& callback) {
-    const auto data_key = document.find("\"data\"");
-    require(data_key != std::string::npos, "GEM SQuAD response has no data field");
-    const auto array_start = document.find('[', data_key);
-    require(array_start != std::string::npos, "GEM SQuAD data field is not an array");
+std::size_t for_each_flat_data_object(const std::string& document, Callback&& callback) {
+    validate_json_document(document);
+    const auto data = json_field_span(document, "data");
+    require(data.start < document.size() && document[data.start] == '[', "GEM SQuAD data field is not an array");
+    const auto array_start = data.start;
     const auto array_end = matching_delimiter(document, array_start, '[', ']');
+    require(array_end + 1U == data.end, "GEM SQuAD data field boundary is invalid");
     std::size_t position = array_start + 1U;
     std::size_t index = 0U;
+    bool expect_value = true;
     while (position < array_end) {
         position = skip_space(document, position);
         if (position >= array_end) break;
-        if (document[position] == ',') { ++position; continue; }
+        if (!expect_value) {
+            require(document[position] == ',', "GEM SQuAD data separator is invalid");
+            ++position;
+            expect_value = true;
+            continue;
+        }
         require(document[position] == '{', "GEM SQuAD data item is not an object");
         const auto end = matching_delimiter(document, position, '{', '}');
         callback(index, document.substr(position, end - position + 1U));
         ++index;
         position = end + 1U;
+        expect_value = false;
     }
+    require(!expect_value, "GEM SQuAD data array has a trailing comma");
+    return index;
 }
 
 std::string run_curl(const std::string& url, const std::filesystem::path& path, const bool acquire_remote) {
-    if (std::filesystem::exists(path) && std::filesystem::file_size(path) > 0U) return read_file(path);
-    require(acquire_remote, "cached Hugging Face page is missing: " + path.string());
-    std::filesystem::create_directories(path.parent_path());
+    const auto digest_path = std::filesystem::path(path.string() + ".sha256");
+    if (std::filesystem::exists(path) && std::filesystem::file_size(path) > 0U) {
+        if (std::filesystem::exists(digest_path) && std::filesystem::file_size(digest_path) > 0U) {
+            std::istringstream digest_input(read_file(digest_path));
+            std::string declared_digest;
+            digest_input >> declared_digest;
+            require(declared_digest == GovernedCorpus::content_sha256(read_file(path)),
+                    "cached Hugging Face page digest mismatch: " + path.string());
+            return read_file(path);
+        }
+        if (!acquire_remote) return read_file(path);
+    }
+    require(acquire_remote, "cached Hugging Face page is missing or lacks an integrity sidecar: " + path.string());
+    require(url.rfind("https://", 0U) == 0U, "Track 1 acquisition URL must use HTTPS");
     std::this_thread::sleep_for(std::chrono::milliseconds(1100));
-    const auto command = "curl --fail --location --silent --show-error --retry 12 --retry-all-errors --retry-max-time 900 "
-                         "--connect-timeout 30 --max-time 960 --user-agent \"CCT-ASE-Track1/1.0\" --output \"" +
-                         path.string() + "\" \"" + url + "\"";
-    require(std::system(command.c_str()) == 0, "Hugging Face acquisition failed for " + url);
-    require(std::filesystem::exists(path) && std::filesystem::file_size(path) > 0U, "Hugging Face acquisition wrote an empty page for " + url);
+    const auto temporary = unique_temporary_path(path);
+    const auto transfer_status = unique_temporary_path(std::filesystem::path(path.string() + ".status"));
+    const std::vector<std::string> arguments{
+        "curl", "--fail", "--location", "--silent", "--show-error", "--retry", "12", "--retry-all-errors",
+        "--retry-max-time", "900", "--connect-timeout", "30", "--max-time", "960", "--user-agent",
+        "CCT-ASE-Track1/1.0", "--output", temporary.string(), "--write-out", "%{http_code} %{size_download}\n", url};
+    try {
+        require(run_process(arguments, transfer_status) == 0, "Hugging Face acquisition failed for " + url);
+        require(std::filesystem::exists(temporary) && std::filesystem::file_size(temporary) > 0U,
+                "Hugging Face acquisition wrote an empty temporary file for " + url);
+        std::istringstream status_input(read_file(transfer_status));
+        unsigned int status_code = 0U;
+        std::uintmax_t downloaded_bytes = 0U;
+        require(static_cast<bool>(status_input >> status_code >> downloaded_bytes) && status_code >= 200U && status_code < 300U,
+                "Hugging Face acquisition returned an invalid HTTP status for " + url);
+        require(downloaded_bytes == std::filesystem::file_size(temporary), "Hugging Face byte count mismatch for " + url);
+        const auto digest = GovernedCorpus::content_sha256(read_file(temporary));
+        publish_file_atomically(temporary, path);
+        write_file_atomic(digest_path, digest + "\n");
+        std::error_code ignored;
+        std::filesystem::remove(transfer_status, ignored);
+    } catch (...) {
+        std::error_code ignored;
+        std::filesystem::remove(temporary, ignored);
+        std::filesystem::remove(transfer_status, ignored);
+        throw;
+    }
     return read_file(path);
 }
 
@@ -287,14 +555,22 @@ std::string extract_archive_member(const std::filesystem::path& archive, const s
     if (std::filesystem::exists(path) && std::filesystem::file_size(path) > 0U) return read_file(path);
     require(std::filesystem::exists(archive) && std::filesystem::file_size(archive) > 0U, "WikiText archive cache is missing: " + archive.string());
     require(!member.empty(), "WikiText archive member is missing");
-    std::filesystem::create_directories(path.parent_path());
-    const auto temporary = path.string() + ".tmp";
-    std::filesystem::remove(temporary);
-    const auto command = "unzip -p \"" + archive.string() + "\" \"" + member + "\" > \"" + temporary + "\"";
-    require(std::system(command.c_str()) == 0, "cannot extract WikiText archive member " + member);
-    require(std::filesystem::exists(temporary) && std::filesystem::file_size(temporary) > 0U,
-            "WikiText archive member is empty: " + member);
-    std::filesystem::rename(temporary, path);
+    static constexpr std::array<std::string_view, 3U> allowed_members{
+        "wikitext-2-raw/wiki.train.raw", "wikitext-2-raw/wiki.valid.raw", "wikitext-2-raw/wiki.test.raw"};
+    require(std::find(allowed_members.begin(), allowed_members.end(), member) != allowed_members.end(),
+            "WikiText archive member is not in the pinned allowlist");
+    const auto temporary = unique_temporary_path(path);
+    const std::vector<std::string> arguments{"unzip", "-p", archive.string(), member};
+    try {
+        require(run_process(arguments, temporary) == 0, "cannot extract WikiText archive member " + member);
+        require(std::filesystem::exists(temporary) && std::filesystem::file_size(temporary) > 0U,
+                "WikiText archive member is empty: " + member);
+        publish_file_atomically(temporary, path);
+    } catch (...) {
+        std::error_code ignored;
+        std::filesystem::remove(temporary, ignored);
+        throw;
+    }
     return read_file(path);
 }
 
@@ -329,6 +605,13 @@ std::string source_path_component(const Track1Source& source) {
     return source.source_id + "_" + source.split + ".json";
 }
 
+std::string source_attestation_digest(const Track1Source& source) {
+    return GovernedCorpus::content_sha256(source.source_id + "|" + source.dataset_id + "|" + source.config + "|" + source.split +
+                                          "|" + source.revision + "|" + source.license + "|" + source.upstream_dataset_id +
+                                          "|" + source.acquisition_type + "|" + source.raw_file_url + "|" + source.archive_member +
+                                          "|" + source.raw_digest);
+}
+
 std::uint64_t stable_key(const std::string& id, const std::uint64_t seed) {
     const auto digest = GovernedCorpus::content_sha256(id + "|" + std::to_string(seed));
     return std::stoull(digest.substr(0U, 16U), nullptr, 16);
@@ -353,7 +636,7 @@ std::string manifest_body(const Track1Manifest& manifest) {
                << ",\"raw_digest\":\"" << source.raw_digest << "\",\"upstream_dataset_id\":\""
                << json_escape(source.upstream_dataset_id) << "\",\"acquisition_type\":\"" << json_escape(source.acquisition_type)
                << "\",\"raw_file_url\":\"" << json_escape(source.raw_file_url) << "\",\"archive_member\":\""
-               << json_escape(source.archive_member) << "\"}";
+               << json_escape(source.archive_member) << "\",\"attestation_digest\":\"" << source.attestation_digest << "\"}";
     }
     output << "]}";
     return output.str();
@@ -415,11 +698,11 @@ Track1Pipeline::Track1Pipeline(Track1Config config) : config_(std::move(config))
             "Track 1 size configuration is invalid");
     manifest_.selection_seed = config_.selection_seed;
     manifest_.sources = {
-        {"wikitext2_pretrain_train", "Salesforce/wikitext", "wikitext-2-raw-v1", "train", "b08601e04326c79dfdd32d625aee71d232d685c3", "CC BY-SA 3.0; GFDL metadata", "https://datasets-server.huggingface.co/rows?dataset=Salesforce%2Fwikitext&config=wikitext-2-raw-v1&split=train", 36718, {}, {}, "hf_rows", {}, {}},
-        {"wikitext2_pretrain_validation", "Salesforce/wikitext", "wikitext-2-raw-v1", "validation", "b08601e04326c79dfdd32d625aee71d232d685c3", "CC BY-SA 3.0; GFDL metadata", "https://datasets-server.huggingface.co/rows?dataset=Salesforce%2Fwikitext&config=wikitext-2-raw-v1&split=validation", 3760, {}, {}, "hf_rows", {}, {}},
-        {"wikitext2_pretrain_test", "Salesforce/wikitext", "wikitext-2-raw-v1", "test", "b08601e04326c79dfdd32d625aee71d232d685c3", "CC BY-SA 3.0; GFDL metadata", "https://datasets-server.huggingface.co/rows?dataset=Salesforce%2Fwikitext&config=wikitext-2-raw-v1&split=test", 4358, {}, {}, "hf_rows", {}, {}},
-        {"squad2_sft_train_source", "GEM/squad_v2", "gem_data_split", "train", "67199807729e631955056c71c258b7acbee548a3", "CC BY-SA 4.0", "https://datasets-server.huggingface.co/rows?dataset=rajpurkar%2Fsquad_v2&config=squad_v2&split=train", 116397, {}, {}, "hf_gem_flat_file", {}, {}},
-        {"squad2_final_test_source", "GEM/squad_v2", "gem_data_split", "validation", "67199807729e631955056c71c258b7acbee548a3", "CC BY-SA 4.0", "https://datasets-server.huggingface.co/rows?dataset=rajpurkar%2Fsquad_v2&config=squad_v2&split=validation", 11873, {}, {}, "hf_gem_flat_file", {}, {}}};
+        {"wikitext2_pretrain_train", "Salesforce/wikitext", "wikitext-2-raw-v1", "train", "b08601e04326c79dfdd32d625aee71d232d685c3", "CC BY-SA 3.0; GFDL metadata", "https://datasets-server.huggingface.co/rows?dataset=Salesforce%2Fwikitext&config=wikitext-2-raw-v1&split=train", 36718, {}, {}, "hf_rows", {}, {}, {}},
+        {"wikitext2_pretrain_validation", "Salesforce/wikitext", "wikitext-2-raw-v1", "validation", "b08601e04326c79dfdd32d625aee71d232d685c3", "CC BY-SA 3.0; GFDL metadata", "https://datasets-server.huggingface.co/rows?dataset=Salesforce%2Fwikitext&config=wikitext-2-raw-v1&split=validation", 3760, {}, {}, "hf_rows", {}, {}, {}},
+        {"wikitext2_pretrain_test", "Salesforce/wikitext", "wikitext-2-raw-v1", "test", "b08601e04326c79dfdd32d625aee71d232d685c3", "CC BY-SA 3.0; GFDL metadata", "https://datasets-server.huggingface.co/rows?dataset=Salesforce%2Fwikitext&config=wikitext-2-raw-v1&split=test", 4358, {}, {}, "hf_rows", {}, {}, {}},
+        {"squad2_sft_train_source", "GEM/squad_v2", "gem_data_split", "train", "67199807729e631955056c71c258b7acbee548a3", "CC BY-SA 4.0", "https://datasets-server.huggingface.co/rows?dataset=rajpurkar%2Fsquad_v2&config=squad_v2&split=train", 116397, {}, {}, "hf_gem_flat_file", {}, {}, {}},
+        {"squad2_final_test_source", "GEM/squad_v2", "gem_data_split", "validation", "67199807729e631955056c71c258b7acbee548a3", "CC BY-SA 4.0", "https://datasets-server.huggingface.co/rows?dataset=rajpurkar%2Fsquad_v2&config=squad_v2&split=validation", 11873, {}, {}, "hf_gem_flat_file", {}, {}, {}}};
     const std::array<std::pair<std::string, std::string>, 3U> wikitext_members{{
         {"wikitext2_pretrain_train", "wikitext-2-raw/wiki.train.raw"},
         {"wikitext2_pretrain_validation", "wikitext-2-raw/wiki.valid.raw"},
@@ -493,6 +776,7 @@ void Track1Pipeline::prepare_wikitext() {
             }
         }
         source.raw_digest = GovernedCorpus::content_sha256(raw_digest_material);
+        source.attestation_digest = source_attestation_digest(source);
         const auto filename = track1_split_name(split) + ".txt";
         write_file_atomic(std::filesystem::path(config_.output_root) / "data" / filename, prepared.str());
         if (split == Track1Split::PretrainTrain) manifest_.pretrain_train_tokens = tokens;
@@ -552,9 +836,12 @@ void Track1Pipeline::prepare_squad() {
         const auto document = run_curl(train_source.raw_file_url, path, config_.acquire_remote);
         train_raw_digest = document;
         ++report_.source_pages;
-        for_each_flat_data_object(document, [&](const std::size_t index, const std::string& object) {
+        const auto observed_rows = for_each_flat_data_object(document, [&](const std::size_t index, const std::string& object) {
             if (index >= config_.squad_train_row_offset && index < config_.squad_train_row_offset + train_rows) process_train_object(object, false);
         });
+        const auto expected_rows = config_.allow_small_fixture && config_.source_row_limit > 0U ? config_.source_row_limit : train_source.total_rows;
+        require(observed_rows == expected_rows, "SQuAD direct training file row count mismatch: expected " + std::to_string(expected_rows) +
+                                                ", observed " + std::to_string(observed_rows));
     } else {
         for (std::size_t relative_offset = 0U; relative_offset < train_rows; relative_offset += config_.page_length) {
             const auto offset = config_.squad_train_row_offset + relative_offset;
@@ -569,9 +856,12 @@ void Track1Pipeline::prepare_squad() {
         const auto document = run_curl(final_source.raw_file_url, path, config_.acquire_remote);
         final_raw_digest = document;
         ++report_.source_pages;
-        for_each_flat_data_object(document, [&](const std::size_t index, const std::string& object) {
+        const auto observed_rows = for_each_flat_data_object(document, [&](const std::size_t index, const std::string& object) {
             if (index >= config_.squad_final_test_row_offset && index < config_.squad_final_test_row_offset + final_rows) process_final_object(object, false);
         });
+        const auto expected_rows = config_.allow_small_fixture && config_.source_row_limit > 0U ? config_.source_row_limit : final_source.total_rows;
+        require(observed_rows == expected_rows, "SQuAD direct final-test file row count mismatch: expected " + std::to_string(expected_rows) +
+                                                ", observed " + std::to_string(observed_rows));
     } else {
         for (std::size_t relative_offset = 0U; relative_offset < final_rows; relative_offset += config_.page_length) {
             const auto offset = config_.squad_final_test_row_offset + relative_offset;
@@ -608,6 +898,8 @@ void Track1Pipeline::prepare_squad() {
     write_jsonl("squad_final_test.jsonl", final_examples);
     train_source.raw_digest = GovernedCorpus::content_sha256(train_raw_digest);
     final_source.raw_digest = GovernedCorpus::content_sha256(final_raw_digest);
+    train_source.attestation_digest = source_attestation_digest(train_source);
+    final_source.attestation_digest = source_attestation_digest(final_source);
     for (const auto& example : sft_train) manifest_.train_ids.push_back(example.id);
     for (const auto& example : sft_eval) manifest_.evaluation_ids.push_back(example.id);
     for (const auto& example : final_examples) manifest_.final_test_ids.push_back(example.id);
@@ -631,6 +923,10 @@ void Track1Pipeline::validate_manifest() const {
     for (const auto& id : manifest_.train_ids) require(seen.emplace(id, Track1Split::SftTrain).second, "duplicate or overlapping Track 1 train ID");
     for (const auto& id : manifest_.evaluation_ids) require(seen.emplace(id, Track1Split::SftEvaluation).second, "duplicate or overlapping Track 1 evaluation ID");
     for (const auto& id : manifest_.final_test_ids) require(seen.emplace(id, Track1Split::FinalTest).second, "duplicate or overlapping Track 1 final-test ID");
+    for (const auto& source : manifest_.sources) {
+        require(!source.raw_digest.empty() && source.attestation_digest == source_attestation_digest(source),
+                "Track 1 source attestation is missing or inconsistent for " + source.source_id);
+    }
     require(!manifest_.manifest_digest.empty() && manifest_.manifest_digest == GovernedCorpus::content_sha256(manifest_body(manifest_)),
             "Track 1 manifest digest is missing or inconsistent");
 }
