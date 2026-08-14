@@ -1,0 +1,1 @@
+{"schema":"cct-benchmark-record-v1","name":"stage0_native_smoke","value":1,"unit":"pass","seed":1701,"commit":"dc590fadf51b16553f601df8c608c17d5dcf14c5","config_hash":"8c1a11faf7fdc8d2827f333b79aa9d470fbdf97091feb303a0ebb6527e5e6fd3","hardware":"x86_64","timestamp_utc":"2026-08-14T07:21:02Z","status":"PASS"}

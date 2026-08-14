@@ -1,0 +1,1 @@
+{"schema":"cct-l1-baseline-release-record-v1","commit":"dc590fadf51b16553f601df8c608c17d5dcf14c5","config_hash":"8c1a11faf7fdc8d2827f333b79aa9d470fbdf97091feb303a0ebb6527e5e6fd3","environment":"environment.json","tests":"tests.json","benchmark":"benchmark_record.json","manifest":"manifest.json","gate":"gate.json","status":"PASS"}

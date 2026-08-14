@@ -4,7 +4,7 @@
 **Stage ID:** 0  
 **Predecessor:** None  
 **Successor:** Stage 1 — Numerical Engine  
-**Status:** Native Stage 0 implementation is present. The current Level 1 replay uses `cct-l1-stage0-gate-v1`; final L1-0 `PASS` requires a clean-checkout replay from the final stage commit.
+**Status:** `PASS` for the declared L1-0 contract at commit `dc590fadf51b16553f601df8c608c17d5dcf14c5`. Fresh checkout, native build, 39-test CTest replay, expanded-warning replay, Stage 0 gate, clean source/configuration envelope, and missing-FFTW/PkgConfig failure evidence are published under `artifacts/stage-0/cpp-gate/`.
 
 ## Purpose
 

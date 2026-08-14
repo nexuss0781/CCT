@@ -78,19 +78,19 @@ The next executable Level 1 move is **L1-6 fresh release-bound Track 1 training*
 
 **Dependency:** None.
 
-**Current status:** `[ ] IN PROGRESS` — the L1-0 gate has been expanded with configuration identity, environment/manifest/release records, deterministic replay, non-mutation failures, injected threshold rejection, and source hygiene checks. A fresh clean-checkout replay from the final L1-0 commit is required before this stage is marked `PASS`.
+**Current status:** `[x] PASS` — clean-checkout replay completed from `dc590fadf51b16553f601df8c608c17d5dcf14c5`, with 39/39 native CTest tests, 39/39 expanded-warning tests, six L1-0 gate checks, a clean source/configuration tree, identity-linked artifacts, and an isolated missing-FFTW/PkgConfig configure failure.
 
 ## L1-0 implementation tasks
 
 - [x] Define the supported compiler, CMake version, C++ standard, operating system, and FFTW dependency contract in CMake and the L1-0 environment record.
 - [x] Define warning policy, warnings-as-errors policy, build types, and native CUDA policy.
 - [x] Define native model, state, tokenizer, data, checkpoint, evaluator, and artifact identity fields across the configuration, manifest, checkpoint, and gate contracts.
-- [ ] Reproduce a clean native C++20 build from a fresh release-checkout directory after the final L1-0 commit.
+- [x] Reproduce a clean native C++20 build from a fresh release-checkout directory at `dc590fadf51b16553f601df8c608c17d5dcf14c5`.
 - [x] Implement deterministic fixed-seed baseline configuration and numerical replay.
 - [x] Implement unit-test, integration-test, benchmark, and formal-gate entry points.
 - [x] Define the standard L1-0 artifact tree for configuration, environment, tests, benchmark, manifest, gate, release record, and report.
 - [x] Define PASS/FAIL gate status and nonzero exit behavior.
-- [ ] Add a clean-environment missing-FFTW dependency failure replay.
+- [x] Add a clean-environment missing-FFTW/PkgConfig dependency failure replay; CMake exits nonzero with retained diagnostics.
 - [x] Add malformed-configuration failure coverage.
 - [x] Add non-finite-output failure coverage through the declared numerical solver validation matrix.
 - [x] Add corrupted-artifact failure coverage through bounded fail-closed serializer tests.
@@ -98,14 +98,14 @@ The next executable Level 1 move is **L1-6 fresh release-bound Track 1 training*
 
 ## L1-0 verification tasks
 
-- [ ] Build the final L1-0 commit from a fresh checkout with the declared native compiler.
+- [x] Build the final L1-0 commit from a fresh checkout with the declared native compiler.
 - [x] Run baseline numerical replay twice with the same seed and configuration inside the L1-0 gate.
 - [x] Run the fixed benchmark-schema workload and retain the configuration/commit/hardware/timestamp record.
 - [x] Compare deterministic output identity within exact native CPU equality.
 - [x] Confirm invalid configuration exits through a structured rejected check and retains diagnostics.
-- [ ] Confirm missing FFTW/CMake dependency exits nonzero in an isolated clean environment without fallback.
+- [x] Confirm missing FFTW/CMake dependency exits nonzero in an isolated clean environment without fallback.
 - [x] Confirm non-finite numerical behavior is rejected by the native numerical validation matrix.
-- [ ] Confirm final clean-checkout artifacts and gate envelope identify the exact final commit and configuration.
+- [x] Confirm final clean-checkout artifacts and gate envelope identify `dc590fadf51b16553f601df8c608c17d5dcf14c5` and configuration hash `8c1a11faf7fdc8d2827f333b79aa9d470fbdf97091feb303a0ebb6527e5e6fd3`.
 
 ## L1-0 artifacts
 
@@ -121,10 +121,10 @@ The next executable Level 1 move is **L1-6 fresh release-bound Track 1 training*
 
 ## L1-0 gate and transition
 
-- [ ] Run the formal L1-0 gate from a fresh release-checkout commit.
-- [ ] Confirm all mandatory checks are `PASS` with a clean-tree envelope.
-- [ ] Record the isolated missing-dependency replay result and any optional blocked dependency.
-- [ ] Record transition approval for L1-1 after the clean-checkout evidence is published.
+- [x] Run the formal L1-0 gate from a fresh release-checkout commit.
+- [x] Confirm all mandatory checks are `PASS` with a clean-tree envelope.
+- [x] Record the isolated missing-dependency replay result; no mandatory dependency was treated as optional.
+- [ ] Record transition approval for L1-1 after explicit user approval.
 
 **Command template:**
 

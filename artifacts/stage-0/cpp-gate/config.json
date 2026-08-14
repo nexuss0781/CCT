@@ -1,0 +1,1 @@
+{"schema":"cct-l1-baseline-config-v1","seed":1701,"shape":[32],"spacing":1,"wave_speed":1,"dt":0.050000000000000003,"cfl_safety":0.90000000000000002,"benchmark_repetitions":2}
