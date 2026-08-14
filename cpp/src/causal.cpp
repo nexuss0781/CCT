@@ -148,6 +148,14 @@ void CausalEventStore::validate_event(const CausalEvent& item) const {
     require(std::adjacent_find(item.unresolved_parent_ids.begin(), item.unresolved_parent_ids.end()) ==
                 item.unresolved_parent_ids.end(),
             "unresolved parents must be unique");
+    require(static_cast<unsigned int>(item.provenance) <= static_cast<unsigned int>(ProvenanceKind::Corrected),
+            "event provenance kind is invalid");
+    require(static_cast<unsigned int>(item.uncertainty.kind) <= static_cast<unsigned int>(UncertaintyKind::Conflicting),
+            "event uncertainty kind is invalid");
+    for (const auto parent : item.unresolved_parent_ids) {
+        require(std::binary_search(item.causal_parents.begin(), item.causal_parents.end(), parent),
+                "unresolved parent must be declared in causal_parents");
+    }
     for (const auto parent : item.causal_parents) {
         const bool exists = contains(parent);
         const bool unresolved = contains_id(item.unresolved_parent_ids, parent);
@@ -168,6 +176,8 @@ void CausalEventStore::validate_event(const CausalEvent& item) const {
                 item.uncertainty.confidence <= 1.0,
             "uncertainty confidence must be in [0,1]");
     if (item.intervention.has_value()) {
+        require(static_cast<unsigned int>(item.intervention->mode) <= static_cast<unsigned int>(EventMode::Counterfactual),
+                "event intervention mode is invalid");
         require(item.intervention->variable < config_.payload_dim, "intervention variable out of range");
         require(finite(item.intervention->value), "intervention value is non-finite");
         require(item.intervention->mode != EventMode::Observed, "observed mode must not be stored as intervention");
@@ -179,6 +189,7 @@ void CausalEventStore::insert(const CausalEvent& item) {
     validate_event(item);
     ordered_events_.push_back(item);
     try {
+        for (const auto& stored : ordered_events_) validate_event(stored);
         validate_acyclic();
     } catch (...) {
         ordered_events_.pop_back();
@@ -353,9 +364,10 @@ CausalEventStore CausalEventStore::deserialize_snapshot(const std::string& snaps
     require(payload_dim > 0U && payload_dim <= maximum_dimension && coordinate_dim > 0U && coordinate_dim <= maximum_dimension,
             "causal graph dimensions exceed snapshot budget");
     CausalStoreConfig config;
+    require(allow_unresolved == 0 || allow_unresolved == 1, "causal unresolved-parent flag is invalid");
     config.payload_dim = payload_dim;
     config.coordinate_dim = coordinate_dim;
-    config.allow_unresolved_parents = allow_unresolved != 0;
+    config.allow_unresolved_parents = allow_unresolved == 1;
     config.coordinate_min.resize(coordinate_dim);
     config.coordinate_max.resize(coordinate_dim);
     for (auto& value : config.coordinate_min) input >> value;
@@ -379,37 +391,32 @@ CausalEventStore CausalEventStore::deserialize_snapshot(const std::string& snaps
         int has_intervention = 0;
         input >> item.id >> item.schema_version >> item.timestamp >> provenance >> uncertainty >> item.uncertainty.confidence >>
             has_intervention;
-        require(static_cast<bool>(input), "causal event header is truncated");
+        require(static_cast<bool>(input) && (has_intervention == 0 || has_intervention == 1),
+                "causal event header is truncated or invalid");
         item.provenance = static_cast<ProvenanceKind>(provenance);
         item.uncertainty.kind = static_cast<UncertaintyKind>(uncertainty);
-        if (has_intervention != 0) {
+        if (has_intervention == 1) {
             Intervention intervention;
             unsigned int mode = 0;
             input >> intervention.variable >> intervention.value >> mode;
             intervention.mode = static_cast<EventMode>(mode);
             item.intervention = intervention;
         }
-        std::size_t count = 0;
-        input >> count;
-        require(static_cast<bool>(input) && count <= maximum_vector_count, "causal semantic payload count exceeds snapshot budget");
-        item.semantic_payload.resize(count);
-        for (auto& value : item.semantic_payload) input >> value;
-        input >> count;
-        require(static_cast<bool>(input) && count <= maximum_vector_count, "causal coordinate count exceeds snapshot budget");
-        item.coordinates.resize(count);
-        for (auto& value : item.coordinates) input >> value;
-        input >> count;
-        require(static_cast<bool>(input) && count <= maximum_vector_count, "causal parent count exceeds snapshot budget");
-        item.causal_parents.resize(count);
-        for (auto& value : item.causal_parents) input >> value;
-        input >> count;
-        require(static_cast<bool>(input) && count <= maximum_vector_count, "causal unresolved-parent count exceeds snapshot budget");
-        item.unresolved_parent_ids.resize(count);
-        for (auto& value : item.unresolved_parent_ids) input >> value;
-        input >> count;
-        require(static_cast<bool>(input) && count <= maximum_vector_count, "causal provenance-link count exceeds snapshot budget");
-        item.provenance_links.resize(count);
-        for (auto& value : item.provenance_links) input >> value;
+        const auto read_counted_values = [&](auto& values, const char* label) {
+            std::size_t count = 0U;
+            input >> count;
+            require(static_cast<bool>(input) && count <= maximum_vector_count, label);
+            values.resize(count);
+            for (auto& value : values) {
+                input >> value;
+                require(static_cast<bool>(input), label);
+            }
+        };
+        read_counted_values(item.semantic_payload, "causal semantic payload is truncated or oversized");
+        read_counted_values(item.coordinates, "causal coordinates are truncated or oversized");
+        read_counted_values(item.causal_parents, "causal parent list is truncated or oversized");
+        read_counted_values(item.unresolved_parent_ids, "causal unresolved-parent list is truncated or oversized");
+        read_counted_values(item.provenance_links, "causal provenance-link list is truncated or oversized");
         require(!store.contains(item.id), "duplicate event ID in snapshot");
         store.ordered_events_.push_back(std::move(item));
     }
@@ -431,8 +438,13 @@ CausalEventStore CausalEventStore::load_snapshot(const std::string& path) {
 }
 
 CausalEventEncoder::CausalEventEncoder(CausalEncodingConfig config) : config_(std::move(config)) {
-    require(config_.payload_dim > 0, "causal encoder payload dimension must be positive");
-    require(config_.coordinate_dim > 0, "causal encoder coordinate dimension must be positive");
+    require(config_.payload_dim > 0 && config_.payload_dim <= 4096U,
+            "causal encoder payload dimension is outside the supported budget");
+    require(config_.coordinate_dim > 0 && config_.coordinate_dim <= 4096U,
+            "causal encoder coordinate dimension is outside the supported budget");
+    require(static_cast<unsigned int>(config_.temporal_policy) <=
+                static_cast<unsigned int>(TemporalCausalityPolicy::AllowSameTimestamp),
+            "causal encoder temporal policy is invalid");
 }
 
 std::size_t CausalEventEncoder::encoded_dim() const noexcept {
@@ -443,14 +455,34 @@ std::size_t CausalEventEncoder::encoded_dim() const noexcept {
 }
 
 EncodedCausalSequence CausalEventEncoder::encode(const std::vector<CausalEvent>& events) const {
+    constexpr std::size_t maximum_events = 1'000'000U;
+    require(events.size() <= maximum_events, "causal encoder event count exceeds budget");
     EncodedCausalSequence result;
     result.inputs.reserve(events.size());
-    result.mask.assign(events.size(), 1);
+    result.mask.assign(events.size(), 1U);
     result.event_ids.reserve(events.size());
+    std::set<EventId> ids;
     for (const auto& item : events) {
-        require(item.schema_version == CausalEvent::kSchemaVersion, "encoder received unsupported event schema");
+        require(ids.insert(item.id).second, "encoder received duplicate event ID");
+        require(item.schema_version == CausalEvent::kSchemaVersion && item.id != 0, "encoder received invalid event identity");
         require(item.semantic_payload.size() == config_.payload_dim, "encoder payload dimension mismatch");
         require(item.coordinates.size() == config_.coordinate_dim, "encoder coordinate dimension mismatch");
+        for (const auto value : item.semantic_payload) require(finite(value), "encoder payload contains non-finite value");
+        for (const auto value : item.coordinates) require(finite(value), "encoder coordinates contain non-finite value");
+        require(std::is_sorted(item.causal_parents.begin(), item.causal_parents.end()), "encoder parents must be sorted");
+        require(std::adjacent_find(item.causal_parents.begin(), item.causal_parents.end()) == item.causal_parents.end(),
+                "encoder parents must be unique");
+        require(static_cast<unsigned int>(item.provenance) <= static_cast<unsigned int>(ProvenanceKind::Corrected),
+                "encoder provenance kind is invalid");
+        require(static_cast<unsigned int>(item.uncertainty.kind) <= static_cast<unsigned int>(UncertaintyKind::Conflicting) &&
+                    finite(item.uncertainty.confidence) && item.uncertainty.confidence >= 0.0 && item.uncertainty.confidence <= 1.0,
+                "encoder uncertainty record is invalid");
+        if (item.intervention.has_value()) {
+            require(static_cast<unsigned int>(item.intervention->mode) <= static_cast<unsigned int>(EventMode::Counterfactual) &&
+                        item.intervention->mode != EventMode::Observed && item.intervention->variable < config_.payload_dim &&
+                        finite(item.intervention->value),
+                    "encoder intervention record is invalid");
+        }
         result.event_ids.push_back(item.id);
     }
     for (std::size_t index = 0; index < events.size(); ++index) {
@@ -465,7 +497,10 @@ EncodedCausalSequence CausalEventEncoder::encode(const std::vector<CausalEvent>&
                 return candidate.id == parent_id;
             });
             const bool available = iterator != events.end() &&
-                                   (!config_.prevent_future_leakage || iterator->timestamp < item.timestamp);
+                                   (!config_.prevent_future_leakage ||
+                                    (config_.temporal_policy == TemporalCausalityPolicy::AllowSameTimestamp
+                                         ? iterator->timestamp <= item.timestamp
+                                         : iterator->timestamp < item.timestamp));
             if (!available) {
                 ++result.excluded_future_parent_count;
                 continue;
@@ -655,7 +690,10 @@ void CausalEventLearner::validate_sample(const StructuralSample& sample) const {
     require(sample.values.size() == variable_count_, "causal sample dimension mismatch");
     for (const auto value : sample.values) require(finite(value), "causal sample contains non-finite value");
     for (const auto& intervention : sample.interventions) {
-        require(intervention.variable < variable_count_ && finite(intervention.value), "invalid sample intervention");
+        require(intervention.variable < variable_count_ && finite(intervention.value) &&
+                    static_cast<unsigned int>(intervention.mode) <= static_cast<unsigned int>(EventMode::Counterfactual) &&
+                    intervention.mode != EventMode::Observed,
+                "invalid sample intervention");
     }
 }
 
@@ -733,13 +771,21 @@ void CausalEventLearner::fit(const std::vector<StructuralSample>& samples,
                              bool intervention_aware) {
     require(parent_hypotheses.size() == variable_count_, "causal parent hypothesis count mismatch");
     require(samples.size() >= variable_count_ + 2, "causal learner requires more samples");
-    parents_ = parent_hypotheses;
-    coefficients_.assign(variable_count_, {});
-    nonlinear_coefficients_.assign(variable_count_, {});
-    intercepts_.assign(variable_count_, 0.0);
-    confidences_.assign(variable_count_, 0.0);
+    const auto fitted_parents = parent_hypotheses;
     for (std::size_t child = 0; child < variable_count_; ++child) {
-        for (const auto parent : parents_[child]) require(parent < variable_count_ && parent != child, "invalid parent hypothesis");
+        require(std::is_sorted(fitted_parents[child].begin(), fitted_parents[child].end()),
+                "causal parent hypothesis must be sorted");
+        require(std::adjacent_find(fitted_parents[child].begin(), fitted_parents[child].end()) == fitted_parents[child].end(),
+                "causal parent hypothesis must be unique");
+        for (const auto parent : fitted_parents[child]) {
+            require(parent < variable_count_ && parent != child && parent < child, "invalid or cyclic parent hypothesis");
+        }
+    }
+    std::vector<std::vector<double>> fitted_coefficients(variable_count_);
+    std::vector<std::vector<double>> fitted_nonlinear_coefficients(variable_count_);
+    std::vector<double> fitted_intercepts(variable_count_, 0.0);
+    std::vector<double> fitted_confidences(variable_count_, 0.0);
+    for (std::size_t child = 0; child < variable_count_; ++child) {
         std::vector<std::vector<double>> design;
         std::vector<std::vector<double>> linear_design;
         std::vector<double> target;
@@ -753,16 +799,18 @@ void CausalEventLearner::fit(const std::vector<StructuralSample>& samples,
             if (target_intervened) continue;
             std::vector<double> row{1.0};
             std::vector<double> linear_row{1.0};
-            for (const auto parent : parents_[child]) {
+            for (const auto parent : fitted_parents[child]) {
                 row.push_back(sample.values[parent]);
                 linear_row.push_back(sample.values[parent]);
             }
-            for (const auto parent : parents_[child]) row.push_back(1000.0 * (std::tanh(sample.values[parent]) - sample.values[parent]));
+            for (const auto parent : fitted_parents[child]) {
+                row.push_back(1000.0 * (std::tanh(sample.values[parent]) - sample.values[parent]));
+            }
             design.push_back(std::move(row));
             linear_design.push_back(std::move(linear_row));
             target.push_back(sample.values[child]);
         }
-        require(design.size() >= design.front().size(), "not enough usable samples for causal regression");
+        require(!design.empty() && design.size() >= design.front().size(), "not enough usable samples for causal regression");
         const auto solution = solve_ridge(design, target);
         const auto linear_solution = solve_ridge(linear_design, target);
         double extended_error = 0.0;
@@ -770,28 +818,41 @@ void CausalEventLearner::fit(const std::vector<StructuralSample>& samples,
         for (std::size_t row = 0; row < design.size(); ++row) {
             double extended_prediction = 0.0;
             double linear_prediction = 0.0;
-            for (std::size_t feature = 0; feature < design[row].size(); ++feature) extended_prediction += design[row][feature] * solution[feature];
-            for (std::size_t feature = 0; feature < linear_design[row].size(); ++feature) linear_prediction += linear_design[row][feature] * linear_solution[feature];
+            for (std::size_t feature = 0; feature < design[row].size(); ++feature) {
+                extended_prediction += design[row][feature] * solution[feature];
+            }
+            for (std::size_t feature = 0; feature < linear_design[row].size(); ++feature) {
+                linear_prediction += linear_design[row][feature] * linear_solution[feature];
+            }
             extended_error += (extended_prediction - target[row]) * (extended_prediction - target[row]);
             linear_error += (linear_prediction - target[row]) * (linear_prediction - target[row]);
         }
         const bool use_nonlinear = extended_error < linear_error * 0.90;
-        intercepts_[child] = use_nonlinear ? solution[0] : linear_solution[0];
-        coefficients_[child].resize(parents_[child].size(), 0.0);
-        nonlinear_coefficients_[child].resize(parents_[child].size(), 0.0);
+        fitted_intercepts[child] = use_nonlinear ? solution[0] : linear_solution[0];
+        fitted_coefficients[child].resize(fitted_parents[child].size(), 0.0);
+        fitted_nonlinear_coefficients[child].resize(fitted_parents[child].size(), 0.0);
         double signal = 0.0;
-        for (std::size_t index = 0; index < parents_[child].size(); ++index) {
-            coefficients_[child][index] = use_nonlinear ? solution[1 + index] : linear_solution[1 + index];
-            nonlinear_coefficients_[child][index] = use_nonlinear ? solution[1 + parents_[child].size() + index] : 0.0;
-            signal += std::abs(coefficients_[child][index]) + std::abs(nonlinear_coefficients_[child][index]);
+        for (std::size_t index = 0; index < fitted_parents[child].size(); ++index) {
+            fitted_coefficients[child][index] = use_nonlinear ? solution[1 + index] : linear_solution[1 + index];
+            fitted_nonlinear_coefficients[child][index] =
+                use_nonlinear ? solution[1 + fitted_parents[child].size() + index] : 0.0;
+            signal += std::abs(fitted_coefficients[child][index]) + std::abs(fitted_nonlinear_coefficients[child][index]);
         }
-        confidences_[child] = std::min(1.0, signal / (0.5 + static_cast<double>(parents_[child].size())));
+        fitted_confidences[child] = std::min(1.0, signal / (0.5 + static_cast<double>(fitted_parents[child].size())));
+        require(finite(fitted_intercepts[child]) && finite(fitted_confidences[child]),
+                "causal learner fit produced non-finite state");
     }
+    parents_ = fitted_parents;
+    coefficients_ = std::move(fitted_coefficients);
+    nonlinear_coefficients_ = std::move(fitted_nonlinear_coefficients);
+    intercepts_ = std::move(fitted_intercepts);
+    confidences_ = std::move(fitted_confidences);
     fitted_ = true;
 }
 
 std::vector<EdgePrediction> CausalEventLearner::edge_predictions(double threshold) const {
     require(fitted_, "causal learner is not fitted");
+    require(finite(threshold) && threshold >= 0.0, "edge confidence threshold must be finite and non-negative");
     std::vector<EdgePrediction> result;
     for (std::size_t child = 0; child < variable_count_; ++child) {
         for (std::size_t index = 0; index < parents_[child].size(); ++index) {
@@ -824,6 +885,7 @@ std::vector<double> CausalEventLearner::evaluate_world(const std::vector<double>
 CausalPrediction CausalEventLearner::predict_observation(const std::vector<double>& context, std::size_t target) const {
     require(fitted_, "causal learner is not fitted");
     require(context.size() == variable_count_ && target < variable_count_, "invalid causal observation query");
+    for (const auto value : context) require(finite(value), "observation query contains non-finite value");
     return {context[target], 1.0, false};
 }
 
@@ -832,8 +894,9 @@ CausalPrediction CausalEventLearner::predict_intervention(const std::vector<doub
                                                           double value,
                                                           std::size_t target) const {
     require(fitted_, "causal learner is not fitted");
-    require(context.size() == variable_count_ && variable < variable_count_ && target < variable_count_,
+    require(context.size() == variable_count_ && variable < variable_count_ && target < variable_count_ && finite(value),
             "invalid intervention query");
+    for (const auto context_value : context) require(finite(context_value), "intervention context contains non-finite value");
     if (graph_incomplete_ || graph_conflicting_) return {0.0, 0.0, true};
     std::vector<double> residuals(variable_count_, 0.0);
     for (std::size_t child = 0; child < variable_count_; ++child) {
@@ -853,8 +916,10 @@ CausalPrediction CausalEventLearner::predict_counterfactual(const std::vector<do
                                                              const Intervention& intervention,
                                                              std::size_t target) const {
     require(fitted_, "causal learner is not fitted");
-    require(factual.size() == variable_count_ && intervention.variable < variable_count_ && target < variable_count_,
+    require(factual.size() == variable_count_ && intervention.variable < variable_count_ && target < variable_count_ &&
+                finite(intervention.value) && intervention.mode == EventMode::Counterfactual,
             "invalid counterfactual query");
+    for (const auto factual_value : factual) require(finite(factual_value), "counterfactual context contains non-finite value");
     if (graph_incomplete_ || graph_conflicting_) return {0.0, 0.0, true};
     std::vector<double> residuals(variable_count_, 0.0);
     for (std::size_t child = 0; child < variable_count_; ++child) {

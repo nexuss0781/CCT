@@ -259,50 +259,50 @@ The declared L1-1 scope is the native scalar-field substrate; sequence-state bat
 
 **Dependency:** L1-2 `PASS`.
 
-**Current status:** `PASS — fresh native replay at a3fc4d9` for the declared event, causality, and state-discipline contract; a clean external release-checkout replay remains required before release use.
+**Current status:** `[x] PASS` for the declared native event, graph, causality, leakage, intervention, counterfactual, robustness, and abstention contract. The fresh gate covers nine mandatory checks plus evaluator-truth separation, independent graph corruption, strict metadata/query failure closure, and transactional learner-fit preservation. Artifact publication remains approval-gated for L1-4.
 
 ## L1-3 implementation tasks
 
-- [ ] Define stable event identity.
-- [ ] Define event ordering, source metadata, and causal relationships.
-- [ ] Define dependency structure and cycle policy.
-- [ ] Implement future-information leakage checks.
-- [ ] Implement evaluator-isolation checks.
-- [ ] Implement interventions with changed-input records.
-- [ ] Implement counterfactual paired-world fixtures.
-- [ ] Implement omission, reorder, irrelevant-event, contradiction, and perturbation fixtures.
-- [ ] Preserve provenance for every intervention and counterfactual.
-- [ ] Implement confidence, evidence, uncertainty, and abstention records.
+- [x] Define stable nonzero event identity with duplicate rejection and deterministic serialization.
+- [x] Define event ordering, source/provenance metadata, timestamps, intervention modes, uncertainty, and causal relationships.
+- [x] Define dependency structure, explicit unresolved-parent policy, temporal tie policy, and DAG cycle policy.
+- [x] Implement future-information leakage checks in the encoder with strict or same-timestamp policy.
+- [x] Implement evaluator-isolation checks with separate visible-input and evaluator-truth artifacts.
+- [x] Implement observed, do-intervened, and counterfactual records with changed-input validation.
+- [x] Implement paired-world fixtures sharing structural noise for counterfactual evaluation.
+- [x] Implement omission/missing-parent, reorder, irrelevant-change, contradiction, corrupted-graph, and perturbation fixtures.
+- [x] Preserve provenance, uncertainty, event identity, and intervention mode through snapshot and encoder paths.
+- [x] Implement finite confidence/evidence records and abstention for incomplete or conflicting graphs.
 
 ## L1-3 verification tasks
 
-- [ ] Verify stable event identity and duplicate detection.
-- [ ] Verify source digest and ordering.
-- [ ] Run the leakage audit.
-- [ ] Verify causal dependency validation.
-- [ ] Verify intervention outcome comparisons.
-- [ ] Verify counterfactual reproducibility with shared seed control.
-- [ ] Verify robustness under reordering and omission.
-- [ ] Verify contradiction handling.
-- [ ] Verify unsupported and ambiguous input abstention.
+- [x] Verify stable event identity, duplicate detection, deterministic export, and snapshot round trip.
+- [x] Verify source/provenance fields, timestamp policy, insertion-order determinism, and dataset fingerprints.
+- [x] Run the leakage audit with future-parent counts, masked/unmasked encodings, and graph-conditioned loop/scan equivalence.
+- [x] Verify missing-parent, unresolved-parent, cycle, self-parent, enum, coordinate, uncertainty, and intervention validation.
+- [x] Verify held-out intervention outcomes, effect direction, and intervention-aware versus observation-only error.
+- [x] Verify paired counterfactual reproducibility with shared structural noise and irrelevant-change consistency.
+- [x] Verify measurable degradation under corrupted graph hypotheses and finite behavior under robustness perturbation.
+- [x] Verify incomplete and conflicting graph abstention with zero confidence.
+- [x] Verify unsupported, malformed, non-finite, duplicate, and ambiguous event/learner inputs fail closed without corrupting a fitted model.
 
 ## L1-3 artifacts
 
-- [ ] Event schema.
-- [ ] Causal dependency report.
-- [ ] Leakage audit.
-- [ ] Intervention report.
-- [ ] Counterfactual report.
-- [ ] Robustness report.
-- [ ] Abstention report.
-- [ ] L1-3 gate and transition record.
+- [x] Event schema and graph-store contract in `cpp/include/cct/causal.hpp` and `Stages/03_Causal_Event_Learning.md`.
+- [x] Causal dependency and structural-recovery report in `artifacts/stage-3/cpp-gate/checks.json`.
+- [x] Leakage audit and visible/evaluator-only separation in `visible_input.json` and `evaluator_truth.json`.
+- [x] Intervention-effect report with observation-only control in the gate bundle.
+- [x] Counterfactual consistency report with paired-world error and irrelevant-change metric.
+- [x] Robustness report with corrupted-graph degradation and finite outputs.
+- [x] Abstention report for incomplete and conflicting graph metadata.
+- [x] L1-3 gate and transition record under `artifacts/stage-3/cpp-gate/`.
 
 ## L1-3 gate and transition
 
-- [ ] Freeze event and provenance schema.
-- [ ] Run the formal L1-3 gate.
-- [ ] Record unresolved causal or state limitations.
-- [ ] Record transition approval for L1-4.
+- [x] Freeze event, provenance, uncertainty, intervention, temporal-policy, and visible/evaluator-only schemas.
+- [x] Run the formal native L1-3 gate with nine mandatory checks.
+- [x] Record the declared limitations: evidence is confined to the tested synthetic structural-equation distributions and does not establish general causal understanding or real-world causal discovery.
+- [ ] Record explicit user approval for transition to L1-4.
 
 **Transition:** `PASS` authorizes L1-4 representation locking.
 

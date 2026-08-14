@@ -111,6 +111,7 @@ struct CausalEncodingConfig {
     bool include_provenance = true;
     bool include_coordinates = true;
     bool prevent_future_leakage = true;
+    TemporalCausalityPolicy temporal_policy = TemporalCausalityPolicy::StrictEarlier;
 };
 
 struct EncodedCausalSequence {

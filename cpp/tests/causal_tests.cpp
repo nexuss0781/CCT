@@ -3,7 +3,9 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -194,6 +196,115 @@ void test_causal_learning_and_abstention() {
     require(conflicting.abstained, "conflicting graph did not abstain");
 }
 
+void test_strict_metadata_and_learner_failure_paths() {
+    CausalStoreConfig configuration;
+    configuration.payload_dim = 2;
+    configuration.coordinate_dim = 2;
+    configuration.coordinate_min = {0.0, 0.0};
+    configuration.coordinate_max = {1.0, 1.0};
+    CausalEventStore store(configuration);
+    store.insert(make_event(1, 0, {}));
+    auto unresolved_mismatch = make_event(2, 1, {99});
+    bool rejected = false;
+    try {
+        store.insert(unresolved_mismatch);
+    } catch (const CausalGraphError&) {
+        rejected = true;
+    }
+    require(rejected, "parent missing without explicit unresolved marker was accepted");
+    auto unresolved = make_event(2, 1, {99});
+    unresolved.unresolved_parent_ids = {99};
+    store.insert(unresolved);
+    auto invalid_enum = make_event(3, 2, {1});
+    invalid_enum.provenance = static_cast<ProvenanceKind>(99);
+    rejected = false;
+    try {
+        store.insert(invalid_enum);
+    } catch (const CausalGraphError&) {
+        rejected = true;
+    }
+    require(rejected, "invalid provenance enum was accepted");
+
+    auto same_timestamp = make_event(4, 0, {1});
+    rejected = false;
+    try {
+        store.insert(same_timestamp);
+    } catch (const CausalGraphError&) {
+        rejected = true;
+    }
+    require(rejected, "strict timestamp policy accepted a same-time parent");
+    configuration.temporal_policy = cct::TemporalCausalityPolicy::AllowSameTimestamp;
+    CausalEventStore same_time_store(configuration);
+    same_time_store.insert(make_event(1, 0, {}));
+    same_time_store.insert(make_event(4, 0, {1}));
+
+    auto duplicate_events = std::vector<CausalEvent>{make_event(1, 0, {}), make_event(1, 1, {})};
+    rejected = false;
+    try {
+        static_cast<void>(CausalEventEncoder().encode(duplicate_events));
+    } catch (const CausalGraphError&) {
+        rejected = true;
+    }
+    require(rejected, "encoder accepted duplicate event IDs");
+    auto nonfinite_event = make_event(5, 3, {});
+    nonfinite_event.semantic_payload[0] = std::numeric_limits<double>::quiet_NaN();
+    rejected = false;
+    try {
+        static_cast<void>(CausalEventEncoder().encode({nonfinite_event}));
+    } catch (const CausalGraphError&) {
+        rejected = true;
+    }
+    require(rejected, "encoder accepted non-finite payload");
+
+    const auto valid_snapshot = same_time_store.serialize_snapshot();
+    auto malformed_snapshot = valid_snapshot;
+    const auto event_marker = malformed_snapshot.find("EVENT 1 1 0 0");
+    require(event_marker != std::string::npos, "snapshot fixture marker was not found");
+    malformed_snapshot.replace(event_marker, std::string("EVENT 1 1 0 0").size(), "EVENT 1 1 0 99");
+    rejected = false;
+    try {
+        static_cast<void>(CausalEventStore::deserialize_snapshot(malformed_snapshot));
+    } catch (const CausalGraphError&) {
+        rejected = true;
+    }
+    require(rejected, "malformed snapshot enum was accepted");
+
+    const auto dataset = SyntheticCausalGenerator::generate(SyntheticCausalConfig{4, 128, 32, 101, true});
+    const auto candidates = candidate_parents(dataset.evaluator_truth.variable_count);
+    CausalEventLearner learner(dataset.evaluator_truth.variable_count);
+    learner.fit(dataset.training_samples, candidates, true);
+    const auto before = learner.parent_hypotheses();
+    auto invalid_candidates = candidates;
+    invalid_candidates[3] = {2, 1};
+    rejected = false;
+    try {
+        learner.fit(dataset.training_samples, invalid_candidates, true);
+    } catch (const CausalGraphError&) {
+        rejected = true;
+    }
+    require(rejected && learner.fitted() && learner.parent_hypotheses() == before,
+            "failed learner fit corrupted the previously fitted model");
+    auto nonfinite_context = dataset.intervention_cases.front().context_values;
+    nonfinite_context.front() = std::numeric_limits<double>::infinity();
+    rejected = false;
+    try {
+        static_cast<void>(learner.predict_intervention(nonfinite_context, 1, 0.2, 3));
+    } catch (const CausalGraphError&) {
+        rejected = true;
+    }
+    require(rejected, "non-finite intervention context was accepted");
+    auto invalid_counterfactual = dataset.counterfactual_cases.front().intervention;
+    invalid_counterfactual.mode = EventMode::Observed;
+    rejected = false;
+    try {
+        static_cast<void>(learner.predict_counterfactual(dataset.counterfactual_cases.front().factual_values,
+                                                         invalid_counterfactual, 3));
+    } catch (const CausalGraphError&) {
+        rejected = true;
+    }
+    require(rejected, "observational mode was accepted as a counterfactual query");
+}
+
 void test_observation_control() {
     const auto dataset = SyntheticCausalGenerator::generate(SyntheticCausalConfig{4, 128, 32, 101, true});
     const auto candidates = candidate_parents(dataset.evaluator_truth.variable_count);
@@ -224,6 +335,7 @@ int main() {
         {"encoder_and_graph_conditioned_core", test_encoder_and_graph_conditioned_core},
         {"causal_learning_and_abstention", test_causal_learning_and_abstention},
         {"observation_control", test_observation_control},
+        {"strict_metadata_and_learner_failure_paths", test_strict_metadata_and_learner_failure_paths},
     };
     std::size_t passed = 0;
     for (const auto& [name, test] : tests) {

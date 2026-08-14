@@ -4,7 +4,7 @@
 **Stage ID:** 3  
 **Predecessor:** Stage 2 — Efficient Sequence Core  
 **Successor:** Stage 4 — Persistent Verifiable Memory  
-**Status:** Implemented in native C++20; Stage 3 gate PASS; Stage 4 approval required
+**Status:** Implemented in native C++20; Stage 3 gate PASS with strict event metadata, temporal-policy leakage controls, transactional learner fitting, evaluator-truth separation, and nine mandatory checks; Stage 4 approval required.
 
 ## Purpose
 
@@ -48,6 +48,8 @@ The store must enforce:
 | Uncertainty | Unknown, estimated, and known values are not silently conflated |
 | Immutability | Historical events cannot be changed without a new version or correction event |
 
+The native implementation also rejects unsupported provenance, uncertainty, and intervention modes; requires unresolved parent IDs to be declared in the causal-parent list; validates finite payloads, coordinates, confidence, and intervention values; and publishes failed insertions transactionally. The encoder repeats model-visible validation for duplicate IDs, finite values, sorted unique parents, and temporal policy so callers cannot bypass store checks by constructing an ad hoc event stream.
+
 The API must support insertion, exact lookup, parent/child lookup, causal past, causal future, intervention application, graph snapshotting, and deterministic export. Queries must return event IDs and provenance, not only vectors.
 
 ## Causal model contract
@@ -76,7 +78,7 @@ The model must not be allowed to inspect generator-only metadata such as the tru
 | Intervention adapter | Represent observed, do-intervened, and counterfactual contexts distinctly | Interventions cannot be confused with observations |
 | Objectives | Edge prediction, temporal ordering, intervention effect, and counterfactual losses | Each objective is independently logged |
 | Dataset generator | Produce graph families with held-out functions, topologies, confounders, and noise levels | Test splits are generated from independent seeds |
-| Audit record | Record visible graph, intervention, model output, evidence, and evaluator truth separately | No hidden truth appears in model input |
+| Audit record | Record visible graph, intervention, model output, evidence, and evaluator truth separately | No hidden truth appears in model input; failed learner fits preserve the prior fitted model |
 
 A recommended multi-task objective is:
 
@@ -86,7 +88,7 @@ L = L_event + λ_edge L_edge + λ_time L_time
   + λ_consistency L_graph
 ```
 
-The graph consistency term must not force the model to agree with an incorrect supplied graph. When graph uncertainty is present, the model should represent uncertainty or compare alternative hypotheses rather than silently treating the graph as fact.
+The graph consistency term must not force the model to agree with an incorrect supplied graph. When graph uncertainty is present, the model should represent uncertainty or compare alternative hypotheses rather than silently treating the graph as fact. The native learner rejects unsorted, duplicate, self, future, or otherwise cyclic parent hypotheses before fitting and publishes a fitted model only after all child regressions and finite-state checks succeed.
 
 ## Training and data protocol
 
@@ -143,7 +145,7 @@ When the graph is incomplete or conflicting, evaluate confidence and abstention.
 | Ablation | Edge, temporal, intervention, and uncertainty channels have independent reports | Component contribution cannot be isolated |
 | Reproducibility | Independent seeds reproduce the qualitative ranking of baselines | Results depend on one seed or one graph family |
 
-A pass requires success on every mandatory task family, not only the easiest graph size. Thresholds must be declared before the final test run and stored with the benchmark artifact.
+A pass requires success on every mandatory task family, not only the easiest graph size. Thresholds must be declared before the final test run and stored with the benchmark artifact. The current native gate has **nine mandatory checks**, including an independent strict-contract failure-closure check for missing parents, invalid enums, same-time parents, duplicate encoder IDs, non-finite payloads and queries, transactional fit preservation, and invalid causal inputs.
 
 ## Transition to Stage 4
 
@@ -155,7 +157,7 @@ If the stage fails, the team must distinguish representation failure from causal
 
 The report must include graph-family definitions, structural equations, split policy, visible/evaluator-only schemas, task metrics, calibration curves, corruption curves, baseline comparisons, seed variance, and representative failure cases. It must explicitly state that passing this stage demonstrates causal-structure-aware prediction on the tested distributions, not general causal understanding.
 
-**Transition decision:** `PASS` authorizes Stage 4. `FAIL` requires remediation. `BLOCKED` is allowed only for optional real-world datasets; the synthetic causal suite and leakage audit must pass.
+**Transition decision:** `PASS` authorizes Stage 4 preparation only after explicit approval. `FAIL` requires remediation. `BLOCKED` is allowed only for optional real-world datasets; the synthetic causal suite, evaluator-truth separation, and leakage audit must pass. The current gate records `PASS` with `approval_required: true`.
 
 ## References
 
