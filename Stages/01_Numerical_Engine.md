@@ -4,7 +4,7 @@
 **Stage ID:** 1  
 **Predecessor:** Stage 0 — Reproducible Baseline  
 **Successor:** Stage 2 — Efficient Sequence Core  
-**Status:** Implemented; Stage 1 gate PASS
+**Status:** Implemented; Stage 1 gate PASS with native float64 precision and fail-closed validation policy.
 
 ## Purpose
 
@@ -16,7 +16,7 @@ The implementation is located in `cpp/include/cct/field.hpp` and `cpp/src/field.
 
 ## Scope and non-goals
 
-The stage includes a periodic spectral solver, a reference finite-difference solver, stable time integrators, boundary-condition interfaces, bounded learnable potential parameterizations, analytic native gradients, precision-policy checks, and numerical benchmark reporting. It does not implement the recurrent sequence model, causal event learning, long-term memory, language training, or tool use.
+The stage includes a periodic spectral solver, a reference finite-difference solver, stable time integrators, boundary-condition interfaces, bounded learnable potential parameterizations, analytic native gradients, explicit native float64 precision policy, fail-closed configuration parsing, finite-value and overflow-safe shape checks, and numerical benchmark reporting. It does not implement the recurrent sequence model, causal event learning, long-term memory, language training, or tool use.
 
 The initial implementation should use a mathematically explicit scalar or vector field with a defined spatial grid and time coordinate. The system must distinguish a physical simulation mode from a learned operator mode; neither may silently substitute for the other.
 
@@ -37,9 +37,10 @@ State = (φ_t, ψ_t, t, solver_config, diagnostics)
 ψ_t = ∂φ/∂t
 ```
 
-The native operator API must expose equivalent C++ methods:
+The native operator API must expose equivalent C++ methods. Field storage is a flattened, owning `std::vector<double>` with explicit shape, spacing, boundary, time, and step-index metadata; the reference precision is IEEE-754 float64 and unsupported reduced precision is rejected rather than silently downgraded.
 
 ```cpp
+
 FieldState state = solver.initialize(phi0, psi0);
 FieldState state_next = solver.step(state, source, potential);
 Trajectory trajectory = solver.rollout(state, source_sequence, potential);
@@ -67,12 +68,13 @@ All functions used in training must be pure with respect to solver state. Static
 
 The reference solver must be slow but clear. It uses explicit C++ array operations and an independent finite-difference stencil. The optimized solver uses FFTW spectral operations, and every optimized result is compared against the reference on identical inputs and configuration. Native compilation replaces the former JIT requirement.
 
-The reference implementation must include at least these manufactured solutions:
+The reference implementation includes the source-free Fourier mode and a discrete constant-forcing solution. A damped solution is outside this stage because no damped operator is declared in the L1-1 equation; it is not silently treated as supported.
+
+The reference implementation must include at least these manufactured solutions within the declared operator set:
 
 ```text
 φ(x,t) = sin(k·x − ωt),       ω² = c²||k||² + V
-φ(x,t) = exp(−αt) sin(k·x),   for a declared damped operator
-φ(x,t) = known_forced_solution(x,t), with J derived analytically
+φ(x,t) = known_forced_solution(x,t), with J derived from the discrete update
 ```
 
 The manufactured forcing must be computed from the chosen discretized equation rather than from an unrelated continuous formula when the test is intended to verify the discrete operator.
@@ -107,7 +109,7 @@ Verify that clean and incremental CMake builds produce identical test behavior, 
 
 The performance harness must measure native build time separately from steady-state one-step and rollout time, FFT plan overhead, analytic-gradient evaluation, and achieved throughput. Warm-up iterations are separated from timed iterations, and each benchmark records grid size, method, compiler, FFTW version, and hardware.
 
-The stage must report scaling over grid sizes and rollout lengths. It must not claim O(n log n) merely because FFT is used; it must show the fitted scaling range, constants, memory behavior, and hardware. Any dense tensor or hidden pairwise operation must be visible in the profile.
+The stage must report scaling over grid sizes and rollout lengths. It must not claim O(n log n) merely because FFT is used; it must show the fitted scaling range, constants, memory behavior, and hardware. Any dense tensor or hidden pairwise operation must be visible in the profile. The final gate also records precision identity, schema rejection, non-finite input rejection, source causality, and overflow-safe shape behavior.
 
 ## Pass/fail criteria
 
@@ -121,6 +123,7 @@ The stage must report scaling over grid sizes and rollout lengths. It must not c
 | Gradient correctness | Analytic native and centered finite-difference gradients agree within the declared tolerance on all learnable groups | Any trainable group has missing, NaN, or materially incorrect gradients |
 | Boundary correctness | Boundary residuals meet per-condition tolerances | Boundary code is a no-op or is not tested directly |
 | Precision behavior | Native double-precision reference is stable; lower precision is explicitly rejected unless separately implemented and gated | Overflow or silent accuracy collapse occurs |
+| Failure closure | Non-finite values, invalid shapes, unsupported schema/precision, zero-mass masks, and corrupted state are rejected with native exceptions | Invalid data is silently coerced, ignored, or propagated |
 | Performance integrity | Benchmark report separates compile/run time and shows no hidden quadratic hot path | Complexity claim is unsupported by measurements |
 
 The default starting targets are the Phase 2 targets: roughly 10^-3 numerical error on declared analytic tests, convergence consistent with the selected scheme, energy drift below 0.01% over the declared horizon, and gradient discrepancy near 10^-5 on small checks [[2](#references)]. These are gate targets, not universal laws; any revision must include evidence and reviewer approval.
