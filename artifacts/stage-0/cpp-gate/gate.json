@@ -1,0 +1,11 @@
+{
+  "schema": "cct-l1-stage0-gate-v1",
+  "stage": 0,
+  "status": "PASS",
+  "transition": "L1-1 numerical implementation review",
+  "implementation": "native-cpp20",
+  "commit": "dc590fadf51b16553f601df8c608c17d5dcf14c5",
+  "dirty_tree": false,
+  "config_hash": "8c1a11faf7fdc8d2827f333b79aa9d470fbdf97091feb303a0ebb6527e5e6fd3",
+  "approval_required": true
+}

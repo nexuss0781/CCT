@@ -1,0 +1,8 @@
+[
+  {"name":"event_lifecycle","status":"PASS","duration_seconds":3.453e-06,"details":{"native_module":"cct_native","filled_cells":1,"lookup_exact":true}},
+  {"name":"invalid_input_non_mutation","status":"PASS","duration_seconds":4.9335e-05,"details":{"invalid_dimensions":true,"out_of_range":true,"duplicate_rejected":true,"state_unchanged":true}},
+  {"name":"deterministic_native_path","status":"PASS","duration_seconds":0.000740319,"details":{"seed":1701,"repetitions":2,"deterministic":true,"finite_values":true}},
+  {"name":"configuration_validation_and_identity","status":"PASS","duration_seconds":2.0178e-05,"details":{"config_schema":"cct-l1-baseline-config-v1","config_hash":"8c1a11faf7fdc8d2827f333b79aa9d470fbdf97091feb303a0ebb6527e5e6fd3","canonical_identity":true,"malformed_configuration_rejected":true}},
+  {"name":"configuration_and_injected_threshold","status":"PASS","duration_seconds":4.209e-06,"details":{"config_schema":"cct-l1-baseline-config-v1","config_hash":"8c1a11faf7fdc8d2827f333b79aa9d470fbdf97091feb303a0ebb6527e5e6fd3","injected_threshold_status":"FAIL","diagnostics_retained":true}},
+  {"name":"repository_hygiene","status":"PASS","duration_seconds":0.0322008,"details":{"tracked_python":false,"secret_pattern_scan":"clean"}}
+]

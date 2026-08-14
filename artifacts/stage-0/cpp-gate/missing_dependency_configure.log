@@ -1,0 +1,17 @@
+-- The CXX compiler identification is GNU 13.3.0
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /usr/bin/c++ - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+[31mCMake Error at CMakeLists.txt:15 (find_package):
+  find_package for module PkgConfig called with REQUIRED, but
+  CMAKE_DISABLE_FIND_PACKAGE_PkgConfig is enabled.  A REQUIRED package cannot
+  be disabled.
+
+[0m
+[31mCMake Error at CMakeLists.txt:16 (pkg_check_modules):
+  Unknown CMake command "pkg_check_modules".
+
+[0m
+-- Configuring incomplete, errors occurred!
