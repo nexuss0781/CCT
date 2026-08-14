@@ -17,6 +17,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 #include <unistd.h>
@@ -189,9 +190,16 @@ std::string json_string(const std::string& line, const std::string& key) {
 
 bool json_bool(const std::string& line, const std::string& key) {
     const auto marker = "\"" + key + "\":";
-    const auto position = line.find(marker);
-    require(position != std::string::npos, "JSONL boolean field is missing: " + key);
-    return line.compare(position + marker.size(), 4U, "true") == 0;
+    const auto marker_position = line.find(marker);
+    require(marker_position != std::string::npos, "JSONL boolean field is missing: " + key);
+    std::size_t position = marker_position + marker.size();
+    while (position < line.size() && (line[position] == ' ' || line[position] == '\t')) ++position;
+    const auto boundary = [&](const std::size_t end) {
+        return end == line.size() || line[end] == ',' || line[end] == '}' || line[end] == ' ' || line[end] == '\t';
+    };
+    if (line.compare(position, 4U, "true") == 0 && boundary(position + 4U)) return true;
+    if (line.compare(position, 5U, "false") == 0 && boundary(position + 5U)) return false;
+    throw std::runtime_error("JSONL boolean field is malformed: " + key);
 }
 
 std::string trim(std::string value) {
@@ -228,6 +236,7 @@ std::vector<SquadRecord> read_squad_records(const std::filesystem::path& path, c
     std::ifstream input(path);
     require(static_cast<bool>(input), "cannot read SQuAD records from " + path.string());
     std::vector<SquadRecord> records;
+    std::unordered_set<std::string> ids;
     std::string line;
     while (std::getline(input, line)) {
         if (trim(line).empty()) continue;
@@ -238,7 +247,8 @@ std::vector<SquadRecord> read_squad_records(const std::filesystem::path& path, c
         record.answer = json_string(line, "answer");
         record.answerable = json_bool(line, "answerable");
         require(!record.id.empty() && !record.context.empty() && !record.question.empty(), "SQuAD training record is incomplete");
-        require(record.answerable || record.answer.empty(), "unanswerable SQuAD record has an answer");
+        require(record.answerable ? !record.answer.empty() : record.answer.empty(), "SQuAD answerability and answer text disagree");
+        require(ids.insert(record.id).second, "duplicate SQuAD record ID: " + record.id);
         records.push_back(std::move(record));
         if (maximum_records != 0U && records.size() >= maximum_records) break;
     }
@@ -374,6 +384,17 @@ NlpDataset evaluation_dataset(const std::vector<EncodedDocument>& documents, con
     return NlpDataset::build({anchor}, documents, tokenizer_hash, context_length);
 }
 
+void require_disjoint_ids(const std::vector<SquadRecord>& train, const std::vector<SquadRecord>& evaluation,
+                           const std::vector<SquadRecord>& final_test) {
+    std::unordered_set<std::string> ids;
+    const auto append = [&](const std::vector<SquadRecord>& records, const char* split) {
+        for (const auto& record : records) require(ids.insert(record.id).second, "Track 1 split ID overlap at " + std::string(split) + ": " + record.id);
+    };
+    append(train, "sft_train");
+    append(evaluation, "sft_evaluation");
+    append(final_test, "final_test");
+}
+
 std::string evaluation_json(const NlpEvaluation& evaluation) {
     std::ostringstream output;
     output << std::setprecision(10) << "{\"cross_entropy\":" << evaluation.cross_entropy << ",\"perplexity\":" << evaluation.perplexity
@@ -438,6 +459,13 @@ int main(int argc, char** argv) {
         const auto tokenizer_hash = tokenizer.snapshot_hash();
         const auto vocabulary_size = static_cast<std::size_t>(tokenizer.vocabulary().back().id) + 1U;
         const auto data = config.input_root / "data";
+        const auto manifest_path = config.input_root / "manifest.json";
+        require(std::filesystem::exists(manifest_path), "Track 1 manifest is missing for training");
+        const auto manifest_document = read_file(manifest_path);
+        require(manifest_document.find("\"manifest_digest\":\"") != std::string::npos &&
+                    manifest_document.find("\"final_test_ids\":[") != std::string::npos,
+                "Track 1 manifest is missing immutable identity or final-test ownership");
+        const auto manifest_hash = GovernedCorpus::content_sha256(manifest_document);
         std::filesystem::create_directories(config.output_root);
 
         const auto pretrain_train_records = read_text_records(data / "pretrain_train.txt", 0U);
@@ -464,6 +492,7 @@ int main(int argc, char** argv) {
         const auto sft_train_records = read_squad_records(data / "squad_sft_train.jsonl", 0U);
         const auto sft_evaluation_records = read_squad_records(data / "squad_sft_evaluation.jsonl", config.sft_selection_evaluation_limit);
         const auto final_records = read_squad_records(data / "squad_final_test.jsonl", config.final_test_limit);
+        require_disjoint_ids(sft_train_records, sft_evaluation_records, final_records);
         const auto sft_dataset = build_sft_dataset(tokenizer, sft_train_records, sft_evaluation_records, tokenizer_hash,
                                                    config.sft_context_bytes, config.context_length);
         std::size_t final_target_tokens = 0U;
@@ -485,11 +514,16 @@ int main(int argc, char** argv) {
         const auto elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
         const auto pretrain_checkpoint_hash = cct::nlp_checkpoint_hash(read_file(pretrain_checkpoint));
         const auto sft_checkpoint_hash = cct::nlp_checkpoint_hash(read_file(sft_checkpoint));
+        const auto final_test_hash = GovernedCorpus::content_sha256(read_file(data / "squad_final_test.jsonl"));
         const auto pretrain_checkpoint_bytes = std::filesystem::file_size(pretrain_checkpoint);
         const auto sft_checkpoint_bytes = std::filesystem::file_size(sft_checkpoint);
+        require(final_target_tokens > 0U && pretrain_checkpoint_bytes > 0U && sft_checkpoint_bytes > 0U,
+                "Track 1 training did not produce durable checkpoints or final-test target tokens");
         std::ostringstream report;
-        report << std::setprecision(10) << "{\"status\":\"PASS\",\"track\":\"track1\",\"backend\":\"native-c++20-track1-cct-recurrence\",\"tokenizer_hash\":\""
-               << tokenizer_hash << "\",\"pretrain_checkpoint\":{\"reference\":\"pretrain_checkpoint.bin\",\"sha256\":\""
+        report << std::setprecision(10) << "{\"status\":\"PASS\",\"track\":\"track1\",\"backend\":\"native-c++20-track1-cct-recurrence\",\"training_authorized\":false,\"manifest_hash\":\""
+               << manifest_hash << "\",\"pretrain_dataset_hash\":\"" << pretrain_dataset.dataset_hash << "\",\"sft_dataset_hash\":\""
+               << sft_dataset.dataset_hash << "\",\"final_test_hash\":\"" << final_test_hash << "\",\"tokenizer_hash\":\"" << tokenizer_hash
+               << "\",\"pretrain_checkpoint\":{\"reference\":\"pretrain_checkpoint.bin\",\"sha256\":\""
                << pretrain_checkpoint_hash << "\",\"bytes\":" << pretrain_checkpoint_bytes << ",\"training_contract_hash\":\""
                << pretrainer.checkpoint_info().training_contract_hash << "\"},\"sft_checkpoint\":{\"reference\":\"sft_checkpoint.bin\",\"sha256\":\""
                << sft_checkpoint_hash << "\",\"bytes\":" << sft_checkpoint_bytes << ",\"training_contract_hash\":\""
@@ -500,7 +534,7 @@ int main(int argc, char** argv) {
                << ",\"after_selection\":" << evaluation_json(sft.after) << ",\"frozen_final_test\":" << evaluation_json(sft.held_out)
                << ",\"train_sequences\":" << sft.train_sequences << ",\"selection_sequences\":" << sft.selection_sequences
                << ",\"final_test_sequences\":" << sft.held_out_sequences << ",\"final_test_target_tokens\":" << final_target_tokens
-               << "},\"selection_policy\":\"validation slices only; frozen final test scored once after SFT\""
+               << "},\"selection_policy\":\"validation slices only; frozen final test scored once after SFT\",\"checkpoint_lineage\":\"pretrain_checkpoint->sft_checkpoint\",\"durable_checkpoint_paths\":true"
                << ",\"sft_mask_policy\":\"target-span-only-v1\",\"evaluation_scope\":\"answer-target next-token held-out metrics; answer exact-match and F1 are not claimed by this runner\",\"elapsed_seconds\":" << elapsed << "}";
         write_file(config.output_root / "training_report.json", report.str() + "\n");
         std::cout << report.str() << '\n';
