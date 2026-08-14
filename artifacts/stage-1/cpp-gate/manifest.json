@@ -1,0 +1,9 @@
+{
+  "stage": 1,
+  "implementation": "native-cpp",
+  "status": "PASS",
+  "commit": "57c0c0082d9bc4c8de287c877e59e7ad2580f3eb",
+  "config_hash": "745b25a845e29fc7",
+  "compiler": "13.3.0",
+  "fftw": "3.3.10-compatible"
+}

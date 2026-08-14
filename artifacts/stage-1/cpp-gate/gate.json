@@ -1,0 +1,10 @@
+{
+  "stage": 1,
+  "status": "PASS",
+  "transition": "Stage 2",
+  "implementation": "native-cpp",
+  "commit": "57c0c0082d9bc4c8de287c877e59e7ad2580f3eb",
+  "dirty_tree": false,
+  "config_hash": "745b25a845e29fc7",
+  "approval_required": true
+}

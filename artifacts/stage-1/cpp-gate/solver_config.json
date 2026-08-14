@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "precision": "float64",
+  "shape": [16],
+  "spacing": [1],
+  "wave_speed": 1,
+  "dt": 0.10000000000000001,
+  "boundary": "periodic",
+  "method": "rk4",
+  "cfl_safety": 0.90000000000000002,
+  "maximum_abs_potential": 1
+}
