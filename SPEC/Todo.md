@@ -314,49 +314,49 @@ The declared L1-1 scope is the native scalar-field substrate; sequence-state bat
 
 **Dependency:** L1-3 `PASS`.
 
-**Current status:** `PASS — fresh native replay at a3fc4d9` for the declared tokenizer and representation contract; a clean external release-checkout replay remains required before release use.
+**Current status:** `[x] PASS` for the declared native tokenizer and representation-lock contract. The fresh gate measures byte, subword, and hybrid candidates on the same governed fixture and passes twelve mandatory checks, including strict snapshot-schema and packed/padded metadata failure closure. The selected immutable hybrid snapshot is identity-linked for downstream data, trainer checkpoints, and inference loading. Artifact publication remains approval-gated for L1-5.
 
 ## L1-4 implementation tasks
 
-- [ ] Implement byte tokenizer candidate.
-- [ ] Implement subword tokenizer candidate.
-- [ ] Implement hybrid tokenizer candidate.
-- [ ] Compare candidates under a fixed data and evaluation contract.
-- [ ] Freeze selected vocabulary, ordering, snapshot, and hash.
-- [ ] Implement Unicode-safe source-to-token offsets.
-- [ ] Implement malformed-input policy.
-- [ ] Implement byte fallback for every supported byte.
-- [ ] Implement packed causal batches.
-- [ ] Implement padded causal batches.
-- [ ] Implement padding, boundary, and record masks.
-- [ ] Measure token efficiency, source-byte ratio, memory, throughput, and round-trip behavior.
+- [x] Implement byte tokenizer candidate with exhaustive byte fallback.
+- [x] Implement deterministic frequency-ranked subword tokenizer candidate.
+- [x] Implement deterministic longest-first hybrid tokenizer candidate with byte fallback.
+- [x] Compare all candidates under fixed governed data, record order, normalization, and batch settings.
+- [x] Freeze selected vocabulary, ordering, canonical snapshot, and SHA-256 hash.
+- [x] Implement byte-safe source-to-token half-open offsets and record provenance.
+- [x] Implement explicit `preserve-bytes-v1` malformed-input policy.
+- [x] Implement byte fallback for all `256` byte values, including NUL and malformed UTF-8 fragments.
+- [x] Implement packed causal batches with independent sequence boundaries.
+- [x] Implement padded causal batches with inactive pad positions.
+- [x] Implement padding, boundary, control-category, tokenizer-version, source-span, and record masks.
+- [x] Measure token efficiency, source-byte ratio, estimated/resident memory, throughput, and exact round-trip behavior.
 
 ## L1-4 verification tasks
 
-- [ ] Verify snapshot identity and immutable loading.
-- [ ] Verify Unicode offsets and malformed-input behavior.
-- [ ] Verify byte fallback coverage.
-- [ ] Verify packed and padded masks.
-- [ ] Verify deterministic tokenization and round trips.
-- [ ] Compare token efficiency and resource behavior.
-- [ ] Verify tokenizer identity is embedded into data and checkpoint manifests.
+- [x] Verify snapshot identity, exact canonical loading, SHA-256 matching, duplicate-singleton/trailing-data rejection, and immutable release record.
+- [x] Verify Unicode offsets, malformed UTF-8, NUL, separators, and byte-preserving normalization.
+- [x] Verify universal byte fallback coverage and exact decode.
+- [x] Verify packed and padded masks, zero cross-boundary loss, exact loss checksums, and tampered metadata rejection.
+- [x] Verify deterministic tokenization, source spans, literal-control separation, record ordering, and byte-exact round trips.
+- [x] Compare candidate token efficiency and resource behavior under the same declared fixture.
+- [x] Verify tokenizer version and snapshot hash are carried in batch data and checked by native training, checkpoint, and inference consumers.
 
 ## L1-4 artifacts
 
-- [ ] Candidate comparison report.
-- [ ] Frozen tokenizer snapshot.
-- [ ] Vocabulary hash.
-- [ ] Offset and fallback test report.
-- [ ] Batch and mask report.
-- [ ] Efficiency report.
-- [ ] L1-4 gate and transition record.
+- [x] Candidate comparison report in `artifacts/stage-10/cpp-gate/candidate_comparison.json`.
+- [x] Frozen tokenizer snapshot in `tokenizer_snapshot.bin` and `tokenizer_snapshot.json`.
+- [x] Vocabulary hash in the snapshot manifest and release record.
+- [x] Offset and fallback test report in `checks.json`.
+- [x] Batch, loss-mask, and control/boundary metadata report in `batch_report.json` and `checks.json`.
+- [x] Efficiency report in `metrics.json` and candidate comparison.
+- [x] L1-4 gate and approval-gated transition record under `artifacts/stage-10/cpp-gate/`.
 
 ## L1-4 gate and transition
 
-- [ ] Freeze tokenizer and vocabulary before downstream data preparation.
-- [ ] Run the formal L1-4 gate.
-- [ ] Record that tokenizer changes invalidate downstream identities.
-- [ ] Record transition approval for L1-5.
+- [x] Freeze tokenizer and vocabulary before downstream data preparation.
+- [x] Run the formal native L1-4 gate with twelve mandatory checks.
+- [x] Record that tokenizer/version/snapshot changes invalidate downstream batch, training, checkpoint, and inference identities unless a new migration is formally verified.
+- [ ] Record explicit user approval for transition to L1-5.
 
 **Transition:** `PASS` authorizes L1-5 native language training.
 

@@ -146,6 +146,36 @@ ControlKind control_from_number(const std::string& value) {
     return static_cast<ControlKind>(parsed);
 }
 
+void validate_encoded_document(const EncodedDocument& document) {
+    if (document.record_id.empty() || document.tokenizer_version.empty() || document.tokens.empty()) {
+        throw TokenizerError("encoded document identity or token stream is empty");
+    }
+    for (const auto& token : document.tokens) {
+        if (token.record_id != document.record_id || token.source_start > token.source_end ||
+            token.source_end > document.source_bytes.size()) {
+            throw TokenizerError("encoded document token provenance is invalid");
+        }
+        if (static_cast<unsigned int>(token.kind) > static_cast<unsigned int>(TokenKind::Control) ||
+            static_cast<unsigned int>(token.control) > static_cast<unsigned int>(ControlKind::SequenceBoundary)) {
+            throw TokenizerError("encoded document token category is invalid");
+        }
+        if (token.kind == TokenKind::Control) {
+            if (token.id > Tokenizer::kSequenceBoundaryId ||
+                token.control != static_cast<ControlKind>(token.id + 1U) || token.source_start != token.source_end) {
+                throw TokenizerError("encoded document control token is invalid");
+            }
+        } else if (token.kind == TokenKind::ByteFallback) {
+            if (token.id < Tokenizer::kByteFirstId || token.id >= Tokenizer::kByteFirstId + 256U ||
+                token.control != ControlKind::None || token.source_start == token.source_end) {
+                throw TokenizerError("encoded document byte-fallback token is invalid");
+            }
+        } else if (token.id < Tokenizer::kLearnedFirstId || token.control != ControlKind::None ||
+                   token.source_start == token.source_end) {
+            throw TokenizerError("encoded document learned-content token is invalid");
+        }
+    }
+}
+
 }  // namespace
 
 Tokenizer::Tokenizer(TokenizerConfig config, std::vector<VocabularyEntry> vocabulary,
@@ -178,9 +208,17 @@ void Tokenizer::validate_config(const TokenizerConfig& config) {
     if (config.normalization_version != "preserve-bytes-v1") {
         throw TokenizerError("unsupported normalization version");
     }
+    if (static_cast<unsigned int>(config.candidate) > static_cast<unsigned int>(TokenizerCandidate::Hybrid)) {
+        throw TokenizerError("unsupported tokenizer candidate");
+    }
     if (config.minimum_piece_frequency == 0U) throw TokenizerError("minimum piece frequency must be positive");
-    if (config.maximum_piece_count == 0U) throw TokenizerError("maximum piece count must be positive");
-    if (config.maximum_piece_bytes < 2U) throw TokenizerError("maximum piece bytes must be at least two");
+    if (config.maximum_piece_count == 0U ||
+        config.maximum_piece_count > static_cast<std::size_t>(std::numeric_limits<TokenId>::max() - kLearnedFirstId + 1U)) {
+        throw TokenizerError("maximum piece count is outside the supported token-ID range");
+    }
+    if (config.maximum_piece_bytes < 2U || config.maximum_piece_bytes > 1024U) {
+        throw TokenizerError("maximum piece bytes is outside the supported range");
+    }
 }
 
 std::vector<VocabularyEntry> Tokenizer::reserved_vocabulary() {
@@ -200,6 +238,7 @@ void Tokenizer::validate_vocabulary(const TokenizerConfig&, const std::vector<Vo
     const auto reserved = reserved_vocabulary();
     if (vocabulary.size() < reserved.size() + 256U) throw TokenizerError("vocabulary is missing reserved byte entries");
     TokenId previous = 0;
+    std::unordered_set<std::string> learned_pieces;
     for (std::size_t index = 0; index < vocabulary.size(); ++index) {
         const auto& entry = vocabulary[index];
         if (index != 0U && entry.id <= previous) throw TokenizerError("vocabulary IDs are not strictly increasing");
@@ -217,8 +256,9 @@ void Tokenizer::validate_vocabulary(const TokenizerConfig&, const std::vector<Vo
                 throw TokenizerError("byte fallback vocabulary entry is invalid");
             }
         } else if (entry.id < kLearnedFirstId || entry.kind != TokenKind::Content || entry.bytes.empty() ||
-                   entry.bytes.size() > 1024U || entry.control != ControlKind::None || is_reserved_string(entry.bytes)) {
-            throw TokenizerError("learned vocabulary entry is invalid");
+                   entry.bytes.size() > 1024U || entry.control != ControlKind::None || is_reserved_string(entry.bytes) ||
+                   !learned_pieces.insert(entry.bytes).second) {
+            throw TokenizerError("learned vocabulary entry is invalid or duplicated");
         }
     }
     for (TokenId byte = kByteFirstId; byte < kByteFirstId + 256U; ++byte) {
@@ -418,6 +458,7 @@ std::string Tokenizer::decode(const EncodedDocument& document, const bool ignore
     if (document.tokenizer_version != config_.tokenizer_version) {
         throw TokenizerError("encoded document tokenizer version mismatch");
     }
+    validate_encoded_document(document);
     std::vector<TokenId> ids;
     ids.reserve(document.tokens.size());
     for (const auto& token : document.tokens) {
@@ -524,6 +565,7 @@ Tokenizer Tokenizer::from_snapshot(const std::string& snapshot, const std::strin
     std::size_t expected_order = 0;
     bool saw_format = false;
     bool saw_end = false;
+    std::unordered_set<std::string> singleton_fields;
     while (std::getline(input, line)) {
         if (line.size() > maximum_line_bytes) throw TokenizerError("tokenizer snapshot line exceeds byte budget");
         if (line == "end=1") {
@@ -534,6 +576,9 @@ Tokenizer Tokenizer::from_snapshot(const std::string& snapshot, const std::strin
         if (separator == std::string::npos) throw TokenizerError("snapshot line has no field separator");
         const auto key = line.substr(0, separator);
         const auto value = line.substr(separator + 1U);
+        if (key != "training" && key != "vocab" && !singleton_fields.insert(key).second) {
+            throw TokenizerError("snapshot contains a duplicate singleton field: " + key);
+        }
         if (key == "format") {
             config.snapshot_format_version = static_cast<std::uint32_t>(parse_unsigned(value, key));
             saw_format = true;
@@ -593,6 +638,7 @@ Tokenizer Tokenizer::from_snapshot(const std::string& snapshot, const std::strin
         expected_vocabulary != vocabulary.size() || expected_order != piece_order.size()) {
         throw TokenizerError("snapshot counts or terminator are inconsistent");
     }
+    if (std::getline(input, line)) throw TokenizerError("snapshot contains trailing data after terminator");
     if (config.snapshot_format_version != kSupportedSnapshotFormat) throw TokenizerError("snapshot format is unsupported");
     return Tokenizer(std::move(config), std::move(vocabulary), std::move(piece_order), std::move(training_ids));
 }
@@ -606,6 +652,7 @@ PackedBatch CausalBatchPacker::pack(const std::vector<EncodedDocument>& document
         if (document.tokenizer_version != batch.tokenizer_version || document.tokens.empty()) {
             throw TokenizerError("packed documents have incompatible versions or empty tokens");
         }
+        validate_encoded_document(document);
         if (maximum_tokens != 0U && batch.input_ids.size() + document.tokens.size() > maximum_tokens) {
             throw TokenizerError("packed batch exceeds maximum token capacity");
         }
@@ -639,6 +686,7 @@ PaddedBatch CausalBatchPacker::pad(const std::vector<EncodedDocument>& documents
         if (document.tokenizer_version != batch.tokenizer_version || document.tokens.empty()) {
             throw TokenizerError("padded documents have incompatible versions or empty tokens");
         }
+        validate_encoded_document(document);
         length = std::max(length, document.tokens.size());
     }
     if (maximum_length != 0U) {
@@ -692,6 +740,13 @@ void CausalBatchPacker::validate(const PackedBatch& batch) {
         for (std::size_t index = start; index < end; ++index) {
             if (batch.padding_mask[index] != 1U || batch.record_ids[index].empty()) throw TokenizerError("packed token is invalid");
             if (batch.source_starts[index] > batch.source_ends[index]) throw TokenizerError("packed source span is reversed");
+            const auto expected_control = batch.input_ids[index] <= Tokenizer::kSequenceBoundaryId
+                                              ? static_cast<ControlKind>(batch.input_ids[index] + 1U)
+                                              : ControlKind::None;
+            if (batch.control_categories[index] != expected_control ||
+                batch.boundary_mask[index] != (expected_control == ControlKind::None ? 0U : 1U)) {
+                throw TokenizerError("packed control category or boundary mask is invalid");
+            }
             if (batch.control_categories[index] == ControlKind::None && batch.source_starts[index] == batch.source_ends[index]) {
                 throw TokenizerError("packed content token has an empty source span");
             }
@@ -733,6 +788,13 @@ void CausalBatchPacker::validate(const PaddedBatch& batch) {
                 if (batch.padding_mask[row][index] != 1U || batch.record_ids[row][index].empty() ||
                     batch.source_starts[row][index] > batch.source_ends[row][index]) {
                     throw TokenizerError("padded active token is invalid");
+                }
+                const auto expected_control = batch.input_ids[row][index] <= Tokenizer::kSequenceBoundaryId
+                                                  ? static_cast<ControlKind>(batch.input_ids[row][index] + 1U)
+                                                  : ControlKind::None;
+                if (batch.control_categories[row][index] != expected_control ||
+                    batch.boundary_mask[row][index] != (expected_control == ControlKind::None ? 0U : 1U)) {
+                    throw TokenizerError("padded control category or boundary mask is invalid");
                 }
                 if (batch.control_categories[row][index] == ControlKind::None &&
                     batch.source_starts[row][index] == batch.source_ends[row][index]) {

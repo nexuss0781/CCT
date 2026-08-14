@@ -5,7 +5,7 @@
 **Predecessor:** Stage 9 — Governed Data and Corpus Pipeline  
 **Successor:** Stage 11 — Trainable Native NLP Core  
 **Implementation boundary:** Native C++20 only; no Python tokenizer, vocabulary builder, or batch implementation is accepted.  
-**Gate status:** Approval received; implementation in progress.
+**Gate status:** Native C++20 implementation complete; the current formal gate is PASS with twelve mandatory checks and explicit approval still required for the successor training stage.
 
 ## 1. Gate purpose
 
@@ -94,7 +94,8 @@ The gate uses a deterministic token-local checksum evaluator—not a language-mo
 | Offsets | 100% of content tokens have valid source spans; 100% of controls have explicit categories |
 | Packed loss | Zero loss is charged across document or sequence boundaries; all padding loss masks are false |
 | Padding equivalence | Packed and padded token-local loss checksum agrees exactly per document |
-| Versioning | Snapshot bytes and SHA-256 round-trip exactly; incompatible versions and malformed snapshots fail closed |
+| Versioning | Snapshot bytes and SHA-256 round-trip exactly; incompatible versions, malformed snapshots, duplicate singleton fields, and trailing data fail closed |
+| Strict metadata closure | Externally supplied document provenance and packed/padded control and boundary metadata reject if tampered |
 | Efficiency measurement | Every candidate reports non-zero tokens/sec, bytes/sec, resident-memory samples, identical fixture/config/batch metadata, and no candidate is omitted |
 | Candidate selection | Selected candidate passes every mandatory check, has 100% offset coverage and zero unknown/fallback corruption, and its selection rationale is recorded |
 | Contamination | Builder rejects evaluator-only or non-training documents; evaluator canary does not change vocabulary or snapshot |
@@ -104,7 +105,7 @@ Additional quantitative thresholds are fixed for the gate environment: all three
 
 ## 8. Adversarial and failure-path requirements
 
-The harness must attempt and verify fail-closed behavior for an evaluator-only document passed to the vocabulary builder, a missing real-source file, a changed real-source hash, a duplicate reserved ID, a content/control collision, an invalid token ID at decode time, a truncated snapshot, an incompatible snapshot version, a malformed UTF-8 sequence, NUL-containing content, cross-document packed boundaries, and padding positions. Each rejected input must produce a deterministic failure or diagnostic; silent repair is not accepted unless explicitly governed by the normalization version.
+The harness must attempt and verify fail-closed behavior for an evaluator-only document passed to the vocabulary builder, a missing real-source file, a changed real-source hash, a duplicate reserved ID, a content/control collision, an invalid token ID at decode time, a truncated snapshot, an incompatible snapshot version, duplicate singleton snapshot fields, trailing snapshot data, malformed UTF-8, NUL-containing content, mismatched externally supplied token provenance, cross-document packed boundaries, tampered control/boundary metadata, and padding positions. Each rejected input must produce a deterministic failure or diagnostic; silent repair is not accepted unless explicitly governed by the normalization version.
 
 The harness must also run the same construction twice with different container insertion orders and confirm identical output. It must verify that adding validation/evaluator content after construction cannot mutate the released vocabulary or snapshot.
 
@@ -115,7 +116,7 @@ The Stage 10 gate writes all artifacts beneath `artifacts/stage-10/cpp-gate/`:
 | Artifact | Required contents |
 |---|---|
 | `checks.json` | One record per mandatory check with status, duration, and measured details |
-| `metrics.json` | Candidate counts, token totals, compression, fallback, offsets, batch utilization, throughput, and memory |
+| `metrics.json` | Mandatory-check count, candidate counts, token totals, compression, fallback, offsets, batch utilization, throughput, and memory |
 | `candidate_comparison.json` | Identical-fixture comparison for byte, subword, and hybrid candidates |
 | `tokenizer_snapshot.json` | Selected candidate metadata, snapshot hash, version, and provenance |
 | `tokenizer_snapshot.bin` | Canonical serialized snapshot bytes |

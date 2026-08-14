@@ -2,7 +2,7 @@
 
 **Predecessor:** Stage 9 — Governed Data and Corpus Pipeline  
 **Successor:** Stage 11 — Trainable Native NLP Core  
-**Status:** Implemented and gated `PASS` on declared real-source and application-shaped fixtures; Stage 11 requires explicit approval
+**Status:** Implemented and gated `PASS` on declared real-source and application-shaped fixtures. The current native gate has twelve mandatory checks, including strict snapshot-schema and batch-metadata failure closure; Stage 11 requires explicit approval.
 **Implementation:** Native C++20 tokenizer, candidate comparison, snapshot format, causal batch packer, regression suite, and artifact-producing gate
 
 ## Purpose
@@ -36,9 +36,9 @@ The Stage 10 comparison uses the fixed real-source and application-shaped fixtur
 | Encoder | Byte, subword, and hybrid candidates with offsets | Round-trip and source-span mapping are tested | PASS |
 | Decoder | Deterministic ID-to-byte decoding | Valid IDs decode; invalid IDs fail closed | PASS |
 | Special tokens | BOS/EOS/PAD/UNK/TASK/SCHEMA/CITATION/document and sequence boundaries | Control tokens cannot collide with content | PASS |
-| Batch packer | Packed and padded causal sequences | Boundaries and loss masks are exact | PASS; packed/padded loss checksums agree exactly |
+| Batch packer | Packed and padded causal sequences | Boundaries, control categories, and loss masks are exact | PASS; packed/padded loss checksums agree exactly and tampered metadata rejects |
 | Provenance | Record ID and half-open source spans | Every content token is traceable | PASS; control tokens carry explicit categories |
-| Serialization | Canonical tokenizer/config/vocabulary snapshot | Snapshot hash is part of model identity | PASS; incompatible and malformed snapshots reject |
+| Serialization | Canonical tokenizer/config/vocabulary snapshot | Snapshot hash is part of model identity | PASS; incompatible, duplicate-field, trailing-data, and malformed snapshots reject |
 | Throughput | Fixed-fixture bytes/sec, tokens/sec, and memory measurements | Reported under fixed settings | PASS; all candidates exceeded the `10,000` bytes/sec gate threshold |
 
 ## Token and batch contract
@@ -53,9 +53,9 @@ For a document represented as `[BOS, content..., EOS]`, the target at position `
 
 ## Evaluation harness
 
-The native harness includes exhaustive byte round-trips for all `256` byte values; valid Unicode and malformed-byte fixtures; code identifiers, indentation, literals, and comments; structured JSON and delimiters; control-token collision tests; exact encode/decode tests; source-offset and record-provenance tests; packed boundary and loss-mask tests; padded-batch equivalence; snapshot serialization and hash tests; incompatible-version and invalid-ID rejection; throughput and memory reports; fixed-data comparison of all three candidates; evaluator-only construction rejection; and reproducibility under reordered input records.
+The native harness includes exhaustive byte round-trips for all `256` byte values; valid Unicode and malformed-byte fixtures; code identifiers, indentation, literals, and comments; structured JSON and delimiters; control-token collision tests; exact encode/decode tests; source-offset and record-provenance tests; packed boundary and loss-mask tests; padded-batch equivalence; snapshot serialization and hash tests; incompatible-version, invalid-ID, duplicate-singleton, and trailing-data rejection; externally supplied document provenance validation; tampered packed/padded metadata rejection; throughput and memory reports; fixed-data comparison of all three candidates; evaluator-only construction rejection; and reproducibility under reordered input records.
 
-The complete clean CI run passed **21/21 CTest targets**, including the prior Stage 0–9 suite, `cct_tokenizer_tests` with **7/7** native regression tests, and `cct_stage10_gate` with **12/12** mandatory gate checks.
+The current native tokenizer regression suite contains **8/8** tests, and `cct_stage10_gate` has **12/12** mandatory checks. The full repository CTest matrix is recorded with the released gate evidence.
 
 ## Mandatory gate checks
 
@@ -69,7 +69,8 @@ The complete clean CI run passed **21/21 CTest targets**, including the prior St
 | Offsets | Every trainable token maps to a source span or explicit control category | PASS; `100%` |
 | Packed loss | No loss is charged across document or sequence boundaries | PASS; zero cross-boundary loss |
 | Padding | Packed and padded evaluation agree within tolerance | PASS; exact checksum equality |
-| Versioning | Snapshot/config/hash round-trip exactly; incompatible versions fail closed | PASS |
+| Strict metadata closure | Externally supplied document provenance and packed/padded control and boundary metadata reject if tampered | PASS |
+| Versioning | Snapshot/config/hash round-trip exactly; incompatible versions, duplicate singleton fields, and trailing data fail closed | PASS |
 | Efficiency | Candidate metrics are measured at fixed data, hardware, and batch settings | PASS; all candidates measured |
 | Contamination | Tokenizer construction cannot read evaluator-only records | PASS; builder rejects them |
 | Reproducibility | Same corpus/config/seed produces identical vocabulary and batches | PASS |
@@ -78,7 +79,7 @@ The complete clean CI run passed **21/21 CTest targets**, including the prior St
 
 The selected Stage 10 tokenizer is the hybrid candidate with tokenizer version `cct-ase-tokenizer-v1`. The gate records the immutable snapshot hash in `artifacts/stage-10/cpp-gate/tokenizer_snapshot.json`, `tokenizer_snapshot.bin`, and `release_record.json`. The release record retains `training_authorized: false` and `approval_required: true`; Stage 11 may consume the snapshot only after explicit approval.
 
-The gate writes `checks.json`, `metrics.json`, `candidate_comparison.json`, `tokenizer_snapshot.json`, `tokenizer_snapshot.bin`, `batch_report.json`, `reproducibility.json`, `incident_log.json`, `release_record.json`, and `report.md` beneath `artifacts/stage-10/cpp-gate/`.
+The gate writes `checks.json`, `metrics.json` (including mandatory-check count), `candidate_comparison.json`, `tokenizer_snapshot.json`, `tokenizer_snapshot.bin`, `batch_report.json`, `reproducibility.json`, `incident_log.json`, `release_record.json`, and `report.md` beneath `artifacts/stage-10/cpp-gate/`.
 
 ## Pass/fail transition
 
