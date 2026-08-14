@@ -1,0 +1,10 @@
+{
+  "stage": 3,
+  "status": "PASS",
+  "transition": "Stage 4 preparation (approval required)",
+  "implementation": "native-cpp-causal-event-learning",
+  "commit": "f4788ca8e8d4649e679d39c431ccb59a5b795243",
+  "dirty_tree": false,
+  "approval_required": true,
+  "model_truth_separation": "enforced"
+}

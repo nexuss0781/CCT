@@ -1,0 +1,11 @@
+[
+  {"name":"schema_integrity_and_graph_safety","status":"PASS","duration_seconds":0.000185009,"details":{"round_trip":true,"deterministic_insertion_order":true,"duplicate_rejected":true,"cycle_rejected":true}},
+  {"name":"leakage_control_and_temporal_masking","status":"PASS","duration_seconds":7.079e-05,"details":{"future_parent_count":1,"loop_scan_max_abs_error":0.000000}},
+  {"name":"structural_edge_recovery","status":"PASS","duration_seconds":0.000375068,"details":{"precision":0.833333,"recall":1,"f1":0.909091,"topological_violations":0}},
+  {"name":"intervention_effect_prediction","status":"PASS","duration_seconds":0.000585421,"details":{"aware_mse":0.000126112,"observation_only_mse":0.000510116,"effect_direction_accuracy":1}},
+  {"name":"counterfactual_consistency","status":"PASS","duration_seconds":0.000324174,"details":{"mse":0.0239719,"irrelevant_permutation_max_change":0}},
+  {"name":"robustness_and_abstention","status":"PASS","duration_seconds":0.000706038,"details":{"clean_mse":0.000126112,"corrupted_mse":0.0219482,"incomplete_abstained":true,"conflicting_abstained":true}},
+  {"name":"strict_contract_failure_closure","status":"PASS","duration_seconds":0.000449089,"details":{"missing_parent":"rejected","invalid_enum":"rejected","same_timestamp":"rejected","duplicate_encoder_id":"rejected","nonfinite_encoder":"rejected","transactional_fit":"preserved","nonfinite_query":"rejected"}},
+  {"name":"ablation_integrity","status":"PASS","duration_seconds":7.0778e-05,"details":{"edge_channel":true,"temporal_channel":true,"intervention_channel":true,"uncertainty_channel":true,"mimo_channel":true}},
+  {"name":"reproducibility","status":"PASS","duration_seconds":0.000374069,"details":{"same_seed_fingerprint_equal":true,"changed_seed_fingerprint_distinct":true}}
+]

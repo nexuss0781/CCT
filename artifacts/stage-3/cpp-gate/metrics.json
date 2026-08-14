@@ -1,0 +1,8 @@
+[
+  {"name":"mandatory_check_count","value":9,"unit":"checks","threshold":"all PASS","status":"PASS"},
+  {"name":"dataset_fingerprint","value":8.97028e+18,"unit":"uint64","threshold":"reported","status":"PASS"},
+  {"name":"visible_event_count","value":4,"unit":"events","threshold":">= 4","status":"PASS"},
+  {"name":"training_sample_count","value":128,"unit":"samples","threshold":">= 32","status":"PASS"},
+  {"name":"held_out_intervention_count","value":32,"unit":"cases","threshold":">= 16","status":"PASS"},
+  {"name":"held_out_counterfactual_count","value":32,"unit":"cases","threshold":">= 16","status":"PASS"}
+]
