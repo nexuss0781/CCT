@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -215,6 +216,88 @@ void test_packed_padded_masks_and_boundaries() {
     require(rejected, "over-capacity packed batch was accepted");
 }
 
+void test_strict_snapshot_document_and_batch_failure_closure() {
+    const auto tokenizer = make_hybrid();
+    const auto snapshot = tokenizer.serialize_snapshot();
+    bool rejected = false;
+    auto duplicate_field = snapshot;
+    const auto terminator = duplicate_field.find("end=1\n");
+    require(terminator != std::string::npos, "snapshot terminator fixture is missing");
+    duplicate_field.insert(terminator, "format=1\n");
+    try {
+        static_cast<void>(Tokenizer::from_snapshot(duplicate_field));
+    } catch (const TokenizerError&) {
+        rejected = true;
+    }
+    require(rejected, "duplicate snapshot singleton field was accepted");
+    rejected = false;
+    try {
+        static_cast<void>(Tokenizer::from_snapshot(snapshot + "trailing=forbidden\n"));
+    } catch (const TokenizerError&) {
+        rejected = true;
+    }
+    require(rejected, "snapshot trailing data was accepted");
+
+    TokenizerConfig invalid_candidate;
+    invalid_candidate.candidate = static_cast<TokenizerCandidate>(99);
+    rejected = false;
+    try {
+        static_cast<void>(Tokenizer::build(invalid_candidate, {training("invalid-candidate", "fixture")}));
+    } catch (const TokenizerError&) {
+        rejected = true;
+    }
+    require(rejected, "unsupported tokenizer candidate was accepted");
+    TokenizerConfig invalid_piece_bytes;
+    invalid_piece_bytes.maximum_piece_bytes = 1025U;
+    rejected = false;
+    try {
+        static_cast<void>(Tokenizer::build(invalid_piece_bytes, {training("invalid-piece-bytes", "fixture")}));
+    } catch (const TokenizerError&) {
+        rejected = true;
+    }
+    require(rejected, "oversized tokenizer piece length was accepted");
+
+    auto malformed_document = tokenizer.encode("external document", "external");
+    malformed_document.tokens[1].record_id = "wrong-record";
+    rejected = false;
+    try {
+        static_cast<void>(CausalBatchPacker::pack({malformed_document}));
+    } catch (const TokenizerError&) {
+        rejected = true;
+    }
+    require(rejected, "batch packer accepted mismatched token provenance");
+    malformed_document = tokenizer.encode("external document", "external");
+    malformed_document.tokens[1].kind = TokenKind::Control;
+    malformed_document.tokens[1].control = ControlKind::Bos;
+    rejected = false;
+    try {
+        static_cast<void>(tokenizer.decode(malformed_document));
+    } catch (const TokenizerError&) {
+        rejected = true;
+    }
+    require(rejected, "decoder accepted malformed encoded-document token categories");
+
+    const auto documents = std::vector<EncodedDocument>{tokenizer.encode("first", "first"), tokenizer.encode("second", "second")};
+    auto packed = CausalBatchPacker::pack(documents);
+    packed.boundary_mask[1] = packed.boundary_mask[1] == 0U ? 1U : 0U;
+    rejected = false;
+    try {
+        CausalBatchPacker::validate(packed);
+    } catch (const TokenizerError&) {
+        rejected = true;
+    }
+    require(rejected, "packed batch accepted a tampered boundary mask");
+    auto padded = CausalBatchPacker::pad(documents);
+    padded.control_categories[0][1] = ControlKind::Pad;
+    rejected = false;
+    try {
+        CausalBatchPacker::validate(padded);
+    } catch (const TokenizerError&) {
+        rejected = true;
+    }
+    require(rejected, "padded batch accepted a tampered control category");
+}
+
 void test_throughput_report() {
     const auto tokenizer = make_hybrid();
     const auto measurement = tokenizer.measure_throughput({"repeated production tokenization fixture with identifiers and delimiters", "second fixture"}, 4);
@@ -235,6 +318,7 @@ int main() {
         {"reserved_ids_snapshot_and_fail_closed_decode", test_reserved_ids_snapshot_and_fail_closed_decode},
         {"training_boundary_contamination_and_reproducibility", test_training_boundary_contamination_and_reproducibility},
         {"packed_padded_masks_and_boundaries", test_packed_padded_masks_and_boundaries},
+        {"strict_snapshot_document_and_batch_failure_closure", test_strict_snapshot_document_and_batch_failure_closure},
         {"throughput_report", test_throughput_report}};
     std::size_t passed = 0;
     for (const auto& [name, test] : tests) {

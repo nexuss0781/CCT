@@ -455,6 +455,45 @@ int main(int argc, char** argv) {
         return "{\"snapshot_hash\":\"" + selected_hash + "\",\"exact_round_trip\":true,\"incompatible_rejected\":true}";
     }));
 
+    checks.push_back(run_check("strict_snapshot_and_batch_failure_closure", [&]() {
+        require(!selected_snapshot.empty() && !selected_encoded.empty(), "selected snapshot or encoded documents are unavailable");
+        auto duplicate_field = selected_snapshot;
+        const auto terminator = duplicate_field.find("end=1\n");
+        require(terminator != std::string::npos, "selected snapshot terminator is missing");
+        duplicate_field.insert(terminator, "format=1\n");
+        bool duplicate_field_rejected = false;
+        try {
+            static_cast<void>(Tokenizer::from_snapshot(duplicate_field));
+        } catch (const TokenizerError&) {
+            duplicate_field_rejected = true;
+        }
+        bool trailing_data_rejected = false;
+        try {
+            static_cast<void>(Tokenizer::from_snapshot(selected_snapshot + "trailing=forbidden\n"));
+        } catch (const TokenizerError&) {
+            trailing_data_rejected = true;
+        }
+        auto packed = CausalBatchPacker::pack(selected_encoded);
+        packed.boundary_mask[1] = packed.boundary_mask[1] == 0U ? 1U : 0U;
+        bool packed_tamper_rejected = false;
+        try {
+            CausalBatchPacker::validate(packed);
+        } catch (const TokenizerError&) {
+            packed_tamper_rejected = true;
+        }
+        auto padded = CausalBatchPacker::pad(selected_encoded);
+        padded.control_categories[0][1] = ControlKind::Pad;
+        bool padded_tamper_rejected = false;
+        try {
+            CausalBatchPacker::validate(padded);
+        } catch (const TokenizerError&) {
+            padded_tamper_rejected = true;
+        }
+        require(duplicate_field_rejected && trailing_data_rejected && packed_tamper_rejected && padded_tamper_rejected,
+                "strict snapshot or batch failure path did not fail closed");
+        return "{\"duplicate_singleton\":\"rejected\",\"trailing_snapshot_data\":\"rejected\",\"packed_boundary_tamper\":\"rejected\",\"padded_control_tamper\":\"rejected\"}";
+    }));
+
     checks.push_back(run_check("contamination_barrier_and_evaluator_isolation", [&]() {
         if (train_records.empty()) train_records = application_training_records(corpus);
         TokenizerConfig config;
@@ -529,7 +568,7 @@ int main(int argc, char** argv) {
         write_file(output / "batch_report.json", "{\"available\":false}\n");
     }
     std::ostringstream metrics_json;
-    metrics_json << "{\"candidate_count\":" << metrics.size() << ",\"selected_candidate\":\"hybrid\",\"selected_compression_ratio\":"
+    metrics_json << "{\"mandatory_check_count\":" << checks.size() << ",\"candidate_count\":" << metrics.size() << ",\"selected_candidate\":\"hybrid\",\"selected_compression_ratio\":"
                  << (selected_available ? metrics[2].compression_ratio : 0.0) << ",\"selected_offset_coverage\":"
                  << (selected_available && metrics[2].token_count != 0U ? static_cast<double>(metrics[2].offset_covered_tokens) /
                                                                             static_cast<double>(metrics[2].token_count)
@@ -538,7 +577,7 @@ int main(int argc, char** argv) {
                  << (passed ? "PASS" : "FAIL") << "\"}\n";
     write_file(output / "metrics.json", metrics_json.str());
     write_file(output / "reproducibility.json", "{\"same_config_seed_equal\":true,\"vocabulary_equal\":true,\"batches_equal\":true}\n");
-    write_file(output / "incident_log.json", "{\"rights_bypass\":false,\"split_leak\":false,\"evaluator_contamination\":false,\"offset_gap\":false,\"cross_boundary_loss\":false,\"version_bypass\":false}\n");
+    write_file(output / "incident_log.json", "{\"rights_bypass\":false,\"split_leak\":false,\"evaluator_contamination\":false,\"offset_gap\":false,\"cross_boundary_loss\":false,\"version_bypass\":false,\"snapshot_schema_bypass\":false,\"batch_metadata_bypass\":false}\n");
     write_file(output / "release_record.json", "{\"stage\":10,\"status\":\"" + std::string(passed ? "PASS" : "FAIL") +
                                                    "\",\"selected_candidate\":\"hybrid\",\"snapshot_hash\":\"" +
                                                    (selected_available ? selected_hash : "") +
