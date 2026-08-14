@@ -20,6 +20,9 @@ jobs:
       - name: Build native project
         run: make native-build
 
+      - name: Native CTest suite
+        run: make native-test
+
       - name: Native Stage 0 gate
         run: make stage0-gate
 
