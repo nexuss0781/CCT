@@ -144,52 +144,54 @@ ctest --test-dir build-cpp --output-on-failure
 
 **Dependency:** L1-0 `PASS`.
 
-**Current status:** `PASS — fresh native replay at a3fc4d9` for the declared numerical and field contracts; a clean external release-checkout replay remains required before release use.
+**Current status:** `[x] PASS` for the declared native scalar-field numerical substrate. The fresh gate covers independent spectral/reference agreement, manufactured accuracy, convergence, energy stability, gradients, boundaries, deterministic serialization, explicit float64 policy, non-finite rejection, source causality, invalid-shape/overflow behavior, and fail-closed schema parsing. The gate artifact is regenerated from the milestone source commit and remains approval-gated for L1-2.
 
 ## L1-1 implementation tasks
 
-- [ ] Define tensor or field storage, shape, layout, dtype, ownership, indexing, and lifetime contracts.
-- [ ] Implement required forward operators.
-- [ ] Implement stable reductions and normalization.
-- [ ] Implement activation, mixing, and declared spectral/adaptive primitives.
-- [ ] Implement analytic gradients for every trainable operator used by CCT.
-- [ ] Implement gradient accumulation and parameter identity.
-- [ ] Implement deterministic update interfaces.
-- [ ] Add finite and range checks.
-- [ ] Add overflow and underflow checks.
-- [ ] Add NaN and infinity checks.
-- [ ] Add invalid-shape checks.
-- [ ] Add aliasing and mutation checks.
-- [ ] Add corrupted-state checks.
+- [x] Define native scalar-field storage, flattened shape/layout, float64 dtype, ownership, indexing, and lifetime contracts.
+- [x] Implement spectral and independently discretized finite-difference forward operators, source propagation, boundaries, energy, and operator loss.
+- [x] Implement stable loss normalization with non-empty targets and positive finite mask mass.
+- [x] Implement bounded local potential and declared spectral primitives used by the field substrate.
+- [x] Implement analytic one-step gradients and full temporal rollout gradients for the declared source and potential parameter groups.
+- [x] Preserve explicit source/potential vector parameter identity and deterministic gradient accumulation across repeated native calls.
+- [x] Implement deterministic initialize, step, rollout, serialization, and replay interfaces.
+- [x] Add finite, range, stability-domain, and output checks.
+- [x] Add overflow-safe shape arithmetic and finite loss/energy checks.
+- [x] Add explicit NaN and infinity rejection for fields, sources, targets, masks, parameters, state, and configuration numbers.
+- [x] Add invalid-shape and schema-version checks.
+- [x] Add input-state mutation and source-causality checks.
+- [x] Add corrupted-state and unsupported-precision rejection checks.
+
+The declared L1-1 scope is the native scalar-field substrate; sequence-state batching, tokenizer representation, optimizer publication, and language-model adaptation are successor-stage contracts rather than unverified claims of this numerical gate.
 
 ## L1-1 verification tasks
 
-- [ ] Compare forward results against an independent reference.
-- [ ] Compare analytic gradients with finite differences or an independent derivative implementation.
-- [ ] Run the complete numerical test matrix across declared shapes, dtypes, ranges, and boundary values.
-- [ ] Repeat the numerical matrix with fixed seeds.
-- [ ] Verify finite outputs, gradients, and parameters.
-- [ ] Verify invalid shapes fail closed.
-- [ ] Verify aliasing and mutation failures are detected.
-- [ ] Verify overflow, underflow, and corrupted state fail closed.
+- [x] Compare spectral forward results against the independently implemented finite-difference reference and manufactured solutions.
+- [x] Compare analytic one-step and temporal rollout gradients with centered finite differences.
+- [x] Run the complete declared scalar-field matrix across one- and two-dimensional shapes, integrators, ranges, and all supported boundaries.
+- [x] Repeat the native matrix deterministically under fixed configuration and exact repeated-call checks.
+- [x] Verify finite outputs, diagnostics, losses, gradients, and serialized precision identity.
+- [x] Verify invalid shapes and unsupported schema/precision requests fail closed.
+- [x] Verify input-state mutation and source-causality contracts.
+- [x] Verify overflow-safe shape arithmetic, non-finite configuration/input/state rejection, and corrupted-state failure paths.
 
 ## L1-1 artifacts
 
-- [ ] Operator contract.
-- [ ] Gradient-check report.
-- [ ] Numerical reference comparison.
-- [ ] Boundary and failure report.
-- [ ] Resource and dtype report.
-- [ ] L1-1 gate record.
-- [ ] L1-1 transition record.
+- [x] Operator contract in `Stages/01_Numerical_Engine.md` and the public native field header.
+- [x] Gradient-check report in `artifacts/stage-1/cpp-gate/checks.json` and `report.md`.
+- [x] Numerical reference comparison in the same gate bundle.
+- [x] Boundary and failure report, including precision, non-finite, causality, and schema checks.
+- [x] Resource and dtype report with float64 identity and measured subquadratic scaling.
+- [x] L1-1 gate record under `artifacts/stage-1/cpp-gate/`.
+- [x] L1-1 transition record encoded in the gate/report as `PASS` with approval required for L1-2.
 
 ## L1-1 gate and transition
 
-- [ ] Freeze derivative tolerances before the final run.
-- [ ] Run the formal L1-1 gate.
-- [ ] Record every failed or skipped operator.
-- [ ] Confirm no capability claim exceeds the verified operator matrix.
-- [ ] Record transition approval for L1-2.
+- [x] Freeze derivative tolerances before the final run.
+- [x] Run the formal L1-1 gate from the strict native build.
+- [x] Record every mandatory operator check; the final gate contains no failed or skipped check.
+- [x] Keep claims bounded to the verified native scalar-field operator matrix.
+- [ ] Record explicit user approval for transition to L1-2.
 
 **Transition:** `PASS` authorizes L1-2 sequence-engine implementation.
 

@@ -10,6 +10,7 @@
 #include <functional>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <numeric>
 #include <sstream>
 #include <stdexcept>
@@ -23,7 +24,10 @@ using cct::Boundary;
 using cct::FieldState;
 using cct::FiniteDifferenceSolver;
 using cct::Method;
+using cct::NumericalError;
+using cct::Precision;
 using cct::SolverConfig;
+using cct::UnsupportedPrecisionError;
 using cct::SpectralSolver;
 
 struct Check {
@@ -92,7 +96,7 @@ std::string git_command(const char* command) {
 }
 
 std::string config_hash() {
-    const std::string input = "stage1-cpp-v1|shape=64|dt=0.05|method=rk4|fftw3";
+    const std::string input = "stage1-cpp-v2|shape=64|dt=0.05|method=rk4|precision=float64|fftw3";
     std::uint64_t hash = 1469598103934665603ULL;
     for (const auto byte : input) {
         hash ^= static_cast<unsigned char>(byte);
@@ -179,6 +183,22 @@ std::string manufactured_check() {
     require(error < 2e-3, "manufactured solution error exceeded 2e-3");
     std::ostringstream details;
     details << "{\"max_abs_error\":" << error << ",\"final_time\":" << result.time.back() << "}";
+    return details.str();
+}
+
+std::string forced_manufactured_check() {
+    const auto solver = SpectralSolver(config(32, 0.1, Method::Leapfrog));
+    const std::vector<double> source(32, 0.3);
+    const auto result = solver.rollout(solver.initialize(zeros(32)), std::vector<std::vector<double>>(20, source));
+    const auto final_time = result.time.back();
+    const std::vector<double> expected_phi(32, 0.5 * source.front() * final_time * final_time);
+    const std::vector<double> expected_psi(32, source.front() * final_time);
+    const auto phi_error = max_difference(result.phi.back(), expected_phi);
+    const auto psi_error = max_difference(result.psi.back(), expected_psi);
+    require(phi_error < 1e-12 && psi_error < 1e-12, "forced manufactured solution error exceeded 1e-12");
+    std::ostringstream details;
+    details << "{\"phi_max_abs_error\":" << phi_error << ",\"psi_max_abs_error\":" << psi_error
+            << ",\"final_time\":" << final_time << "}";
     return details.str();
 }
 
@@ -298,8 +318,70 @@ std::string serialization_check(const std::filesystem::path& output) {
     const auto path = output / "solver_config.json";
     solver.save_config(path.string());
     const auto loaded = cct::Solver::load_config(path.string());
-    require(loaded.shape == solver.config().shape && loaded.method == solver.config().method, "configuration round trip failed");
-    return "{\"schema_version\":1}";
+    require(loaded.shape == solver.config().shape && loaded.method == solver.config().method &&
+                loaded.precision == Precision::Float64,
+            "configuration round trip failed");
+    return "{\"schema_version\":1,\"precision\":\"float64\"}";
+}
+
+std::string precision_policy_check() {
+    auto reduced = config(8, 0.05, Method::Leapfrog);
+    reduced.precision = Precision::Float32;
+    bool rejected = false;
+    try {
+        static_cast<void>(SpectralSolver(reduced));
+    } catch (const UnsupportedPrecisionError&) {
+        rejected = true;
+    }
+    require(rejected, "unsupported float32 configuration was accepted");
+    const auto reference = SpectralSolver(config(8, 0.05, Method::Leapfrog));
+    require(reference.config().precision == Precision::Float64, "float64 reference configuration changed precision");
+    return "{\"float64\":\"accepted\",\"float32\":\"rejected\"}";
+}
+
+std::string nonfinite_input_rejection_check() {
+    const auto solver = SpectralSolver(config(8, 0.05, Method::Leapfrog));
+    const auto initial = solver.initialize(zeros(8));
+    auto invalid = zeros(8);
+    invalid.front() = std::numeric_limits<double>::quiet_NaN();
+    bool initial_rejected = false;
+    try {
+        static_cast<void>(solver.initialize(invalid));
+    } catch (const NumericalError&) {
+        initial_rejected = true;
+    }
+    bool source_rejected = false;
+    try {
+        static_cast<void>(solver.step(initial, invalid));
+    } catch (const NumericalError&) {
+        source_rejected = true;
+    }
+    std::vector<double> source(8, 0.0);
+    source[3] = 1.0;
+    const auto next = solver.step(initial, source);
+    const bool source_is_causal = next.time == initial.time + solver.config().dt && next.step_index == initial.step_index + 1 &&
+                                  next.psi[3] > 0.0 && max_difference(initial.phi, zeros(8)) == 0.0;
+    require(initial_rejected && source_rejected && source_is_causal, "finite validation or source causality contract failed");
+    return "{\"nonfinite_initial\":\"rejected\",\"nonfinite_source\":\"rejected\",\"source_causality\":\"verified\"}";
+}
+
+std::string schema_version_check(const std::filesystem::path& output) {
+    const auto path = output / "unsupported_schema_config.json";
+    std::ofstream stream(path);
+    if (!stream) throw std::runtime_error("could not create invalid schema fixture");
+    stream << "{\n  \"schema_version\": 2,\n  \"precision\": \"float64\",\n  \"shape\": [8],\n"
+           << "  \"spacing\": [1.0],\n  \"wave_speed\": 1.0,\n  \"dt\": 0.05,\n"
+           << "  \"boundary\": \"periodic\",\n  \"method\": \"leapfrog\",\n"
+           << "  \"cfl_safety\": 0.9,\n  \"maximum_abs_potential\": 1.0\n}\n";
+    stream.close();
+    bool rejected = false;
+    try {
+        static_cast<void>(cct::Solver::load_config(path.string()));
+    } catch (const NumericalError&) {
+        rejected = true;
+    }
+    require(rejected, "unsupported schema version was accepted");
+    return "{\"schema_version\":2,\"result\":\"rejected\"}";
 }
 
 std::string performance_check() {
@@ -363,12 +445,16 @@ int main(int argc, char** argv) {
         {"spectral_reference_operator_agreement", operator_agreement_check},
         {"spectral_reference_rollout_agreement", rollout_agreement_check},
         {"manufactured_solution_accuracy", manufactured_check},
+        {"forced_manufactured_solution", forced_manufactured_check},
         {"temporal_convergence", convergence_check},
         {"energy_stability", energy_check},
         {"cfl_rejection", stability_check},
         {"analytic_finite_difference_gradients", gradient_check},
         {"boundary_residuals", boundaries_check},
         {"serialization_round_trip", [&]() { return serialization_check(output); }},
+        {"precision_policy", precision_policy_check},
+        {"nonfinite_input_rejection_and_source_causality", nonfinite_input_rejection_check},
+        {"schema_version_validation", [&]() { return schema_version_check(output); }},
         {"performance_scaling", performance_check},
     };
     std::vector<Check> checks;

@@ -10,6 +10,7 @@ namespace cct {
 
 enum class Boundary { Periodic, Dirichlet, Neumann };
 enum class Method { Leapfrog, RK4 };
+enum class Precision { Float64, Float32 };
 
 struct SolverConfig {
     int schema_version = 1;
@@ -21,6 +22,8 @@ struct SolverConfig {
     Method method = Method::Leapfrog;
     double cfl_safety = 0.9;
     double maximum_abs_potential = 1.0;
+    /** The reference solver currently supports only deterministic IEEE-754 double precision. */
+    Precision precision = Precision::Float64;
 };
 
 struct FieldState {

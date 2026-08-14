@@ -5,8 +5,10 @@
 #include <chrono>
 #include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <functional>
 #include <iostream>
+#include <limits>
 #include <numeric>
 #include <random>
 #include <stdexcept>
@@ -21,6 +23,8 @@ using cct::FieldState;
 using cct::FiniteDifferenceSolver;
 using cct::Method;
 using cct::NumericalError;
+using cct::Precision;
+using cct::UnsupportedPrecisionError;
 using cct::SolverConfig;
 using cct::Solver;
 using cct::SpectralSolver;
@@ -47,6 +51,18 @@ double max_difference(const std::vector<double>& left, const std::vector<double>
 }
 
 std::vector<double> zeros(std::size_t count) { return std::vector<double>(count, 0.0); }
+
+std::string read_text_file(const std::filesystem::path& path) {
+    std::ifstream stream(path);
+    if (!stream) throw std::runtime_error("could not read temporary configuration");
+    return {std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()};
+}
+
+void write_text_file(const std::filesystem::path& path, const std::string& text) {
+    std::ofstream stream(path);
+    if (!stream) throw std::runtime_error("could not write temporary configuration");
+    stream << text;
+}
 
 SolverConfig config(std::size_t n, double dt, Method method, Boundary boundary = Boundary::Periodic) {
     SolverConfig result;
@@ -108,6 +124,17 @@ void test_manufactured_accuracy() {
         expected[index] = std::sin(2.0 * kPi * 4.0 * static_cast<double>(index) / 64.0 - omega * final_time);
     }
     check(max_difference(trajectory.phi.back(), expected) < 2e-3, "manufactured solution error too large");
+}
+
+void test_forced_manufactured_solution() {
+    const auto solver = SpectralSolver(config(32, 0.1, Method::Leapfrog));
+    const std::vector<double> source(32, 0.3);
+    const auto trajectory = solver.rollout(solver.initialize(zeros(32)), std::vector<std::vector<double>>(20, source));
+    const auto final_time = trajectory.time.back();
+    std::vector<double> expected_phi(32, 0.5 * source.front() * final_time * final_time);
+    std::vector<double> expected_psi(32, source.front() * final_time);
+    check(max_difference(trajectory.phi.back(), expected_phi) < 1e-12, "forced manufactured field solution failed");
+    check(max_difference(trajectory.psi.back(), expected_psi) < 1e-12, "forced manufactured velocity solution failed");
 }
 
 void test_convergence() {
@@ -312,6 +339,100 @@ void test_gradients_and_bounded_potential() {
     }
 }
 
+void test_precision_source_causality_and_invalid_input_rejection() {
+    auto reduced = config(8, 0.05, Method::Leapfrog);
+    reduced.precision = Precision::Float32;
+    bool rejected = false;
+    try {
+        static_cast<void>(SpectralSolver(reduced));
+    } catch (const UnsupportedPrecisionError&) {
+        rejected = true;
+    }
+    check(rejected, "unsupported float32 solver configuration was accepted");
+
+    const SpectralSolver solver(config(8, 0.05, Method::Leapfrog));
+    const auto clean = solver.initialize(zeros(8));
+    std::vector<double> source(8, 0.0);
+    source[3] = 1.0;
+    const auto forced = solver.step(clean, source);
+    check(max_difference(clean.phi, zeros(8)) == 0.0 && max_difference(clean.psi, zeros(8)) == 0.0,
+          "step mutated its input state");
+    check(forced.time == clean.time + solver.config().dt && forced.step_index == clean.step_index + 1 && forced.psi[3] > 0.0,
+          "causal source was not applied to the next state");
+
+    auto nonfinite = zeros(8);
+    nonfinite.front() = std::numeric_limits<double>::quiet_NaN();
+    rejected = false;
+    try {
+        static_cast<void>(solver.initialize(nonfinite));
+    } catch (const NumericalError&) {
+        rejected = true;
+    }
+    check(rejected, "non-finite initial field was accepted");
+    rejected = false;
+    try {
+        static_cast<void>(solver.step(clean, nonfinite));
+    } catch (const NumericalError&) {
+        rejected = true;
+    }
+    check(rejected, "non-finite source was accepted");
+    auto invalid_state = clean;
+    invalid_state.psi.front() = std::numeric_limits<double>::infinity();
+    rejected = false;
+    try {
+        static_cast<void>(solver.step(invalid_state));
+    } catch (const NumericalError&) {
+        rejected = true;
+    }
+    check(rejected, "non-finite state was accepted");
+
+    rejected = false;
+    try {
+        static_cast<void>(solver.operator_loss({}, {}));
+    } catch (const NumericalError&) {
+        rejected = true;
+    }
+    check(rejected, "empty operator-loss target was accepted");
+    rejected = false;
+    try {
+        static_cast<void>(solver.operator_loss(zeros(8), zeros(8), std::vector<double>(8, 0.0)));
+    } catch (const NumericalError&) {
+        rejected = true;
+    }
+    check(rejected, "zero-denominator operator-loss mask was accepted");
+    auto negative_mask = std::vector<double>(8, 1.0);
+    negative_mask.front() = -1.0;
+    rejected = false;
+    try {
+        static_cast<void>(solver.operator_loss(zeros(8), zeros(8), negative_mask));
+    } catch (const NumericalError&) {
+        rejected = true;
+    }
+    check(rejected, "negative operator-loss mask was accepted");
+
+    rejected = false;
+    try {
+        static_cast<void>(cct::cell_count({std::numeric_limits<std::size_t>::max(), 2U}));
+    } catch (const NumericalError&) {
+        rejected = true;
+    }
+    check(rejected, "overflowing shape cell count was accepted");
+    rejected = false;
+    try {
+        static_cast<void>(cct::cell_count({1U}));
+    } catch (const NumericalError&) {
+        rejected = true;
+    }
+    check(rejected, "invalid one-cell dimension was accepted");
+    rejected = false;
+    try {
+        static_cast<void>(cct::spectral_laplacian(nonfinite, {8U}, {1.0}));
+    } catch (const NumericalError&) {
+        rejected = true;
+    }
+    check(rejected, "non-finite public operator input was accepted");
+}
+
 void test_serialization_loss_and_determinism() {
     const auto solver = SpectralSolver(config(16, 0.1, Method::RK4));
     const auto path = std::filesystem::temp_directory_path() / "cct_cpp_solver_config.json";
@@ -319,6 +440,55 @@ void test_serialization_loss_and_determinism() {
     const auto loaded = Solver::load_config(path.string());
     check(loaded.shape == solver.config().shape, "config shape round trip failed");
     check(loaded.method == solver.config().method, "config method round trip failed");
+    check(loaded.precision == Precision::Float64, "config precision round trip failed");
+    const auto canonical = read_text_file(path);
+    auto unsupported_schema = canonical;
+    const auto schema_position = unsupported_schema.find("\"schema_version\": 1");
+    check(schema_position != std::string::npos, "saved schema version was not found");
+    unsupported_schema.replace(schema_position, std::string("\"schema_version\": 1").size(), "\"schema_version\": 2");
+    write_text_file(path, unsupported_schema);
+    bool rejected = false;
+    try {
+        static_cast<void>(Solver::load_config(path.string()));
+    } catch (const NumericalError&) {
+        rejected = true;
+    }
+    check(rejected, "unknown configuration schema version was accepted");
+    auto unsupported_precision = canonical;
+    const auto precision_position = unsupported_precision.find("\"precision\": \"float64\"");
+    check(precision_position != std::string::npos, "saved precision was not found");
+    unsupported_precision.replace(precision_position, std::string("\"precision\": \"float64\"").size(), "\"precision\": \"float16\"");
+    write_text_file(path, unsupported_precision);
+    rejected = false;
+    try {
+        static_cast<void>(Solver::load_config(path.string()));
+    } catch (const UnsupportedPrecisionError&) {
+        rejected = true;
+    }
+    check(rejected, "unknown configuration precision was accepted");
+    auto unsupported_reduced_precision = canonical;
+    unsupported_reduced_precision.replace(precision_position, std::string("\"precision\": \"float64\"").size(), "\"precision\": \"float32\"");
+    write_text_file(path, unsupported_reduced_precision);
+    rejected = false;
+    try {
+        static_cast<void>(Solver::load_config(path.string()));
+    } catch (const UnsupportedPrecisionError&) {
+        rejected = true;
+    }
+    check(rejected, "float32 configuration request was accepted during load");
+    auto nonfinite_number = canonical;
+    const auto speed_position = nonfinite_number.find("\"wave_speed\": 1");
+    check(speed_position != std::string::npos, "saved wave speed was not found");
+    nonfinite_number.replace(speed_position, std::string("\"wave_speed\": 1").size(), "\"wave_speed\": nan");
+    write_text_file(path, nonfinite_number);
+    rejected = false;
+    try {
+        static_cast<void>(Solver::load_config(path.string()));
+    } catch (const NumericalError&) {
+        rejected = true;
+    }
+    check(rejected, "non-finite configuration number was accepted");
+    write_text_file(path, canonical);
     const std::vector<double> a{1.0, 2.0, 4.0, 8.0};
     const std::vector<double> b{1.0, 0.0, 0.0, 0.0};
     const std::vector<double> mask{1.0, 0.0, 0.0, 0.0};
@@ -350,12 +520,14 @@ int main() {
         {"fft_round_trip", test_fft_round_trip},
         {"operator_agreement", test_operator_agreement},
         {"manufactured_accuracy", test_manufactured_accuracy},
+        {"forced_manufactured_solution", test_forced_manufactured_solution},
         {"convergence", test_convergence},
         {"energy_stability", test_energy_stability},
         {"stability_and_boundaries", test_stability_and_boundaries},
         {"global_stability_domain_and_semantics", test_global_stability_domain_and_semantics},
         {"temporal_rollout_gradients", test_temporal_rollout_gradients},
         {"gradients_and_bounded_potential", test_gradients_and_bounded_potential},
+        {"precision_source_causality_and_invalid_input_rejection", test_precision_source_causality_and_invalid_input_rejection},
         {"serialization_loss_determinism", test_serialization_loss_and_determinism},
         {"performance", test_performance},
     };

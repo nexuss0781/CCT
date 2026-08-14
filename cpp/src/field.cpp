@@ -3,8 +3,10 @@
 #include <algorithm>
 #include <cmath>
 #include <complex>
+#include <cctype>
 #include <fstream>
 #include <iomanip>
+#include <limits>
 #include <numeric>
 #include <sstream>
 #include <stdexcept>
@@ -60,6 +62,32 @@ void require_size(const std::vector<double>& values, std::size_t expected, const
     }
 }
 
+void require_finite(const std::vector<double>& values, const char* name) {
+    if (std::any_of(values.begin(), values.end(), [](const double value) { return !std::isfinite(value); })) {
+        throw NumericalError(std::string(name) + " contains a non-finite value");
+    }
+}
+
+void require_valid_state(const FieldState& state, std::size_t expected) {
+    require_size(state.phi, expected, "state phi");
+    require_size(state.psi, expected, "state psi");
+    require_finite(state.phi, "state phi");
+    require_finite(state.psi, "state psi");
+    if (!std::isfinite(state.time) || state.step_index < 0) {
+        throw NumericalError("state time or step index is invalid");
+    }
+}
+
+std::string precision_name(const Precision precision) {
+    switch (precision) {
+        case Precision::Float64:
+            return "float64";
+        case Precision::Float32:
+            return "float32";
+    }
+    throw UnsupportedPrecisionError("unknown solver precision");
+}
+
 std::vector<double> zeros(std::size_t size) {
     return std::vector<double>(size, 0.0);
 }
@@ -89,6 +117,29 @@ std::vector<double> linear_combination(const std::vector<double>& a,
     return result;
 }
 
+std::string trim_copy(std::string value) {
+    const auto first = std::find_if_not(value.begin(), value.end(), [](const unsigned char character) { return std::isspace(character) != 0; });
+    const auto last = std::find_if_not(value.rbegin(), value.rend(), [](const unsigned char character) { return std::isspace(character) != 0; }).base();
+    if (first >= last) return {};
+    return {first, last};
+}
+
+double parse_double_token(const std::string& token, const std::string& key) {
+    const auto trimmed = trim_copy(token);
+    if (trimmed.empty()) throw NumericalError("empty numeric configuration value: " + key);
+    std::size_t consumed = 0;
+    double value = 0.0;
+    try {
+        value = std::stod(trimmed, &consumed);
+    } catch (const std::exception&) {
+        throw NumericalError("invalid numeric configuration value: " + key);
+    }
+    if (consumed != trimmed.size() || !std::isfinite(value)) {
+        throw NumericalError("invalid numeric configuration value: " + key);
+    }
+    return value;
+}
+
 std::vector<double> parse_array(const std::string& text, const std::string& key) {
     const auto marker = text.find("\"" + key + "\"");
     if (marker == std::string::npos) {
@@ -96,17 +147,16 @@ std::vector<double> parse_array(const std::string& text, const std::string& key)
     }
     const auto begin = text.find('[', marker);
     const auto end = text.find(']', begin);
-    if (begin == std::string::npos || end == std::string::npos) {
+    if (begin == std::string::npos || end == std::string::npos || end < begin) {
         throw NumericalError("invalid array configuration key: " + key);
     }
-    std::stringstream stream(text.substr(begin + 1, end - begin - 1));
+    const auto body = trim_copy(text.substr(begin + 1, end - begin - 1));
+    if (body.empty()) return {};
+    if (body.back() == ',') throw NumericalError("invalid trailing comma in configuration array: " + key);
+    std::stringstream stream(body);
     std::vector<double> result;
-    double value = 0.0;
-    char comma = 0;
-    while (stream >> value) {
-        result.push_back(value);
-        stream >> comma;
-    }
+    std::string token;
+    while (std::getline(stream, token, ',')) result.push_back(parse_double_token(token, key));
     return result;
 }
 
@@ -117,7 +167,10 @@ double parse_number(const std::string& text, const std::string& key) {
     }
     const auto colon = text.find(':', marker);
     const auto end = text.find_first_of(",\n}", colon);
-    return std::stod(text.substr(colon + 1, end - colon - 1));
+    if (colon == std::string::npos || end == std::string::npos || end <= colon) {
+        throw NumericalError("invalid numeric configuration key: " + key);
+    }
+    return parse_double_token(text.substr(colon + 1, end - colon - 1), key);
 }
 
 std::string parse_string(const std::string& text, const std::string& key) {
@@ -125,8 +178,12 @@ std::string parse_string(const std::string& text, const std::string& key) {
     if (marker == std::string::npos) {
         throw NumericalError("missing configuration key: " + key);
     }
-    const auto first = text.find('"', marker + key.size() + 2);
-    const auto second = text.find('"', first + 1);
+    const auto colon = text.find(':', marker);
+    const auto first = colon == std::string::npos ? std::string::npos : text.find('"', colon);
+    const auto second = first == std::string::npos ? std::string::npos : text.find('"', first + 1);
+    if (first == std::string::npos || second == std::string::npos) {
+        throw NumericalError("invalid string configuration key: " + key);
+    }
     return text.substr(first + 1, second - first - 1);
 }
 
@@ -158,11 +215,18 @@ std::size_t cell_count(const std::vector<std::size_t>& shape) {
     if (shape.empty() || std::any_of(shape.begin(), shape.end(), [](std::size_t value) { return value <= 1; })) {
         throw NumericalError("shape must contain dimensions greater than one");
     }
-    return std::accumulate(shape.begin(), shape.end(), std::size_t{1}, std::multiplies<std::size_t>());
+    std::size_t count = 1U;
+    for (const auto dimension : shape) {
+        if (count > std::numeric_limits<std::size_t>::max() / dimension) {
+            throw NumericalError("shape cell count overflows size_t");
+        }
+        count *= dimension;
+    }
+    return count;
 }
 
 double cfl_limit(const SolverConfig& config) {
-    if (config.wave_speed <= 0.0 || config.spacing.empty() || config.shape.size() != config.spacing.size() ||
+    if (!std::isfinite(config.wave_speed) || config.wave_speed <= 0.0 || config.spacing.empty() || config.shape.size() != config.spacing.size() ||
         std::any_of(config.spacing.begin(), config.spacing.end(), [](double value) { return !std::isfinite(value) || value <= 0.0; })) {
         throw NumericalError("wave speed, shape, and spacing must be positive and finite");
     }
@@ -186,11 +250,11 @@ double global_stability_limit(const SolverConfig& config) {
 }
 
 void validate_stability(const SolverConfig& config) {
-    if (config.dt <= 0.0) {
-        throw StabilityError("dt must be positive");
+    if (!std::isfinite(config.dt) || config.dt <= 0.0) {
+        throw StabilityError("dt must be positive and finite");
     }
-    if (config.cfl_safety <= 0.0 || config.cfl_safety > 1.0) {
-        throw StabilityError("cfl safety must be in (0, 1]");
+    if (!std::isfinite(config.cfl_safety) || config.cfl_safety <= 0.0 || config.cfl_safety > 1.0) {
+        throw StabilityError("cfl safety must be finite and in (0, 1]");
     }
     const auto limit = std::min(cfl_limit(config), global_stability_limit(config)) * config.cfl_safety;
     if (config.dt > limit + 1e-12) {
@@ -201,8 +265,8 @@ void validate_stability(const SolverConfig& config) {
 }
 
 std::vector<double> frequency_axis(std::size_t n, double spacing) {
-    if (n <= 1 || spacing <= 0.0) {
-        throw NumericalError("frequency axis requires n > 1 and positive spacing");
+    if (n <= 1 || !std::isfinite(spacing) || spacing <= 0.0) {
+        throw NumericalError("frequency axis requires n > 1 and finite positive spacing");
     }
     std::vector<double> result(n, 0.0);
     for (std::size_t index = 0; index < n; ++index) {
@@ -246,7 +310,8 @@ std::vector<double> finite_difference_laplacian(const std::vector<double>& field
                                                 Boundary boundary) {
     const auto count = cell_count(shape);
     require_size(field, count, "field");
-    if (spacing.size() != shape.size() || std::any_of(spacing.begin(), spacing.end(), [](double value) { return value <= 0.0; })) {
+    require_finite(field, "field");
+    if (spacing.size() != shape.size() || std::any_of(spacing.begin(), spacing.end(), [](double value) { return !std::isfinite(value) || value <= 0.0; })) {
         throw NumericalError("spacing does not match shape");
     }
     std::vector<double> result(count, 0.0);
@@ -298,8 +363,10 @@ std::vector<double> spectral_laplacian(const std::vector<double>& field,
                                        const std::vector<double>& spacing) {
     const auto count = cell_count(shape);
     require_size(field, count, "field");
-    if (shape.empty() || shape.size() > 3 || spacing.size() != shape.size()) {
-        throw NumericalError("FFTW spectral path supports one to three dimensions");
+    require_finite(field, "field");
+    if (shape.empty() || shape.size() > 3 || spacing.size() != shape.size() ||
+        std::any_of(spacing.begin(), spacing.end(), [](double value) { return !std::isfinite(value) || value <= 0.0; })) {
+        throw NumericalError("FFTW spectral path supports one to three dimensions with finite positive spacing");
     }
     std::vector<int> dimensions;
     dimensions.reserve(shape.size());
@@ -405,6 +472,12 @@ double manufactured_mode_frequency(const std::vector<std::size_t>& shape,
 }
 
 Solver::Solver(SolverConfig config) : config_(std::move(config)) {
+    if (config_.schema_version != 1) {
+        throw NumericalError("unsupported solver configuration schema version");
+    }
+    if (config_.precision != Precision::Float64) {
+        throw UnsupportedPrecisionError("only IEEE-754 float64 is supported by the native reference solver");
+    }
     if (config_.shape.empty() || config_.spacing.size() != config_.shape.size()) {
         throw NumericalError("solver shape and spacing must have the same nonzero rank");
     }
@@ -414,10 +487,15 @@ Solver::Solver(SolverConfig config) : config_(std::move(config)) {
 
 std::vector<double> Solver::normalize_source(const std::vector<double>& source) const {
     const auto count = cell_count(config_.shape);
-    if (source.empty()) return zeros(count);
-    if (source.size() == 1) return std::vector<double>(count, source[0]);
-    require_size(source, count, "source");
-    return source;
+    std::vector<double> normalized;
+    if (source.empty()) normalized = zeros(count);
+    else if (source.size() == 1U) normalized = std::vector<double>(count, source[0]);
+    else {
+        require_size(source, count, "source");
+        normalized = source;
+    }
+    require_finite(normalized, "source");
+    return normalized;
 }
 
 std::vector<double> Solver::normalize_potential(const std::vector<double>& potential) const {
@@ -442,12 +520,18 @@ FieldState Solver::initialize(const std::vector<double>& phi0,
                               double time) const {
     const auto count = cell_count(config_.shape);
     require_size(phi0, count, "phi0");
+    require_finite(phi0, "phi0");
     std::vector<double> psi = psi0.empty() ? zeros(count) : psi0;
     require_size(psi, count, "psi0");
+    require_finite(psi, "psi0");
+    if (!std::isfinite(time)) {
+        throw NumericalError("initial time must be finite");
+    }
     FieldState state{apply_boundary(phi0, config_.shape, config_.boundary),
                      apply_boundary(psi, config_.shape, config_.boundary, 0.0),
                      time,
                      0};
+    require_valid_state(state, count);
     return state;
 }
 
@@ -500,14 +584,15 @@ FieldState Solver::rk4_step(const FieldState& state,
 FieldState Solver::step(const FieldState& state,
                         const std::vector<double>& source,
                         const std::vector<double>& potential) const {
-    if (state.phi.size() != cell_count(config_.shape) || state.psi.size() != state.phi.size()) {
-        throw NumericalError("state shape does not match solver configuration");
-    }
+    const auto count = cell_count(config_.shape);
+    require_valid_state(state, count);
     const auto source_value = normalize_source(source);
     const auto potential_value = normalize_potential(potential);
-    return config_.method == Method::Leapfrog
-               ? leapfrog_step(state, source_value, potential_value)
-               : rk4_step(state, source_value, potential_value);
+    FieldState next = config_.method == Method::Leapfrog
+                          ? leapfrog_step(state, source_value, potential_value)
+                          : rk4_step(state, source_value, potential_value);
+    require_valid_state(next, count);
+    return next;
 }
 
 Trajectory Solver::rollout(const FieldState& state,
@@ -515,6 +600,7 @@ Trajectory Solver::rollout(const FieldState& state,
                            const std::vector<double>& potential,
                            bool include_initial) const {
     Trajectory trajectory;
+    require_valid_state(state, cell_count(config_.shape));
     FieldState current = state;
     if (include_initial) {
         trajectory.phi.push_back(current.phi);
@@ -533,6 +619,7 @@ Trajectory Solver::rollout(const FieldState& state,
 }
 
 double Solver::energy(const FieldState& state, const std::vector<double>& potential) const {
+    require_valid_state(state, cell_count(config_.shape));
     const auto pot = normalize_potential(potential);
     const auto gradient = finite_difference_laplacian(state.phi, config_.shape, config_.spacing, config_.boundary);
     const auto volume = product(config_.spacing);
@@ -545,14 +632,28 @@ double Solver::energy(const FieldState& state, const std::vector<double>& potent
     for (std::size_t index = 0; index < pot.size(); ++index) {
         potential_energy += 0.5 * pot[index] * state.phi[index] * state.phi[index] * volume;
     }
-    return kinetic + config_.wave_speed * config_.wave_speed * gradient_energy + potential_energy;
+    const auto total = kinetic + config_.wave_speed * config_.wave_speed * gradient_energy + potential_energy;
+    if (!std::isfinite(total)) {
+        throw NumericalError("energy diagnostic is non-finite");
+    }
+    return total;
 }
 
 double Solver::operator_loss(const std::vector<double>& prediction,
                              const std::vector<double>& target,
                              const std::vector<double>& mask) const {
+    if (target.empty()) {
+        throw NumericalError("operator loss target must be non-empty");
+    }
     require_size(prediction, target.size(), "prediction");
-    if (!mask.empty()) require_size(mask, target.size(), "mask");
+    require_finite(prediction, "prediction");
+    require_finite(target, "target");
+    if (!mask.empty()) {
+        require_size(mask, target.size(), "mask");
+        if (std::any_of(mask.begin(), mask.end(), [](const double value) { return !std::isfinite(value) || value < 0.0; })) {
+            throw NumericalError("operator loss mask must be finite and non-negative");
+        }
+    }
     double numerator = 0.0;
     double denominator = mask.empty() ? static_cast<double>(target.size()) : 0.0;
     for (std::size_t index = 0; index < target.size(); ++index) {
@@ -560,7 +661,14 @@ double Solver::operator_loss(const std::vector<double>& prediction,
         numerator += weight * (prediction[index] - target[index]) * (prediction[index] - target[index]);
         if (!mask.empty()) denominator += weight;
     }
-    return denominator > 0.0 ? numerator / denominator : 0.0;
+    if (!std::isfinite(numerator) || !std::isfinite(denominator) || denominator <= 0.0) {
+        throw NumericalError("operator loss normalization is invalid");
+    }
+    const auto loss = numerator / denominator;
+    if (!std::isfinite(loss)) {
+        throw NumericalError("operator loss is non-finite");
+    }
+    return loss;
 }
 
 void Solver::save_config(const std::string& path) const {
@@ -568,6 +676,7 @@ void Solver::save_config(const std::string& path) const {
     if (!stream) throw NumericalError("could not open configuration for writing");
     stream << std::setprecision(17) << "{\n";
     stream << "  \"schema_version\": " << config_.schema_version << ",\n";
+    stream << "  \"precision\": \"" << precision_name(config_.precision) << "\",\n";
     stream << "  \"shape\": [";
     for (std::size_t axis = 0; axis < config_.shape.size(); ++axis) {
         if (axis) stream << ", ";
@@ -594,18 +703,37 @@ SolverConfig Solver::load_config(const std::string& path) {
     buffer << stream.rdbuf();
     const auto text = buffer.str();
     SolverConfig config;
-    config.schema_version = static_cast<int>(parse_number(text, "schema_version"));
+    const auto schema_version = parse_number(text, "schema_version");
+    if (schema_version != 1.0) {
+        throw NumericalError("unsupported solver configuration schema version");
+    }
+    config.schema_version = 1;
+    if (text.find("\"precision\"") != std::string::npos) {
+        const auto precision = parse_string(text, "precision");
+        if (precision == "float64") config.precision = Precision::Float64;
+        else throw UnsupportedPrecisionError("unsupported solver configuration precision");
+    }
     const auto shape_values = parse_array(text, "shape");
     const auto spacing_values = parse_array(text, "spacing");
     config.shape.reserve(shape_values.size());
-    for (const auto value : shape_values) config.shape.push_back(static_cast<std::size_t>(value));
+    for (const auto value : shape_values) {
+        if (value < 2.0 || std::floor(value) != value || value > static_cast<double>(std::numeric_limits<std::size_t>::max())) {
+            throw NumericalError("shape contains an invalid dimension");
+        }
+        config.shape.push_back(static_cast<std::size_t>(value));
+    }
     config.spacing = spacing_values;
     config.wave_speed = parse_number(text, "wave_speed");
     config.dt = parse_number(text, "dt");
     const auto boundary = parse_string(text, "boundary");
     const auto method = parse_string(text, "method");
-    config.boundary = boundary == "periodic" ? Boundary::Periodic : boundary == "dirichlet" ? Boundary::Dirichlet : Boundary::Neumann;
-    config.method = method == "leapfrog" ? Method::Leapfrog : Method::RK4;
+    if (boundary == "periodic") config.boundary = Boundary::Periodic;
+    else if (boundary == "dirichlet") config.boundary = Boundary::Dirichlet;
+    else if (boundary == "neumann") config.boundary = Boundary::Neumann;
+    else throw NumericalError("unsupported solver boundary");
+    if (method == "leapfrog") config.method = Method::Leapfrog;
+    else if (method == "rk4") config.method = Method::RK4;
+    else throw NumericalError("unsupported solver method");
     config.cfl_safety = parse_number(text, "cfl_safety");
     if (text.find("\"maximum_abs_potential\"") != std::string::npos) {
         config.maximum_abs_potential = parse_number(text, "maximum_abs_potential");
@@ -657,6 +785,7 @@ OneStepLossGradients leapfrog_operator_loss_gradients(
     if (target.size() != next.phi.size()) {
         throw NumericalError("gradient target has an unexpected size");
     }
+    require_finite(target, "gradient target");
     const auto& config = solver.config();
     const auto dt_factor = 0.5 * config.dt * config.dt;
     const auto count = static_cast<double>(next.phi.size());
@@ -686,6 +815,8 @@ OneStepLossGradients leapfrog_operator_loss_gradients(
             gradients.potential[index] = dloss_dphi * (-dt_factor * state.phi[index]);
         }
     }
+    require_finite(gradients.source, "one-step source gradients");
+    require_finite(gradients.potential, "one-step potential gradients");
     return gradients;
 }
 
@@ -700,16 +831,20 @@ TemporalRolloutGradients temporal_rollout_loss_gradients(
         throw NumericalError("temporal gradient finite-difference epsilon must be positive and finite");
     }
     const auto count = cell_count(solver.config().shape);
-    require_size(initial.phi, count, "initial phi");
-    require_size(initial.psi, count, "initial psi");
+    require_valid_state(initial, count);
     if (source_sequence.empty() || source_sequence.size() != targets.size()) {
         throw NumericalError("temporal gradient source and target rollout lengths do not match");
     }
     auto expand = [&](const std::vector<double>& values, const char* name) {
-        if (values.empty()) return zeros(count);
-        if (values.size() == 1U) return std::vector<double>(count, values.front());
-        require_size(values, count, name);
-        return values;
+        std::vector<double> normalized;
+        if (values.empty()) normalized = zeros(count);
+        else if (values.size() == 1U) normalized = std::vector<double>(count, values.front());
+        else {
+            require_size(values, count, name);
+            normalized = values;
+        }
+        require_finite(normalized, name);
+        return normalized;
     };
     std::vector<std::vector<double>> normalized_sources;
     normalized_sources.reserve(source_sequence.size());
@@ -721,6 +856,7 @@ TemporalRolloutGradients temporal_rollout_loss_gradients(
     for (std::size_t step_index = 0; step_index < source_sequence.size(); ++step_index) {
         states.push_back(solver.step(states.back(), normalized_sources[step_index], normalized_potential));
         require_size(targets[step_index], count, "temporal target");
+        require_finite(targets[step_index], "temporal target");
     }
     TemporalRolloutGradients gradients;
     gradients.source.assign(source_sequence.size(), std::vector<double>(count, 0.0));
@@ -790,14 +926,18 @@ TemporalRolloutGradients temporal_rollout_loss_gradients(
         lambda_phi = std::move(previous_lambda_phi);
         lambda_psi = std::move(previous_lambda_psi);
     }
+    if (!std::isfinite(gradients.loss)) throw NumericalError("temporal rollout loss is non-finite");
+    for (const auto& source_gradient : gradients.source) require_finite(source_gradient, "temporal source gradients");
+    require_finite(gradients.potential, "temporal potential gradients");
     return gradients;
 }
 
 std::vector<double> bounded_local_potential(const std::vector<double>& raw,
                                             double max_value) {
-    if (max_value <= 0.0) {
-        throw NumericalError("max_value must be positive");
+    if (!std::isfinite(max_value) || max_value <= 0.0) {
+        throw NumericalError("max_value must be positive and finite");
     }
+    require_finite(raw, "potential parameters");
     std::vector<double> result(raw.size(), 0.0);
     for (std::size_t index = 0; index < raw.size(); ++index) {
         result[index] = max_value / (1.0 + std::exp(-raw[index]));
