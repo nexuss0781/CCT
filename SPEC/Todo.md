@@ -368,52 +368,52 @@ The declared L1-1 scope is the native scalar-field substrate; sequence-state bat
 
 **Dependency:** L1-4 `PASS`.
 
-**Current status:** `PASS — fresh native replay at a3fc4d9` for the declared native trainable language-core contract; a clean external release-checkout replay remains required before release use.
+**Current status:** `[x] PASS` for the declared native trainable language-core contract. The current native gate contains thirteen mandatory checks covering the categorical objective, analytic gradients, optimizer and schedule, stability/failure closure, three-seed held-out improvement, no-training capability control, repeated-corpus overfit, matched controls, checkpoint resume, cursor/context/budget discipline, contamination, corruption/identity rejection, reproducibility, and artifact integrity. Artifact publication remains approval-gated for L1-6.
 
 ## L1-5 implementation tasks
 
-- [ ] Define next-token targets and causal masks.
-- [ ] Define loss accounting and finite-objective rules.
-- [ ] Implement analytic CCT recurrence gradients.
-- [ ] Implement independent gradient checks.
-- [ ] Implement optimizer, clipping, schedule, initialization, and deterministic updates.
-- [ ] Implement parameter and optimizer state serialization.
-- [ ] Implement checkpoint save and load.
-- [ ] Implement exact resume and cursor recovery.
-- [ ] Implement tokenizer, data, configuration, and model identity validation.
-- [ ] Implement corruption and incompatible-checkpoint rejection.
-- [ ] Implement a matched reference baseline.
-- [ ] Measure cross-entropy, perplexity, token accuracy, throughput, memory, and parameter count.
+- [x] Define next-token targets, context windows, final-position masks, and causal loss masks.
+- [x] Define mean categorical cross-entropy, token counts, finite-objective rules, and stable log-sum-exp evaluation.
+- [x] Implement analytic CCT selective-recurrence backpropagation through time.
+- [x] Implement independent centered finite-difference gradient checks over embedding, recurrent, gate, and output parameters.
+- [x] Implement optimizer, global clipping, warmup, linear decay, AdamW-equivalent moments, deterministic initialization, and atomic finite updates.
+- [x] Implement model parameter and optimizer-state serialization with bounded dimensions and explicit model kind.
+- [x] Implement atomic checkpoint save and strict checkpoint load.
+- [x] Implement exact cursor, optimizer-step, scheduler, moment, and model resume recovery.
+- [x] Implement tokenizer, data, configuration, context, split, and model identity validation.
+- [x] Implement corruption, truncation, trailing-data, non-finite, wrong-identity, and incompatible-checkpoint rejection.
+- [x] Implement matched dense-attention, GRU, and diagonal-SSM native reference baselines under equal declared budgets.
+- [x] Measure cross-entropy, perplexity, token accuracy, throughput, state memory, parameter count, gradient norm, and checkpoint hashes.
 
 ## L1-5 verification tasks
 
-- [ ] Verify loss, gradients, parameters, and optimizer state remain finite.
-- [ ] Verify analytic-gradient agreement.
-- [ ] Run multiple fixed-seed configurations.
-- [ ] Compare initial and final validation behavior.
-- [ ] Explain any non-improvement without weakening the gate.
-- [ ] Verify exact checkpoint load and resume equivalence.
-- [ ] Verify wrong tokenizer, data, configuration, and model identities fail closed.
-- [ ] Verify corrupted checkpoints fail closed.
-- [ ] Compare against the matched reference under equal data and budget.
+- [x] Verify loss, gradients, parameters, optimizer moments, logits, and metrics remain finite.
+- [x] Verify analytic-gradient agreement at the declared `1e-4` relative threshold.
+- [x] Run three fixed-seed CCT configurations and an exact repeated same-seed reproducibility run.
+- [x] Compare initial and final held-out validation behavior and require every seed to improve.
+- [x] Require a separate no-training capability control and retain failure if improvement is absent.
+- [x] Verify exact checkpoint load and resume equivalence at cursors `0`, `1`, and `3`.
+- [x] Verify wrong tokenizer, dataset, context, optimizer budget, model kind, and model allocation identities fail closed.
+- [x] Verify corrupted, truncated, malformed, trailing-data, non-finite, and incompatible checkpoints fail closed.
+- [x] Compare dense attention, GRU, and diagonal SSM controls under equal declared data, context, seed, and optimizer budgets.
 
 ## L1-5 artifacts
 
-- [ ] Objective and mask contract.
-- [ ] Gradient report.
-- [ ] Optimizer configuration.
-- [ ] Baseline comparison.
-- [ ] Training and validation report.
-- [ ] Checkpoint manifest and hashes.
-- [ ] Resume and corruption report.
-- [ ] L1-5 gate and transition record.
+- [x] Objective and binary-mask contract in `Stages/11_Trainable_Native_NLP_Core.md` and the native trainer.
+- [x] Gradient report in `artifacts/stage-11/cpp-gate/gradient_report.json`.
+- [x] Optimizer configuration and schedule evidence in `checks.json`, `seed_comparison.json`, and `metrics.json`.
+- [x] Baseline comparison in `baseline_comparison.json`.
+- [x] Training and held-out validation report in `seed_comparison.json`, `metrics.json`, and `report.md`.
+- [x] Checkpoint manifest and hashes in `checkpoint_report.json`, `release_record.json`, and `selected_checkpoint.bin`.
+- [x] Resume, corruption, wrong-identity, and cursor report in `checkpoint_report.json` and `checks.json`.
+- [x] L1-5 thirteen-check gate and approval-gated transition record under `artifacts/stage-11/cpp-gate/`.
 
 ## L1-5 gate and transition
 
-- [ ] Freeze optimizer, context, batch, seed, and baseline configurations.
-- [ ] Run the formal L1-5 gate.
-- [ ] Record finite metrics and all failed configurations.
-- [ ] Record transition approval for L1-6.
+- [x] Freeze optimizer, context, batch, seed, split, and baseline configurations in the gate and training contract hash.
+- [x] Run the formal native L1-5 gate with thirteen mandatory checks.
+- [x] Record finite metrics and fail-closed diagnostics; the final gate contains no failed configuration.
+- [ ] Record explicit user approval for transition to L1-6.
 
 **Transition:** `PASS` authorizes L1-6 governed language acquisition.
 

@@ -16,6 +16,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string_view>
+#include <unordered_set>
 #include <utility>
 #include <unistd.h>
 
@@ -184,6 +185,16 @@ std::string serialize_sequences(const std::vector<NlpSequence>& sequences) {
     return output.str();
 }
 
+std::size_t bounded_add(const std::size_t left, const std::size_t right) noexcept {
+    if (right > std::numeric_limits<std::size_t>::max() - left) return std::numeric_limits<std::size_t>::max();
+    return left + right;
+}
+
+std::size_t bounded_mul(const std::size_t left, const std::size_t right) noexcept {
+    if (left != 0U && right > std::numeric_limits<std::size_t>::max() / left) return std::numeric_limits<std::size_t>::max();
+    return left * right;
+}
+
 std::size_t model_kind_number(const NlpModelKind kind) {
     return static_cast<std::size_t>(kind);
 }
@@ -210,7 +221,8 @@ NlpDataset NlpDataset::build(const std::vector<EncodedDocument>& train_documents
                              const std::string& tokenizer_hash, const std::size_t context_length) {
     require(!train_documents.empty() && !validation_documents.empty(), "NLP dataset requires train and validation documents");
     require(!tokenizer_hash.empty(), "NLP dataset tokenizer hash is empty");
-    require(context_length >= 2U, "NLP context length must be at least two");
+    require(context_length >= 2U && context_length <= 1'000'000U, "NLP context length is outside the supported range");
+    std::unordered_set<std::string> record_ids;
     NlpDataset dataset;
     dataset.tokenizer_hash = tokenizer_hash;
     dataset.context_length = context_length;
@@ -218,7 +230,8 @@ NlpDataset NlpDataset::build(const std::vector<EncodedDocument>& train_documents
                             std::size_t& token_count, const char* split) {
         const bool training_split = std::string(split) == "train";
         for (const auto& document : documents) {
-            require(!document.record_id.empty() && document.tokens.size() >= 2U, "NLP document is too short");
+            require(!document.record_id.empty() && document.tokens.size() >= 2U && record_ids.insert(document.record_id).second,
+                    "NLP document is too short or record identity is duplicated");
             require(document.tokenizer_version == "cct-ase-tokenizer-v1", "NLP document tokenizer version is not Stage 10 V1");
             require(!document.evaluator_only && (training_split ? document.training_allowed : document.evaluation_allowed),
                     "NLP document eligibility does not match its requested split");
@@ -262,10 +275,14 @@ NextTokenModel::NextTokenModel(NlpModelConfig config) : config_(std::move(config
 }
 
 void NextTokenModel::validate_config() const {
-    require(config_.vocabulary_size >= Tokenizer::kByteFirstId + 256U, "NLP vocabulary is smaller than the Stage 10 byte range");
-    require(config_.embedding_dim > 0U && config_.hidden_dim > 0U && config_.context_length >= 2U,
-            "NLP model dimensions are invalid");
-    require(config_.vocabulary_size <= std::numeric_limits<TokenId>::max(), "NLP vocabulary exceeds token ID range");
+    require(model_kind_number(config_.kind) <= model_kind_number(NlpModelKind::DiagonalSSM), "NLP model kind is unsupported");
+    require(config_.vocabulary_size >= Tokenizer::kByteFirstId + 256U && config_.vocabulary_size <= 1'000'000U,
+            "NLP vocabulary is outside the supported range");
+    require(config_.embedding_dim > 0U && config_.embedding_dim <= 4096U && config_.hidden_dim > 0U &&
+                config_.hidden_dim <= 4096U && config_.context_length >= 2U && config_.context_length <= 1'000'000U,
+            "NLP model dimensions are outside the supported range");
+    require(config_.vocabulary_size <= std::numeric_limits<TokenId>::max() && expected_parameter_count() <= 16'000'000U,
+            "NLP model parameter budget or token ID range is invalid");
 }
 
 std::size_t NextTokenModel::embedding_offset() const noexcept { return 0U; }
@@ -290,12 +307,17 @@ std::size_t NextTokenModel::expected_parameter_count() const noexcept {
     const auto input = config_.embedding_dim;
     const auto hidden = config_.hidden_dim;
     const auto vocabulary = config_.vocabulary_size;
-    const auto embedding = vocabulary * input;
-    const auto head = vocabulary * hidden + vocabulary;
-    if (config_.kind == NlpModelKind::Track1CctRecurrence) return embedding + 4U * hidden * input + 3U * hidden + head;
-    if (config_.kind == NlpModelKind::GRU) return embedding + 3U * (hidden * input + hidden * hidden + hidden) + head;
-    if (config_.kind == NlpModelKind::DiagonalSSM) return embedding + hidden + hidden * input + head;
-    return embedding + 3U * hidden * input + head;
+    const auto embedding = bounded_mul(vocabulary, input);
+    const auto head = bounded_add(bounded_mul(vocabulary, hidden), vocabulary);
+    if (config_.kind == NlpModelKind::Track1CctRecurrence) {
+        return bounded_add(bounded_add(embedding, bounded_mul(4U, bounded_mul(hidden, input))), bounded_add(bounded_mul(3U, hidden), head));
+    }
+    if (config_.kind == NlpModelKind::GRU) {
+        const auto gate = bounded_add(bounded_add(bounded_mul(hidden, input), bounded_mul(hidden, hidden)), hidden);
+        return bounded_add(embedding, bounded_add(bounded_mul(3U, gate), head));
+    }
+    if (config_.kind == NlpModelKind::DiagonalSSM) return bounded_add(embedding, bounded_add(hidden, bounded_add(bounded_mul(hidden, input), head)));
+    return bounded_add(embedding, bounded_add(bounded_mul(3U, bounded_mul(hidden, input)), head));
 }
 
 void NextTokenModel::initialize() {
@@ -320,13 +342,16 @@ std::vector<double> NextTokenModel::embedding(const TokenId id) const {
 }
 
 void NextTokenModel::validate_sequence(const NlpSequence& sequence) const {
-    require(!sequence.input_ids.empty() && sequence.input_ids.size() == sequence.target_ids.size() &&
-                sequence.input_ids.size() == sequence.loss_mask.size() && sequence.input_ids.size() <= config_.context_length,
-            "NLP sequence shape or context length is invalid");
+    require(!sequence.sequence_id.empty() && !sequence.record_id.empty() && !sequence.input_ids.empty() &&
+                sequence.input_ids.size() == sequence.target_ids.size() && sequence.input_ids.size() == sequence.loss_mask.size() &&
+                sequence.input_ids.size() <= config_.context_length,
+            "NLP sequence identity, shape, or context length is invalid");
     require(target_count(sequence) > 0U, "NLP sequence has no active loss positions");
     for (const auto id : sequence.input_ids) require(id < config_.vocabulary_size, "NLP input token ID is out of range");
     for (std::size_t index = 0; index < sequence.target_ids.size(); ++index) {
-        if (sequence.loss_mask[index] != 0U) require(sequence.target_ids[index] < config_.vocabulary_size, "NLP target token ID is out of range");
+        require(sequence.loss_mask[index] == 0U || sequence.loss_mask[index] == 1U, "NLP loss mask is not binary");
+        require(sequence.target_ids[index] < config_.vocabulary_size || sequence.target_ids[index] == Tokenizer::kPadId,
+                "NLP target token ID is out of range");
     }
 }
 
@@ -723,13 +748,19 @@ std::size_t NextTokenModel::state_memory_bytes() const noexcept {
 
 void NextTokenModel::apply_gradient(const std::vector<double>& gradients, const NlpOptimizerConfig& optimizer,
                                     NlpTrainerState& state, double* applied_learning_rate) {
-    require(gradients.size() == parameters_.size(), "NLP gradient vector size mismatch");
-    require(optimizer.learning_rate > 0.0 && optimizer.clip_norm > 0.0, "NLP optimizer settings are invalid");
+    require(gradients.size() == parameters_.size() && std::isfinite(optimizer.learning_rate) && optimizer.learning_rate > 0.0 &&
+                std::isfinite(optimizer.clip_norm) && optimizer.clip_norm > 0.0 && state.optimizer_step < std::numeric_limits<std::size_t>::max(),
+            "NLP simple optimizer settings or gradient shape is invalid");
+    require_finite(gradients, "NLP simple optimizer gradient is non-finite");
     const auto norm = vector_norm(gradients);
     require(std::isfinite(norm), "NLP gradient norm is non-finite");
     const auto scale = std::min(1.0, optimizer.clip_norm / std::max(norm, 1e-12));
     const auto learning_rate = optimizer.learning_rate * scale;
-    for (std::size_t index = 0; index < parameters_.size(); ++index) parameters_[index] -= learning_rate * gradients[index];
+    require(std::isfinite(learning_rate), "NLP simple optimizer learning rate is non-finite");
+    auto candidate = parameters_;
+    for (std::size_t index = 0; index < candidate.size(); ++index) candidate[index] -= learning_rate * gradients[index];
+    require_finite(candidate, "NLP simple optimizer produced non-finite parameters");
+    parameters_ = std::move(candidate);
     state.optimizer_step += 1U;
     if (applied_learning_rate != nullptr) *applied_learning_rate = learning_rate;
 }
@@ -783,12 +814,19 @@ NlpTrainer::NlpTrainer(NlpModelConfig model_config, NlpOptimizerConfig optimizer
 }
 
 void NlpTrainer::validate_optimizer() const {
-    require(optimizer_config_.learning_rate > 0.0 && optimizer_config_.beta1 >= 0.0 && optimizer_config_.beta1 < 1.0 &&
-                optimizer_config_.clip_norm > 0.0 && optimizer_config_.total_steps > 0U && optimizer_config_.validation_interval_steps > 0U,
-            "NLP optimizer configuration is invalid");
+    require(std::isfinite(optimizer_config_.learning_rate) && optimizer_config_.learning_rate > 0.0 &&
+                std::isfinite(optimizer_config_.beta1) && optimizer_config_.beta1 >= 0.0 && optimizer_config_.beta1 < 1.0 &&
+                std::isfinite(optimizer_config_.beta2) && optimizer_config_.beta2 >= 0.0 && optimizer_config_.beta2 < 1.0 &&
+                std::isfinite(optimizer_config_.epsilon) && optimizer_config_.epsilon > 0.0 &&
+                std::isfinite(optimizer_config_.weight_decay) && optimizer_config_.weight_decay >= 0.0 &&
+                std::isfinite(optimizer_config_.clip_norm) && optimizer_config_.clip_norm > 0.0 &&
+                optimizer_config_.total_steps > 0U &&
+                optimizer_config_.validation_interval_steps > 0U,
+            "NLP optimizer configuration is invalid or non-finite");
 }
 
 double NlpTrainer::scheduled_learning_rate() const {
+    validate_optimizer();
     const auto step = state_.optimizer_step + 1U;
     if (optimizer_config_.warmup_steps > 0U && step <= optimizer_config_.warmup_steps) {
         return optimizer_config_.learning_rate * static_cast<double>(step) / static_cast<double>(optimizer_config_.warmup_steps);
@@ -796,7 +834,9 @@ double NlpTrainer::scheduled_learning_rate() const {
     if (optimizer_config_.total_steps <= optimizer_config_.warmup_steps) return optimizer_config_.learning_rate;
     const auto remaining = optimizer_config_.total_steps - std::min(step, optimizer_config_.total_steps);
     const auto span = optimizer_config_.total_steps - optimizer_config_.warmup_steps;
-    return optimizer_config_.learning_rate * static_cast<double>(remaining) / static_cast<double>(span);
+    const auto scheduled = optimizer_config_.learning_rate * static_cast<double>(remaining) / static_cast<double>(span);
+    require(std::isfinite(scheduled) && scheduled >= 0.0, "NLP scheduled learning rate is invalid");
+    return scheduled;
 }
 
 NlpEvaluation NlpTrainer::evaluate(const std::vector<NlpSequence>& sequences) const { return model_.evaluate(sequences); }
@@ -804,7 +844,10 @@ NlpEvaluation NlpTrainer::evaluate(const std::vector<NlpSequence>& sequences) co
 NlpTrainingPoint NlpTrainer::train_step(const NlpDataset& dataset) {
     const auto training_started = std::chrono::steady_clock::now();
     require(dataset.dataset_hash == dataset_hash_ && dataset.tokenizer_hash == tokenizer_hash_, "NLP dataset identity mismatch");
-    require(!dataset.train.empty(), "NLP training dataset is empty");
+    require(dataset.context_length == model_.config().context_length, "NLP dataset/model context length mismatch");
+    require(!dataset.train.empty() && state_.optimizer_step < optimizer_config_.total_steps,
+            "NLP training dataset is empty or optimizer budget is exhausted");
+    require(state_.data_cursor < std::numeric_limits<std::size_t>::max(), "NLP data cursor would overflow");
     const auto& sequence = dataset.train[state_.data_cursor % dataset.train.size()];
     const auto gradient_result = model_.loss_and_gradients(sequence);
     require(std::isfinite(gradient_result.cross_entropy) && std::isfinite(gradient_result.gradient_norm), "NLP training objective is non-finite");

@@ -3,7 +3,7 @@
 
 **Predecessor:** Stage 10 — Tokenizer and Representation Engine  
 **Successor:** Stage 12 — Scaling and Accelerator Systems  
-**Status:** Implemented and gated
+**Status:** Implemented and gated `PASS` with thirteen mandatory native checks; Stage 12 remains approval-gated.
 
 **Implementation:** Native C++20 trainer, categorical objective, analytic CCT BPTT, AdamW-equivalent optimizer, checkpoints, tests, and gate
 
@@ -19,9 +19,9 @@ The stage covers governed token-window construction, sparse-domain embeddings, c
 
 ## Implemented scope
 
-The implementation is in `cpp/include/cct/nlp_trainer.hpp` and `cpp/src/nlp_trainer.cpp`. It provides explicit train/evaluation eligibility flags on encoded documents; deterministic context windows with final-position and boundary loss masking; sparse token-ID-domain handling for the Stage 10 snapshot; trainable token embeddings; CCT selective retain/write recurrence; stable log-sum-exp softmax cross-entropy; analytic backpropagation through the CCT recurrence; global gradient clipping; warmup and linear decay; AdamW-equivalent first/second moments; validation loss, perplexity, accuracy, throughput, and state-memory metrics; matched dense causal attention, GRU, and diagonal SSM controls; and canonical checkpoint V2 serialization with tokenizer, dataset, optimizer, scheduler, cursor, RNG-state, history, model, and optimizer-moment fields.
+The implementation is in `cpp/include/cct/nlp_trainer.hpp` and `cpp/src/nlp_trainer.cpp`. It provides explicit train/evaluation eligibility flags on encoded documents; deterministic context windows with binary causal masks, final-position and boundary loss masking; sparse token-ID-domain handling for the Stage 10 snapshot; trainable token embeddings; CCT selective retain/write recurrence; stable log-sum-exp softmax cross-entropy; analytic backpropagation through the CCT recurrence; global gradient clipping; warmup and linear decay; AdamW-equivalent first/second moments; validation loss, perplexity, accuracy, throughput, and state-memory metrics; matched dense causal attention, GRU, and diagonal SSM controls; bounded model allocation; optimizer-budget and dataset/model-context enforcement; atomic finite parameter updates; and canonical checkpoint V2 serialization with tokenizer, dataset, optimizer, scheduler, cursor, RNG-state, history, model, and optimizer-moment fields.
 
-Evaluator-only records, records without explicit training permission, non-finite model parameters, invalid token IDs, all-false loss masks, malformed checkpoints, incompatible tokenizer/dataset identities, truncated model state, and optimizer-state size mismatches reject closed rather than being coerced into training.
+Evaluator-only records, duplicate record identities, records without explicit training permission, non-finite model parameters or optimizer values, non-binary/all-false loss masks, invalid token IDs, unsupported model kinds, oversized model allocations, dataset/model-context mismatches, optimizer-budget overruns, malformed or trailing-data checkpoints, incompatible tokenizer/dataset identities, truncated model state, and optimizer-state size mismatches reject closed rather than being coerced into training.
 
 ## Frozen pilot contract
 
@@ -53,28 +53,33 @@ The CCT candidate uses trainable embeddings, selective retain/write gates, a non
 
 ## Mandatory gate checks
 
-The Stage 11 gate contains eight application-shaped mandatory checks. All checks passed.
+The Stage 11 gate contains thirteen application-shaped mandatory checks. All checks passed.
 
 | Check | Result | Evidence |
 |---|---|---|
 | Tokenizer and dataset identity | **PASS** | Exact Stage 10 snapshot hash and governed dataset hash |
-| Objective, analytic gradient, optimizer | **PASS** | Finite categorical cross-entropy; finite-difference relative error at or below `1e-4` |
-| Three-seed CCT validation pilot | **PASS** | Seed improvements: 13.889%, 15.167%, and 14.141% |
-| Repeated-corpus overfit | **PASS** | 70.682% training-loss reduction |
+| Objective and masks | **PASS** | Finite categorical cross-entropy, binary masks, and active-token accounting |
+| Analytic gradient | **PASS** | Finite-difference relative error at or below `1e-4` |
+| Optimizer and schedule | **PASS** | Finite clipped AdamW-equivalent update with warmup/decay |
+| Stability and failure closure | **PASS** | Non-binary masks, non-finite optimizer values, and unsupported model kind reject |
+| Three-seed CCT validation pilot | **PASS** | Three fixed seeds improve held-out validation |
+| No-training capability control | **PASS** | Selected trained model beats its no-training control by at least `1%` |
+| Repeated-corpus overfit | **PASS** | Declared repeated-corpus loss-reduction threshold passed |
 | Matched controls | **PASS** | Dense attention, GRU, and diagonal SSM all completed |
-| Checkpoint interruption/resume | **PASS** | Cursors 0, 1, and 3 agree with uninterrupted training within `1e-12` |
+| Checkpoint interruption/resume | **PASS** | Cursors `0`, `1`, and `3` agree with uninterrupted training within `1e-12` |
+| Data cursor, context, and budget | **PASS** | Context mismatch and optimizer-budget overrun reject |
 | Contamination and invalid-input controls | **PASS** | Evaluator-only, invalid-target, and all-false-mask rejection |
-| Artifact identity and checkpoint integrity | **PASS** | Checkpoint hash `8ff1f227513d79a840b648bd724823e3fd790ba3bd9e754a086f430ebbd81b62` |
+| Checkpoint corruption, reproducibility, and artifact identity | **PASS** | Corrupt/wrong-dataset checkpoints reject; repeated same-seed parameters match; hashes are recorded |
 
-The selected seed-3 run improved validation cross-entropy from `6.877456` to `5.922243`, a relative improvement of `13.889%`, with final validation perplexity `373.248` and measured validation throughput of approximately `80,641` tokens/sec in the declared CPU environment. These are bounded pilot measurements, not production performance claims.
+The selected seed-3 run improved validation cross-entropy from `6.860653` to `5.749466`, a relative improvement of `16.1965%`, with final validation perplexity and measured validation throughput recorded in the published `seed_comparison.json` and `resource_profile.json`. These are bounded pilot measurements, not production performance claims.
 
 ## Evaluation harness
 
-The native regression suite checks objective masking, finite metrics, analytic/finite-difference gradients, optimizer schedule, deterministic initialization, matched controls, checkpoint resume, wrong-identity rejection, malformed checkpoints, all-false masks, and non-finite parameters. The artifact-producing gate adds the real-source/application-shaped pilot, three seeds, held-out validation, repeated-corpus overfit, baseline accounting, multiple interruption cursors, evaluator-only rejection, parameter-band enforcement, and machine-readable release records.
+The native regression suite checks objective masking, binary-mask semantics, finite metrics, analytic/finite-difference gradients, optimizer schedule and budget, deterministic initialization, matched controls, checkpoint resume, wrong-identity rejection, malformed/truncated checkpoints, all-false masks, non-finite parameters and optimizer values, model allocation bounds, and dataset-context identity. The artifact-producing gate adds the real-source/application-shaped pilot, three seeds, held-out validation, no-training capability control, repeated-corpus overfit, baseline accounting, multiple interruption cursors, corruption and wrong-dataset rejection, evaluator-only rejection, parameter-band enforcement, same-seed reproducibility, and machine-readable release records.
 
 ## Regression and CI integration
 
-The native regression executable is `cct_nlp_trainer_tests` and covers objective masking, finite metrics, analytic/finite-difference gradients, optimizer schedule, deterministic initialization, all matched controls, checkpoint resume at exact state, wrong-identity rejection, malformed checkpoints, all-false masks, and non-finite parameters. The Stage 11 gate executable is `cct_stage11_gate`.
+The native regression executable is `cct_nlp_trainer_tests` and covers objective masking, binary-mask semantics, finite metrics, analytic/finite-difference gradients, optimizer schedule and budget, deterministic initialization, all matched controls, checkpoint resume at exact state, wrong-identity rejection, malformed checkpoints, all-false masks, non-finite parameters and optimizer values, unsupported model kinds, bounded model allocation, and dataset-context identity. The Stage 11 gate executable is `cct_stage11_gate`.
 
 The canonical commands are:
 
