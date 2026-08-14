@@ -1,0 +1,1 @@
+{"features":[{"name":"text"}],"rows":[{"row":{"text":"alpha beta gamma delta"}},{"row":{"text":"the causal engine learns from compact text"}},{"row":{"text":"spectral state updates are deterministic"}},{"row":{"text":"checkpoint replay preserves the stream"}}],"num_rows_total":4}

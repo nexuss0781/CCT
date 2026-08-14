@@ -1,9 +1,10 @@
 [
-  {"name":"pinned_huggingface_sources","status":"PASS","duration_seconds":4.4887e-05,"details":{"sources":5,"revisions_pinned":true,"licenses_recorded":true,"official_upstream_recorded":true,"gem_flat_file":true}},
-  {"name":"governed_preparation_and_caps","status":"PASS","duration_seconds":0.0485562,"details":{"pretrain_byte_tokens":20,"sft_train":2,"sft_evaluation":2,"final_test":4,"source_attestations":5,"passed":true}},
-  {"name":"split_isolation_and_contamination","status":"PASS","duration_seconds":0.000181637,"details":{"duplicate_ids":0,"train_eval_overlap":0,"train_final_overlap":0,"final_test_update_forbidden":true}},
-  {"name":"deterministic_manifest_replay","status":"PASS","duration_seconds":0.0499916,"details":{"same_seed":true,"same_source":true,"manifest_equal":true,"evaluation_contract_equal":true}},
-  {"name":"missing_cache_fails_closed","status":"PASS","duration_seconds":0.000558086,"details":{"missing_cache_rejected":true}},
-  {"name":"malformed_source_fails_closed","status":"PASS","duration_seconds":0.0343759,"details":{"malformed_source_rejected":true,"silent_skip":false}},
-  {"name":"evaluation_contract_complete","status":"PASS","duration_seconds":6.702e-06,"details":{"pretrain_metrics":3,"qa_metrics":7,"required_slices":3,"answerability_and_abstention":true,"pretrain_scope":"target_token_prediction_only"}}
+  {"name":"pinned_huggingface_sources","status":"PASS","duration_seconds":2.359e-06,"details":{"sources":5,"revisions_pinned":true,"licenses_recorded":true,"official_upstream_recorded":true,"gem_flat_file":true}},
+  {"name":"governed_preparation_and_caps","status":"PASS","duration_seconds":0.0155881,"details":{"pretrain_byte_tokens":20,"sft_train":2,"sft_evaluation":2,"final_test":4,"source_attestations":5,"passed":true}},
+  {"name":"split_isolation_and_contamination","status":"PASS","duration_seconds":3.0964e-05,"details":{"duplicate_ids":0,"train_eval_overlap":0,"train_final_overlap":0,"final_test_update_forbidden":true}},
+  {"name":"deterministic_manifest_replay","status":"PASS","duration_seconds":0.0187762,"details":{"same_seed":true,"same_source":true,"manifest_equal":true,"evaluation_contract_equal":true}},
+  {"name":"missing_cache_fails_closed","status":"PASS","duration_seconds":8.3853e-05,"details":{"missing_cache_rejected":true}},
+  {"name":"malformed_source_fails_closed","status":"PASS","duration_seconds":0.0139382,"details":{"malformed_source_rejected":true,"silent_skip":false}},
+  {"name":"fresh_native_training_and_checkpoint_lineage","status":"PASS","duration_seconds":0.0382574,"details":{"training_replay":"PASS","pretrain_checkpoint_reload":true,"sft_checkpoint_reload":true,"lineage":"pretrain->sft","final_test_used_for_updates":false}},
+  {"name":"evaluation_contract_complete","status":"PASS","duration_seconds":1.063e-06,"details":{"pretrain_metrics":3,"qa_metrics":7,"required_slices":3,"answerability_and_abstention":true,"pretrain_scope":"target_token_prediction_only"}}
 ]

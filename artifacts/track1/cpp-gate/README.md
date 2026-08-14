@@ -1,3 +1,3 @@
-# Track 1 Acquisition Gate
+# Track 1 Acquisition and Training Gate
 
-This gate uses local copies of pinned Hugging Face response pages and validates the native bounded JSON parser, exact direct-file row counts, unique temporary-file publication, durable cache-integrity sidecars, source-attestation digests, byte-cap behavior, balanced selection, final-test isolation, deterministic replay, and fail-closed acquisition controls used by remote Track 1 preparation.
+This gate validates pinned-source provenance, native bounded acquisition and parsing, exact row and byte-cap behavior, balanced split selection, final-test isolation, deterministic replay, fail-closed cache/source controls, a fresh native pretraining-to-SFT replay, durable checkpoint reload, checkpoint lineage, target-span masking, and bounded answer-target evaluation. The fixture is a governed local reproduction of the production native path; the report does not claim broad language competence or exact-answer quality.

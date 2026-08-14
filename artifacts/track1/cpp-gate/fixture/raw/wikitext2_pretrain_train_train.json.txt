@@ -1,0 +1,4 @@
+alpha beta gamma delta
+the causal engine learns from compact text
+spectral state updates are deterministic
+checkpoint replay preserves the stream
