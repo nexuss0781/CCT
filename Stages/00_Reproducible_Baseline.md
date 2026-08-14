@@ -4,7 +4,7 @@
 **Stage ID:** 0  
 **Predecessor:** None  
 **Successor:** Stage 1 — Numerical Engine  
-**Status:** Implemented in native C++; Stage 0 gate PASS
+**Status:** Native Stage 0 implementation is present. The current Level 1 replay uses `cct-l1-stage0-gate-v1`; final L1-0 `PASS` requires a clean-checkout replay from the final stage commit.
 
 ## Purpose
 
@@ -26,7 +26,7 @@ The stage must preserve the public behavior that is intentionally retained from 
 | C++ toolchain | Declare C++20, CMake, compiler warnings, FFTW3 dependency, and release/test profiles | Clean CMake configure and build succeeds |
 | Native library | Build one `cct_native` library exposing Event, Manifold, spectral, finite-difference, and solver APIs | Native link and executable smoke tests succeed |
 | Python removal | Remove active Python runtime, Python tests, Python packaging, and Python gate scripts | Repository contains no active `.py` implementation files |
-| Configuration | Define a versioned `CCTConfig` or equivalent schema for device, dtype, seed, dimensions, benchmark budget, and logging | Config round-trip test |
+| Configuration | Define a versioned `CCTConfig` or equivalent schema for device, dtype, seed, dimensions, benchmark budget, and logging | `cct-l1-baseline-config-v1` canonical configuration, SHA-256 identity, and malformed-config rejection |
 | Determinism | Use deterministic native numerical paths and record compiler, FFTW, hardware, and configuration metadata | Repeated-run equality report |
 | Test runner | Provide one command for unit, integration, property, numerical-smoke, and benchmark-schema checks | CI command exits zero on a clean checkout |
 | Continuous integration | Test a clean CPU C++ build, CTest suite, Stage 0 gate, and Stage 1 gate | CI status and stored logs |
@@ -86,7 +86,7 @@ The harness consists of four layers:
 | Artifact collector | Logs, profiles, configs, reports | Immutable artifact directory | Names artifacts by commit and config hash |
 | Gate evaluator | Test and metric records | `PASS`, `FAIL`, or `BLOCKED` | Applies all mandatory criteria and explains every non-pass |
 
-The canonical report must include commit ID, dirty-tree status, package versions, compiler versions, CPU/GPU information, operating-system information, configuration hash, random seed, test counts, benchmark values, threshold definitions, and gate decision.
+The canonical report must include commit ID, dirty-tree status, package versions, compiler versions, CPU/GPU information, operating-system information, configuration hash, random seed, test counts, benchmark values, threshold definitions, and gate decision. The current native gate publishes `config.json`, `environment.json`, `tests.json`, `benchmark_record.json`, `manifest.json`, `gate.json`, `release_record.json`, `report.md`, and the wrapper-produced `gate_envelope.json`.
 
 ## Pass/fail criteria
 

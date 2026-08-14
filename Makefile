@@ -23,7 +23,7 @@ native-test: native-build
 	ctest --test-dir $(BUILD_DIR) --output-on-failure
 
 stage0-smoke: native-build
-	./$(BUILD_DIR)/cct_stage0_gate --output artifacts/stage-0/cpp-gate
+	./$(BUILD_DIR)/cct_gate_envelope --output artifacts/stage-0/cpp-gate -- ./$(BUILD_DIR)/cct_stage0_gate --output artifacts/stage-0/cpp-gate
 
 stage0-gate: stage0-smoke
 

@@ -78,52 +78,53 @@ The next executable Level 1 move is **L1-6 fresh release-bound Track 1 training*
 
 **Dependency:** None.
 
-**Current status:** `PASS — fresh native replay at a3fc4d9` for the declared reproducible baseline contract; a clean external release-checkout replay remains required before release use.
+**Current status:** `[ ] IN PROGRESS` — the L1-0 gate has been expanded with configuration identity, environment/manifest/release records, deterministic replay, non-mutation failures, injected threshold rejection, and source hygiene checks. A fresh clean-checkout replay from the final L1-0 commit is required before this stage is marked `PASS`.
 
 ## L1-0 implementation tasks
 
-- [ ] Define the supported compiler, CMake version, C++ standard, operating system, and dependency versions.
-- [ ] Define warning policy, warnings-as-errors policy, build types, and native CUDA policy.
-- [ ] Define model, parameter, state, tokenizer, data, checkpoint, evaluator, and artifact identity fields.
-- [ ] Implement a clean native C++20 build from a clean checkout.
-- [ ] Implement deterministic initialization and fixed-seed configuration.
-- [ ] Implement unit-test, integration-test, benchmark, and formal-gate entry points.
-- [ ] Define the standard artifact tree for configuration, environment, tests, benchmarks, manifests, logs, checkpoints, gate, and report.
-- [ ] Define status values and exit-code behavior.
-- [ ] Add missing-dependency failure coverage.
-- [ ] Add malformed-configuration failure coverage.
-- [ ] Add non-finite-output failure coverage.
-- [ ] Add corrupted-artifact failure coverage.
-- [ ] Add nondeterministic-replay detection.
+- [x] Define the supported compiler, CMake version, C++ standard, operating system, and FFTW dependency contract in CMake and the L1-0 environment record.
+- [x] Define warning policy, warnings-as-errors policy, build types, and native CUDA policy.
+- [x] Define native model, state, tokenizer, data, checkpoint, evaluator, and artifact identity fields across the configuration, manifest, checkpoint, and gate contracts.
+- [ ] Reproduce a clean native C++20 build from a fresh release-checkout directory after the final L1-0 commit.
+- [x] Implement deterministic fixed-seed baseline configuration and numerical replay.
+- [x] Implement unit-test, integration-test, benchmark, and formal-gate entry points.
+- [x] Define the standard L1-0 artifact tree for configuration, environment, tests, benchmark, manifest, gate, release record, and report.
+- [x] Define PASS/FAIL gate status and nonzero exit behavior.
+- [ ] Add a clean-environment missing-FFTW dependency failure replay.
+- [x] Add malformed-configuration failure coverage.
+- [x] Add non-finite-output failure coverage through the declared numerical solver validation matrix.
+- [x] Add corrupted-artifact failure coverage through bounded fail-closed serializer tests.
+- [x] Add deterministic-replay detection.
 
 ## L1-0 verification tasks
 
-- [ ] Build the clean checkout with the declared native compiler.
-- [ ] Run baseline tests twice with the same seed.
-- [ ] Run benchmark workloads twice with the same configuration.
-- [ ] Compare test identity and benchmark identity within declared tolerances.
-- [ ] Confirm invalid configuration exits nonzero and produces a useful failure record.
-- [ ] Confirm missing dependency exits nonzero without silently falling back.
-- [ ] Confirm non-finite output is rejected.
-- [ ] Confirm artifact hashes identify the exact commit and configuration.
+- [ ] Build the final L1-0 commit from a fresh checkout with the declared native compiler.
+- [x] Run baseline numerical replay twice with the same seed and configuration inside the L1-0 gate.
+- [x] Run the fixed benchmark-schema workload and retain the configuration/commit/hardware/timestamp record.
+- [x] Compare deterministic output identity within exact native CPU equality.
+- [x] Confirm invalid configuration exits through a structured rejected check and retains diagnostics.
+- [ ] Confirm missing FFTW/CMake dependency exits nonzero in an isolated clean environment without fallback.
+- [x] Confirm non-finite numerical behavior is rejected by the native numerical validation matrix.
+- [ ] Confirm final clean-checkout artifacts and gate envelope identify the exact final commit and configuration.
 
 ## L1-0 artifacts
 
-- [ ] `config.json`
-- [ ] `environment.json`
-- [ ] `tests.json`
-- [ ] `benchmarks.json`
-- [ ] `manifest.json`
-- [ ] `gate.json`
-- [ ] `release_record.json`
-- [ ] `report.md`
+- [x] `config.json`
+- [x] `environment.json`
+- [x] `tests.json`
+- [x] `benchmark_record.json`
+- [x] `manifest.json`
+- [x] `gate.json`
+- [x] `release_record.json`
+- [x] `report.md`
+- [x] `gate_envelope.json`
 
 ## L1-0 gate and transition
 
-- [ ] Run the formal L1-0 gate from the release candidate commit.
-- [ ] Confirm all mandatory checks are `PASS`.
-- [ ] Record known limitations and any optional blocked dependency.
-- [ ] Record transition approval for L1-1.
+- [ ] Run the formal L1-0 gate from a fresh release-checkout commit.
+- [ ] Confirm all mandatory checks are `PASS` with a clean-tree envelope.
+- [ ] Record the isolated missing-dependency replay result and any optional blocked dependency.
+- [ ] Record transition approval for L1-1 after the clean-checkout evidence is published.
 
 **Command template:**
 
