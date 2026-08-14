@@ -53,6 +53,9 @@ struct NlpModelConfig {
     std::size_t hidden_dim = 8;
     std::size_t context_length = 32;
     std::uint64_t seed = 0;
+    bool compact_vocabulary = false;
+    TokenId token_id_limit = 0;
+
 };
 
 struct NlpOptimizerConfig {
@@ -63,6 +66,7 @@ struct NlpOptimizerConfig {
     double weight_decay = 1e-4;
     double clip_norm = 1.0;
     std::size_t warmup_steps = 2;
+    std::size_t batch_size = 1;
     std::size_t total_steps = 100;
     std::size_t validation_interval_steps = 1;
 };
@@ -125,6 +129,8 @@ public:
 
     NlpGradientResult loss_and_gradients(const NlpSequence& sequence) const;
     std::vector<double> next_logits(const std::vector<TokenId>& context) const;
+    TokenId token_id_from_logit_slot(std::size_t slot) const;
+    std::size_t logit_slot_for_token_id(TokenId token) const;
     NlpEvaluation evaluate(const std::vector<NlpSequence>& sequences) const;
     double loss_only(const NlpSequence& sequence) const;
     void apply_gradient(const std::vector<double>& gradients, const NlpOptimizerConfig& optimizer,

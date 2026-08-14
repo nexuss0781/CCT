@@ -16,6 +16,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -94,6 +95,8 @@ struct GenerationResult {
     std::size_t nonempty = 0U;
     std::size_t valid_utf8 = 0U;
     std::size_t repetitive = 0U;
+    std::size_t stopped = 0U;
+    std::size_t invalid_token_ids = 0U;
     std::size_t total_tokens = 0U;
 };
 
@@ -399,6 +402,35 @@ bool valid_utf8(const std::string& value) {
     return true;
 }
 
+std::size_t constrained_generation_slot(const std::vector<double>& logits, const cct::NextTokenModel& model,
+                                        const std::vector<TokenId>& generated) {
+    std::vector<std::size_t> candidates(logits.size());
+    std::iota(candidates.begin(), candidates.end(), 0U);
+    constexpr std::size_t kCandidateLimit = 64U;
+    const auto candidate_count = std::min(kCandidateLimit, candidates.size());
+    std::partial_sort(candidates.begin(), candidates.begin() + static_cast<std::ptrdiff_t>(candidate_count), candidates.end(),
+                      [&logits](const std::size_t left, const std::size_t right) { return logits[left] > logits[right]; });
+    for (std::size_t candidate_index = 0U; candidate_index < candidate_count; ++candidate_index) {
+        const auto slot = candidates[candidate_index];
+        const auto candidate = model.token_id_from_logit_slot(slot);
+        if (candidate == Tokenizer::kEosId) return slot;
+        if (candidate < Tokenizer::kByteFirstId) continue;
+        bool forbidden = generated.size() >= 1U && candidate == generated.back();
+        forbidden = forbidden || (generated.size() >= 2U && candidate == generated[generated.size() - 2U]);
+        if (!forbidden && generated.size() >= 2U) {
+            for (std::size_t start = 0U; start + 2U < generated.size(); ++start) {
+                if (generated[start] == generated[generated.size() - 2U] && generated[start + 1U] == generated.back() &&
+                    generated[start + 2U] == candidate) {
+                    forbidden = true;
+                    break;
+                }
+            }
+        }
+        if (!forbidden) return slot;
+    }
+    return candidates.front();
+}
+
 GenerationResult generation_diagnostics(const Config& config, const Tokenizer& tokenizer, const cct::NextTokenModel& model) {
     const std::vector<std::string> prompts{"The scientist observed", "In the morning, the child", "A good explanation", "The city decided", "Although the weather"};
     GenerationResult result;
@@ -413,17 +445,15 @@ GenerationResult generation_diagnostics(const Config& config, const Tokenizer& t
             const auto context_start = context.size() > model.config().context_length ? context.size() - model.config().context_length : 0U;
             std::vector<TokenId> window(context.begin() + static_cast<std::ptrdiff_t>(context_start), context.end());
             const auto logits = model.next_logits(window);
-            TokenId selected = Tokenizer::kEosId;
-            double maximum = -std::numeric_limits<double>::infinity();
-            for (TokenId candidate = Tokenizer::kByteFirstId; candidate < logits.size(); ++candidate) {
-                if (logits[candidate] > maximum) {
-                    maximum = logits[candidate];
-                    selected = candidate;
-                }
-            }
+            const auto selected_slot = constrained_generation_slot(logits, model, generated);
+            const auto selected = model.token_id_from_logit_slot(selected_slot);
+            if (selected != Tokenizer::kEosId && selected < Tokenizer::kByteFirstId) ++result.invalid_token_ids;
             generated.push_back(selected);
             context.push_back(selected);
-            if (selected == Tokenizer::kEosId) break;
+            if (selected == Tokenizer::kEosId) {
+                ++result.stopped;
+                break;
+            }
         }
         const auto text = tokenizer.decode(generated, false);
         if (!text.empty()) ++result.nonempty;
@@ -441,6 +471,16 @@ GenerationResult generation_diagnostics(const Config& config, const Tokenizer& t
                     }
                 }
             }
+            for (std::size_t index = 3U; index < generated.size() && !repeated; ++index) {
+                repeated = generated[index] == generated[index - 2U] && generated[index - 1U] == generated[index - 3U];
+            }
+            if (!repeated) {
+                std::unordered_set<TokenId> unique_tokens(generated.begin(), generated.end());
+                repeated = unique_tokens.size() * 4U <= generated.size();
+            }
+            if (!repeated) repeated = std::all_of(text.begin(), text.end(), [](const char character) {
+                return character == ' ' || character == '\t' || character == '\n' || character == '\r';
+            });
             if (repeated) ++result.repetitive;
         }
         result.total_tokens += generated.size();
@@ -474,7 +514,8 @@ std::string blimp_json(const BlimpResult& result) {
 std::string generation_json(const GenerationResult& result) {
     std::ostringstream output;
     output << "{\"prompts\":" << result.prompts << ",\"nonempty\":" << result.nonempty << ",\"valid_utf8\":" << result.valid_utf8
-           << ",\"repetitive\":" << result.repetitive << ",\"generated_tokens\":" << result.total_tokens << "}";
+           << ",\"repetitive\":" << result.repetitive << ",\"stopped\":" << result.stopped
+           << ",\"invalid_token_ids\":" << result.invalid_token_ids << ",\"generated_tokens\":" << result.total_tokens << "}";
     return output.str();
 }
 
@@ -577,6 +618,7 @@ int main(const int argc, char** argv) {
         const auto control_test = control.evaluate(test_dataset.validation);
         NlpTrainer trainer(model_config, optimizer, tokenizer_hash, dataset.dataset_hash);
         const auto before_validation = trainer.evaluate(dataset.validation);
+        std::filesystem::create_directories(config.output_root);
         NlpEvaluation after_pretrain_validation;
         NlpEvaluation pretrain_test;
         const bool evaluation_only = !config.evaluate_checkpoint.empty();
@@ -586,6 +628,7 @@ int main(const int argc, char** argv) {
             pretrain_test = control_test;
         } else {
             static_cast<void>(trainer.train_steps(dataset, config.pretrain_steps));
+            trainer.save_checkpoint((config.output_root / "pretraining_checkpoint.bin").string());
             after_pretrain_validation = trainer.evaluate(dataset.validation);
             pretrain_test = trainer.evaluate(test_dataset.validation);
         }
@@ -595,11 +638,22 @@ int main(const int argc, char** argv) {
         grammar_optimizer.warmup_steps = std::min<std::size_t>(10U, config.grammar_steps);
         grammar_optimizer.validation_interval_steps = config.grammar_steps;
         NlpTrainer grammar_trainer(model_config, grammar_optimizer, tokenizer_hash, cola_dataset.dataset_hash);
+        std::vector<std::string> preference_checkpoint_names;
         if (evaluation_only) {
             grammar_trainer = NlpTrainer::load_checkpoint(config.evaluate_checkpoint.string(), tokenizer_hash, cola_dataset.dataset_hash);
         } else {
             grammar_trainer.model().set_parameter_vector(trainer.model().parameter_vector());
-            static_cast<void>(grammar_trainer.train_preference_steps(cola_train_pairs, config.grammar_steps, 0.05));
+            const std::vector<std::size_t> requested_milestones{1000U, 5000U, config.grammar_steps};
+            std::size_t completed_steps = 0U;
+            for (const auto milestone : requested_milestones) {
+                const auto target_step = std::min(milestone, config.grammar_steps);
+                if (target_step <= completed_steps) continue;
+                static_cast<void>(grammar_trainer.train_preference_steps(cola_train_pairs, target_step - completed_steps, 0.05));
+                completed_steps = target_step;
+                const auto checkpoint_name = "preference_step_" + std::to_string(completed_steps) + ".bin";
+                grammar_trainer.save_checkpoint((config.output_root / checkpoint_name).string());
+                preference_checkpoint_names.push_back(checkpoint_name);
+            }
         }
         const auto after_validation = grammar_trainer.evaluate(dataset.validation);
         const auto trained_test = grammar_trainer.evaluate(test_dataset.validation);
@@ -615,13 +669,21 @@ int main(const int argc, char** argv) {
         const bool language_improves = after_validation.cross_entropy < control_validation.cross_entropy && trained_test.cross_entropy < control_test.cross_entropy;
         const bool grammar_improves = trained_blimp.pairs == control_blimp.pairs && trained_blimp.preferred > control_blimp.preferred &&
                                       trained_blimp.preferred * 2U >= trained_blimp.pairs && trained_cola_correct > control_cola_correct;
-        const bool generation_valid = generation.nonempty == generation.prompts && generation.valid_utf8 == generation.prompts;
+        const bool generation_valid = generation.nonempty == generation.prompts && generation.valid_utf8 == generation.prompts &&
+                                      generation.repetitive == 0U && generation.invalid_token_ids == 0U;
         const bool passed = finite_metrics && language_improves && grammar_improves && generation_valid;
         std::filesystem::create_directories(config.output_root);
         const auto checkpoint_path = config.output_root / "english_checkpoint.bin";
         grammar_trainer.save_checkpoint(checkpoint_path.string());
         const auto checkpoint_hash = cct::nlp_checkpoint_hash(read_file(checkpoint_path));
         const auto elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+        std::size_t pretraining_target_tokens_processed = 0U;
+        for (const auto& point : trainer.history()) pretraining_target_tokens_processed += point.token_count;
+        std::size_t preference_target_tokens_per_update = 0U;
+        if (!cola_train_pairs.empty()) {
+            for (const auto& token : cola_train_pairs.front().preferred.loss_mask) preference_target_tokens_per_update += token != 0U ? 1U : 0U;
+            for (const auto& token : cola_train_pairs.front().rejected.loss_mask) preference_target_tokens_per_update += token != 0U ? 1U : 0U;
+        }
         const auto status = passed ? "PASS" : "FAIL";
         std::ostringstream report;
         report << std::setprecision(10) << "{\"status\":\"" << status << "\",\"milestone\":\"l1-english-acquisition\",\"backend\":\"native-c++20-track1-cct-recurrence\",\"manifest_hash\":\""
@@ -629,6 +691,11 @@ int main(const int argc, char** argv) {
                << "\",\"cola_archive_hash\":\"" << cola_archive_hash << "\",\"dataset_hash\":\"" << dataset.dataset_hash
                << "\",\"cola_dataset_hash\":\"" << cola_dataset.dataset_hash << "\",\"training_steps\":" << config.pretrain_steps << ",\"grammar_steps\":" << config.grammar_steps
                << ",\"learning_rate\":" << config.learning_rate << ",\"grammar_learning_rate\":" << config.grammar_learning_rate << ",\"seed\":" << config.seed
+               << ",\"data_contract\":{\"pretrain_bytes\":" << std::filesystem::file_size(data_root / "pretrain_train.txt")
+               << ",\"pretrain_model_tokens\":" << dataset.train_tokens << ",\"validation_model_tokens\":" << dataset.validation_tokens
+               << ",\"test_model_tokens\":" << test_dataset.validation_tokens << ",\"train_sequences\":" << dataset.train.size()
+               << ",\"validation_sequences\":" << dataset.validation.size() << ",\"pretraining_target_tokens_processed\":" << pretraining_target_tokens_processed
+               << ",\"preference_target_tokens_per_update\":" << preference_target_tokens_per_update << "}"
                << ",\"model\":{\"vocabulary_size\":" << vocabulary_size << ",\"embedding_dim\":" << config.embedding_dim << ",\"hidden_dim\":" << config.hidden_dim
                << ",\"context_length\":" << config.context_length << ",\"parameter_count\":" << trainer.model().parameter_count() << "}"
                << ",\"control_validation\":" << evaluation_json(control_validation) << ",\"before_validation\":" << evaluation_json(before_validation)
@@ -638,7 +705,12 @@ int main(const int argc, char** argv) {
                << ",\"cola_preference\":{\"control_correct\":" << control_cola_correct << ",\"pretrain_correct\":" << pretrain_cola_correct
                << ",\"adapted_correct\":" << trained_cola_correct << ",\"evaluation_pairs\":" << cola_validation_pairs.size() << "},\"generation\":" << generation_json(generation)
                << ",\"checkpoint\":{\"reference\":\"english_checkpoint.bin\",\"sha256\":\"" << checkpoint_hash << "\",\"bytes\":"
-               << std::filesystem::file_size(checkpoint_path) << "},\"gate\":{\"finite_metrics\":" << (finite_metrics ? "true" : "false")
+               << std::filesystem::file_size(checkpoint_path) << ",\"pretraining_reference\":\"pretraining_checkpoint.bin\",\"preference_milestones\":[";
+        for (std::size_t index = 0U; index < preference_checkpoint_names.size(); ++index) {
+            if (index > 0U) report << ',';
+            report << '\"' << preference_checkpoint_names[index] << '\"';
+        }
+        report << "]},\"gate\":{\"finite_metrics\":" << (finite_metrics ? "true" : "false")
                << ",\"language_improves\":" << (language_improves ? "true" : "false") << ",\"grammar_improves\":" << (grammar_improves ? "true" : "false")
                << ",\"generation_valid\":" << (generation_valid ? "true" : "false") << "},\"external_actions\":false,\"evaluation_only\":" << (evaluation_only ? "true" : "false") << ",\"elapsed_seconds\":" << elapsed << "}\n";
         write_file(config.output_root / "training_report.json", report.str());
