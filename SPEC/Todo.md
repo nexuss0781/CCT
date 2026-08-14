@@ -516,50 +516,45 @@ cat artifacts/track1/training/training_report.json
 
 **Dependency:** L1-6 `PASS` with fresh release-bound evidence.
 
-**Current status:** `[ ] PENDING` — the current repository has Track 1 supervised target training, but the full Level 1 instruction-adaptation contract is not yet complete.
+**Current status:** `[x] PASS` for the declared native C++20 instruction-adaptation pilot. The fresh Stage 13 gate records **17/17 mandatory checks** against the frozen base checkpoint `8ff1f227513d79a840b648bd724823e3fd790ba3bd9e754a086f430ebbd81b62`, tokenizer `902e5a44f372a3d972b6f21036d62d7878f1d6907805c841e49aa84297ba7b0a`, and SFT manifest `89c670cd1802592770b133cc00108bdcda74b8d95bdf26c20b7c16d90eb66f70`. It validates canonical V2 example identity, target-only supervision, held-out full/adapter task improvement, structured outputs, citation/abstention boundaries, retention, adapter lineage, deletion, and repeatability on declared governed fixtures. It does not establish broad instruction following, factuality, human-review equivalence, high-impact safety, or production release. Transition to L1-8 remains explicitly approval-gated.
 
 ## L1-7 implementation tasks
 
-- [ ] Define instruction, context, target, metadata, eligibility, policy, and evaluator schemas.
-- [ ] Define canonical instruction serialization and version it.
-- [ ] Implement `target-span-only-v1` offsets and masks for all supported task forms.
-- [ ] Reject malformed targets and zero-loss examples.
-- [ ] Implement full-parameter supervised continuation from an identity-checked base checkpoint.
-- [ ] Preserve base checkpoint immutability.
-- [ ] Implement structured output validation.
-- [ ] Implement citation and evidence fields where the task schema requires them.
-- [ ] Implement missing-evidence abstention.
-- [ ] Implement safe refusal and unsupported-request behavior.
-- [ ] Implement deletion and lineage records for adapted data and checkpoints.
+- [x] Define instruction, context, target, metadata, eligibility, policy, evaluator, source-span, and citation schemas for the six declared task classes.
+- [x] Define and implement canonical `cct-sft-example-identity-v2` hashing over all identity-bearing example fields with length-prefixed encoding.
+- [x] Implement deterministic `<CCT_TASK_V1>` instruction formatting and `target-span-only-v1` offsets/masks.
+- [x] Reject empty targets, duplicate IDs, invalid closed-schema labels, invalid spans, split overlap, evaluator leakage, malformed serializers, tampered metadata, and zero-trainable-target formatting.
+- [x] Implement full-parameter supervised continuation from an identity-checked base configuration.
+- [x] Implement rank-1 and rank-2 output-projection adapters with frozen-base behavior, explicit domain/base/training-manifest/permission lineage, V2 persistence, and strict shape checks.
+- [x] Implement bounded structured output validation, escaped structured fields, closed-label validation, citation matching, and abstention on invalid, unknown, unsupported, or missing-evidence outputs.
+- [x] Preserve declared deny-by-default workflow safety fixtures and deletion/rebuilt-manifest lineage.
 
 ## L1-7 verification tasks
 
-- [ ] Verify prompt tokens have zero supervised target contribution where required.
-- [ ] Verify target offsets and masks across Unicode, empty-target, and malformed examples.
-- [ ] Compare held-out instruction behavior against the untouched base.
-- [ ] Verify structured outputs parse deterministically.
-- [ ] Verify missing evidence causes bounded abstention.
-- [ ] Verify unsafe and unsupported requests remain denied.
-- [ ] Verify base immutability, adapter or checkpoint lineage, and deletion.
-- [ ] Verify results across declared task slices and seeds.
+- [x] Verify deterministic formatter output and target-only supervision; all active training tokens in the Stage 13 fixture map to declared target spans, exceeding the `95%` threshold.
+- [x] Verify empty-target, duplicate-ID, invalid-label, invalid-span, split-overlap, evaluator-only, metadata-tamper, trailing-checkpoint, incompatible-adapter, malformed-output, and unknown-label failures close deterministically.
+- [x] Compare untouched-base, full-SFT, rank-1 adapter, and no-training-control behavior on held-out classification and structured-extraction slices; full and adapter paths improve both declared slices.
+- [x] Verify structured extraction schema validity of at least `95%`, citation integrity, and `100%` abstention on the declared unknown-label, unsupported-citation, and missing-evidence calibration cases.
+- [x] Verify declared general/code/Unicode/long-context retention loss does not worsen by more than the `10%` relative budget and the four declared unsafe workflow requests remain denied.
+- [x] Verify adapter task/domain/base/manifest/permission isolation, exact base checksum immutability, merged/runtime prediction parity within `1e-10`, and rank-1/rank-2 parameter and memory counts below the matching full model.
+- [x] Verify three-seed full-SFT repeatability for seeds `3`, `5`, and `7`, plus deletion/rebuilt-manifest lineage and bounded expert-review proxy identity.
+- [x] Run the full strict Release and expanded-warning native suites: `39/39` CTest tests pass in each configuration.
 
 ## L1-7 artifacts
 
-- [ ] Instruction schema and formatter version.
-- [ ] Task manifest and split manifest.
-- [ ] Mask and offset report.
-- [ ] Base and adapted checkpoint manifests.
-- [ ] Held-out task report.
-- [ ] Structure, citation, abstention, and safety report.
-- [ ] Deletion and lineage report.
-- [ ] L1-7 gate and transition record.
+- [x] Instruction schema, formatter, and native SFT API in `cpp/include/cct/sft.hpp`, `cpp/src/sft.cpp`, and `Stages/13_Expanded_Gate_Contract.md`.
+- [x] Task registry and independently identified training/evaluation manifests in `artifacts/stage-13/cpp-gate/task_registry.json`, `training_manifest.json`, and `evaluation_manifest.json`.
+- [x] Formatter determinism and target-span coverage report in `formatter_report.json`.
+- [x] Untouched-base/full/adapter/no-training and three-seed held-out comparison in `task_comparison.json`.
+- [x] Retention, citation, safety, adapter-lineage, merge-parity, rank-efficiency, deletion, review, and incident records in the remaining Stage 13 gate bundle.
+- [x] Seventeen-check gate result, release record, and bounded claim report under `artifacts/stage-13/cpp-gate/`.
 
 ## L1-7 gate and transition
 
-- [ ] Freeze the instruction schema, formatter, mask policy, base identity, data split, and evaluator.
-- [ ] Run the formal L1-7 gate.
-- [ ] Confirm every failure class fails closed.
-- [ ] Record transition approval for L1-8.
+- [x] Freeze the instruction schema, formatter, mask policy, base identity, data split, evaluator, and threshold contract.
+- [x] Run the formal native L1-7 gate with 17 mandatory checks; all record `PASS`.
+- [x] Confirm the declared malformed-data, unauthorized-adapter, checkpoint, structured-output, citation, calibration, retention, and deletion failure classes fail closed.
+- [ ] Record explicit user approval for transition to L1-8 operation and API adaptation.
 
 **Transition:** `PASS` authorizes L1-8 operation and API adaptation.
 

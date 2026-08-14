@@ -304,10 +304,10 @@ SftInstructionExample squad_example(const SquadRecord& record, const std::size_t
     example.evaluator_owner = "track1";
     example.source_hash = GovernedCorpus::content_sha256(record.context + "\n" + record.question);
     example.target_hash = GovernedCorpus::content_sha256(example.target);
-    example.example_hash = GovernedCorpus::content_sha256(record.id + "\n" + example.source_hash + "\n" + example.target_hash);
     example.citation_id = record.id;
     example.source_span_start = 0U;
     example.source_span_end = record.context.size();
+    example.example_hash = sft_example_hash(example);
     return example;
 }
 

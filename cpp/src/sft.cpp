@@ -3,11 +3,13 @@
 #include "cct/corpus.hpp"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <iomanip>
 #include <limits>
 #include <map>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <utility>
@@ -111,6 +113,45 @@ std::string prediction_label(const std::vector<double>& probabilities, const Sft
     return schema.labels[index];
 }
 
+std::string manifest_payload(const std::vector<SftInstructionExample>& examples) {
+    std::ostringstream serialized;
+    serialized << "CCT_SFT_MANIFEST_V1\n";
+    for (const auto& example : examples) {
+        serialized << "E|" << join_hex({example.example_id, example.task_id, example.schema_version, example.input, example.target,
+                                         example.target_label, example.input_provenance, example.target_provenance, example.policy_class,
+                                         example.split, example.evaluator_owner, example.source_hash, example.target_hash, example.example_hash,
+                                         example.citation_id, std::to_string(example.source_span_start), std::to_string(example.source_span_end),
+                                         bool_text(example.training_allowed), bool_text(example.evaluation_allowed), bool_text(example.evaluator_only)}) << "\n";
+    }
+    return serialized.str();
+}
+
+std::string json_escape(const std::string& value) {
+    std::ostringstream output;
+    for (const char raw_byte : value) {
+        const auto byte = static_cast<unsigned char>(raw_byte);
+        if (byte == '"' || byte == '\\') output << '\\' << static_cast<char>(byte);
+        else if (byte == '\n') output << "\\n";
+        else if (byte == '\r') output << "\\r";
+        else if (byte == '\t') output << "\\t";
+        else if (byte < 0x20U) output << "\\u00" << std::hex << std::setw(2) << std::setfill('0')
+                                      << static_cast<unsigned int>(byte) << std::dec << std::setfill(' ');
+        else output << static_cast<char>(byte);
+    }
+    return output.str();
+}
+
+bool has_json_member(const std::string& output, const std::string& member) {
+    return output.find("\"" + member + "\":") != std::string::npos;
+}
+
+bool adapter_matches_model(const SftAdapter& adapter, const SftModelConfig& config) {
+    const auto& base_config = adapter.base_config();
+    return adapter.spec().base_checkpoint_hash == config.base_checkpoint_hash && adapter.spec().task_id == config.task_id &&
+           base_config.base_checkpoint_hash == config.base_checkpoint_hash && base_config.task_id == config.task_id &&
+           base_config.feature_dim == config.feature_dim && base_config.label_count == config.label_count;
+}
+
 }  // namespace
 
 std::string sft_task_kind_name(const SftTaskKind kind) {
@@ -138,18 +179,36 @@ std::string sft_output_kind_name(const SftOutputKind kind) {
 
 std::string sft_hash(const std::string& serialized) { return GovernedCorpus::content_sha256(serialized); }
 
+std::string sft_example_hash(const SftInstructionExample& example) {
+    const std::array<std::string, 20U> fields{{
+        example.example_id, example.task_id, example.schema_version, example.input, example.target, example.target_label,
+        example.input_provenance, example.target_provenance, example.policy_class, example.split, example.evaluator_owner,
+        example.source_hash, example.target_hash, example.citation_id, std::to_string(example.source_span_start),
+        std::to_string(example.source_span_end), bool_text(example.training_allowed), bool_text(example.evaluation_allowed),
+        bool_text(example.evaluator_only), "cct-sft-example-identity-v2"}};
+    std::ostringstream canonical;
+    for (const auto& field_value : fields) canonical << field_value.size() << ':' << field_value << '\n';
+    return sft_hash(canonical.str());
+}
+
 SftManifest SftManifest::build(const std::vector<SftInstructionExample>& examples,
                                const std::vector<SftTaskSchema>& schemas) {
     require(!examples.empty(), "SFT manifest cannot be empty");
     require(!schemas.empty(), "SFT schema registry cannot be empty");
     std::map<std::string, SftTaskSchema> schema_map;
     for (const auto& schema : schemas) {
-        require(!schema.task_id.empty() && !schema.schema_version.empty() && !schema.labels.empty(),
-                "SFT schema has missing identity or labels");
+        require(!schema.task_id.empty() && !schema.schema_version.empty() && !schema.labels.empty() &&
+                    schema.maximum_output_bytes > 0U && !schema.policy_class.empty(),
+                "SFT schema has missing identity, policy, labels, or output bound");
+        static_cast<void>(sft_task_kind_name(schema.kind));
+        static_cast<void>(sft_output_kind_name(schema.output_kind));
+        std::set<std::string> labels;
+        for (const auto& label : schema.labels) require(!label.empty() && labels.insert(label).second, "SFT schema has duplicate or empty label");
         require(schema_map.emplace(schema.task_id, schema).second, "duplicate SFT task schema");
     }
     SftManifest manifest;
     manifest.examples = examples;
+    std::set<std::string> example_ids;
     for (auto& example : manifest.examples) {
         require(schema_map.contains(example.task_id), "SFT example references unknown task");
         const auto& schema = schema_map.at(example.task_id);
@@ -159,24 +218,18 @@ SftManifest SftManifest::build(const std::vector<SftInstructionExample>& example
                 "SFT example is missing required provenance or content");
         require(example.source_hash == sft_hash(example.input) && example.target_hash == sft_hash(example.target),
                 "SFT example source/target hash mismatch");
-        const auto canonical = example.example_id + "\n" + example.task_id + "\n" + example.schema_version + "\n" +
-                               example.input + "\n" + example.target + "\n" + example.target_label + "\n" +
-                               example.source_hash + "\n" + example.target_hash + "\n" + example.split;
-        require(example.example_hash == sft_hash(canonical), "SFT example hash mismatch");
+        require(example_ids.insert(example.example_id).second, "duplicate SFT example ID");
+        require(example.target_label.empty() || std::find(schema.labels.begin(), schema.labels.end(), example.target_label) != schema.labels.end(),
+                "SFT target label is outside declared schema");
+        require(example.source_span_start <= example.source_span_end && example.source_span_end <= example.input.size(),
+                "SFT source span is outside the instruction input");
+        require(example.example_hash == sft_example_hash(example), "SFT example hash mismatch");
         require(!(example.evaluator_only && example.training_allowed), "evaluator-only example is training-eligible");
         require(!(example.evaluator_only && example.evaluation_allowed), "evaluator-only example is evaluation-eligible");
-        require(example.training_allowed || example.evaluation_allowed, "SFT example has no declared eligibility");
+        require(example.evaluator_only || (example.training_allowed != example.evaluation_allowed),
+                "SFT example must have exactly one non-evaluator split eligibility");
     }
-    std::ostringstream serialized;
-    serialized << "CCT_SFT_MANIFEST_V1\n";
-    for (const auto& example : manifest.examples) {
-        serialized << "E|" << join_hex({example.example_id, example.task_id, example.schema_version, example.input, example.target,
-                                         example.target_label, example.input_provenance, example.target_provenance, example.policy_class,
-                                         example.split, example.evaluator_owner, example.source_hash, example.target_hash, example.example_hash,
-                                         example.citation_id, std::to_string(example.source_span_start), std::to_string(example.source_span_end),
-                                         bool_text(example.training_allowed), bool_text(example.evaluation_allowed), bool_text(example.evaluator_only)}) << "\n";
-    }
-    manifest.manifest_hash = sft_hash(serialized.str());
+    manifest.manifest_hash = sft_hash(manifest_payload(manifest.examples));
     return manifest;
 }
 
@@ -198,16 +251,10 @@ bool SftManifest::contains_evaluator_training() const {
 }
 
 std::string SftManifest::serialize() const {
-    std::ostringstream serialized;
-    serialized << "CCT_SFT_MANIFEST_V1\n" << "H|" << hex_encode(manifest_hash) << "\n";
-    for (const auto& example : examples) {
-        serialized << "E|" << join_hex({example.example_id, example.task_id, example.schema_version, example.input, example.target,
-                                         example.target_label, example.input_provenance, example.target_provenance, example.policy_class,
-                                         example.split, example.evaluator_owner, example.source_hash, example.target_hash, example.example_hash,
-                                         example.citation_id, std::to_string(example.source_span_start), std::to_string(example.source_span_end),
-                                         bool_text(example.training_allowed), bool_text(example.evaluation_allowed), bool_text(example.evaluator_only)}) << "\n";
-    }
-    return serialized.str();
+    const auto payload = manifest_payload(examples);
+    require(manifest_hash == sft_hash(payload), "SFT manifest hash does not match serialized examples");
+    const auto first_record = payload.find('\n') + 1U;
+    return "CCT_SFT_MANIFEST_V1\nH|" + hex_encode(manifest_hash) + "\n" + payload.substr(first_record);
 }
 
 SftManifest SftManifest::deserialize(const std::string& serialized) {
@@ -227,7 +274,7 @@ SftManifest SftManifest::deserialize(const std::string& serialized) {
         for (const auto& field_value : fields) require(field_value.size() <= kMaximumSftFieldBytes, "SFT manifest field exceeds budget");
         require(!fields.empty(), "malformed SFT manifest line");
         if (fields[0] == "H") {
-            require(fields.size() == 2U, "malformed SFT manifest header");
+            require(fields.size() == 2U && declared_hash.empty() && manifest.examples.empty(), "malformed SFT manifest header");
             declared_hash = hex_decode(fields[1]);
         } else if (fields[0] == "E") {
             require(manifest.examples.size() < kMaximumSftExamples, "SFT example count exceeds budget");
@@ -249,6 +296,24 @@ SftManifest SftManifest::deserialize(const std::string& serialized) {
         }
     }
     require(!manifest.examples.empty() && !declared_hash.empty(), "SFT manifest has no records or hash");
+    std::set<std::string> example_ids;
+    for (const auto& example : manifest.examples) {
+        require(!example.example_id.empty() && !example.input.empty() && !example.target.empty() &&
+                    !example.input_provenance.empty() && !example.target_provenance.empty() && !example.policy_class.empty() &&
+                    !example.split.empty() && !example.evaluator_owner.empty(),
+                "serialized SFT example has missing required fields");
+        require(example_ids.insert(example.example_id).second, "serialized SFT manifest has duplicate example ID");
+        require(example.source_hash == sft_hash(example.input) && example.target_hash == sft_hash(example.target),
+                "serialized SFT example has invalid source or target hash");
+        require(example.source_span_start <= example.source_span_end && example.source_span_end <= example.input.size(),
+                "serialized SFT example has invalid source span");
+        require(example.example_hash == sft_example_hash(example), "serialized SFT example identity mismatch");
+        require(!(example.evaluator_only && (example.training_allowed || example.evaluation_allowed)),
+                "serialized evaluator-only example has eligible split");
+        require(example.evaluator_only || (example.training_allowed != example.evaluation_allowed),
+                "serialized SFT example has overlapping or absent split eligibility");
+    }
+    require(declared_hash == sft_hash(manifest_payload(manifest.examples)), "SFT manifest declared hash mismatch");
     manifest.manifest_hash = declared_hash;
     require(manifest.serialize() == serialized, "SFT manifest serialization is not canonical");
     return manifest;
@@ -256,8 +321,8 @@ SftManifest SftManifest::deserialize(const std::string& serialized) {
 
 FormattedInstruction SftFormatter::format(const SftInstructionExample& example, const SftTaskSchema& schema,
                                           const Tokenizer& tokenizer) {
-    require(example.task_id == schema.task_id && example.schema_version == schema.schema_version,
-            "SFT formatter schema identity mismatch");
+    require(example.task_id == schema.task_id && example.schema_version == schema.schema_version && !example.target.empty(),
+            "SFT formatter schema identity or target mismatch");
     const std::string serialized = "<CCT_TASK_V1> task=" + example.task_id + " schema=" + schema.schema_version +
                                    " input=" + example.input + " <TARGET> " + example.target + " <END>";
     const auto target_marker = std::string("<TARGET> ");
@@ -354,6 +419,7 @@ std::vector<double> SftModel::features(const std::string& input) const {
 
 std::vector<double> SftModel::logits(const std::vector<double>& feature_values, const SftAdapter* adapter) const {
     require(feature_values.size() == config_.feature_dim, "SFT feature dimension mismatch");
+    if (adapter != nullptr) require(adapter_matches_model(*adapter, config_), "SFT adapter/model configuration mismatch");
     std::vector<double> output(config_.label_count, 0.0);
     for (std::size_t label = 0; label < config_.label_count; ++label) {
         for (std::size_t feature = 0; feature < config_.feature_dim; ++feature) {
@@ -383,14 +449,14 @@ std::string SftModel::json_output(const SftInstructionExample& example, const Sf
                                   const std::string& label, const double confidence) {
     std::ostringstream output;
     if (schema.output_kind == SftOutputKind::Json) {
-        output << "{\"task_id\":\"" << schema.task_id << "\",\"label\":\"" << label << "\",\"confidence\":"
+        output << "{\"task_id\":\"" << json_escape(schema.task_id) << "\",\"label\":\"" << json_escape(label) << "\",\"confidence\":"
                << std::setprecision(8) << confidence << ",\"source_start\":" << example.source_span_start
                << ",\"source_end\":" << example.source_span_end << "}";
     } else if (schema.output_kind == SftOutputKind::Grounded) {
-        output << "{\"answer\":\"" << label << "\",\"citation\":\"" << example.citation_id
+        output << "{\"answer\":\"" << json_escape(label) << "\",\"citation\":\"" << json_escape(example.citation_id)
                << "\",\"uncertainty\":\"bounded\"}";
     } else if (schema.output_kind == SftOutputKind::Draft) {
-        output << "{\"draft\":\"" << label << "\",\"approval_required\":true}";
+        output << "{\"draft\":\"" << json_escape(label) << "\",\"approval_required\":true}";
     } else {
         output << label;
     }
@@ -399,7 +465,8 @@ std::string SftModel::json_output(const SftInstructionExample& example, const Sf
 
 SftPrediction SftModel::predict(const SftInstructionExample& example, const SftTaskSchema& schema,
                                 const SftAdapter* adapter) const {
-    require(example.task_id == config_.task_id && schema.task_id == config_.task_id, "SFT prediction task identity mismatch");
+    require(example.task_id == config_.task_id && schema.task_id == config_.task_id && schema.labels.size() == config_.label_count,
+            "SFT prediction task or label-schema identity mismatch");
     const auto probabilities = softmax(logits(features(example.input), adapter));
     const auto label = prediction_label(probabilities, schema);
     const auto confidence = *std::max_element(probabilities.begin(), probabilities.end());
@@ -445,12 +512,16 @@ SftEvaluation SftModel::evaluate(const std::vector<SftInstructionExample>& examp
 }
 
 double SftModel::loss(const SftInstructionExample& example, const SftTaskSchema& schema, const SftAdapter* adapter) const {
+    require(example.task_id == config_.task_id && schema.task_id == config_.task_id && schema.labels.size() == config_.label_count,
+            "SFT loss task or label-schema identity mismatch");
     const auto probabilities = softmax(logits(features(example.input), adapter));
     const auto target = label_index(example.target_label, schema);
     return -std::log(std::max(probabilities[target], std::numeric_limits<double>::min()));
 }
 
 std::vector<double> SftModel::gradients(const SftInstructionExample& example, const SftTaskSchema& schema) const {
+    require(example.task_id == config_.task_id && schema.task_id == config_.task_id && schema.labels.size() == config_.label_count,
+            "SFT gradient task or label-schema identity mismatch");
     const auto feature_values = features(example.input);
     const auto probabilities = softmax(logits(feature_values, nullptr));
     const auto target = label_index(example.target_label, schema);
@@ -464,7 +535,9 @@ std::vector<double> SftModel::gradients(const SftInstructionExample& example, co
 }
 
 void SftModel::apply_gradient(const std::vector<double>& gradient, const SftOptimizerConfig& optimizer) {
-    require(gradient.size() == parameters_.size() && optimizer.learning_rate > 0.0, "invalid full SFT update");
+    require(gradient.size() == parameters_.size() && optimizer.learning_rate > 0.0 && optimizer.clip_norm > 0.0 &&
+                std::isfinite(optimizer.learning_rate) && std::isfinite(optimizer.clip_norm) && std::isfinite(optimizer.weight_decay),
+            "invalid full SFT update");
     double norm = 0.0;
     for (const auto value : gradient) norm += value * value;
     norm = std::sqrt(norm);
@@ -493,11 +566,15 @@ SftModel SftModel::load(std::istream& stream) {
     SftModel model(config);
     for (auto& value : model.parameters_) stream >> value;
     require(static_cast<bool>(stream), "truncated SFT model");
+    require(std::all_of(model.parameters_.begin(), model.parameters_.end(), [](const double value) { return std::isfinite(value); }),
+            "SFT model contains non-finite parameter");
+    stream >> std::ws;
+    require(stream.peek() == std::char_traits<char>::eof(), "SFT model has trailing data");
     return model;
 }
 
 SftModel SftModel::merged(const SftAdapter& adapter) const {
-    require(adapter.spec().base_checkpoint_hash == config_.base_checkpoint_hash, "adapter base checkpoint mismatch during merge");
+    require(adapter_matches_model(adapter, config_), "adapter/model configuration mismatch during merge");
     SftModel output = *this;
     const auto rank = adapter.spec().rank;
     const auto adapter_values = adapter.parameter_vector();
@@ -514,8 +591,13 @@ SftModel SftModel::merged(const SftAdapter& adapter) const {
 }
 
 SftAdapter::SftAdapter(SftAdapterSpec spec, SftModelConfig base_config) : spec_(std::move(spec)), base_config_(std::move(base_config)) {
-    require(!spec_.adapter_id.empty() && !spec_.task_id.empty() && spec_.rank > 0U && spec_.target_module == "output_projection",
+    require(!spec_.adapter_id.empty() && !spec_.task_id.empty() && !spec_.domain.empty() && !spec_.version.empty() &&
+                !spec_.training_manifest_hash.empty() && !spec_.permissions.empty() && spec_.rank > 0U &&
+                spec_.target_module == "output_projection",
             "invalid SFT adapter specification");
+    std::set<std::string> permissions;
+    for (const auto& permission : spec_.permissions) require(!permission.empty() && permissions.insert(permission).second,
+                                                             "SFT adapter has duplicate or empty permission");
     require(spec_.base_checkpoint_hash == base_config_.base_checkpoint_hash && spec_.task_id == base_config_.task_id,
             "adapter does not match base model identity");
     parameters_.assign(base_config_.label_count * spec_.rank + spec_.rank * base_config_.feature_dim, 0.0);
@@ -527,8 +609,12 @@ SftAdapter::SftAdapter(SftAdapterSpec spec, SftModelConfig base_config) : spec_(
 
 std::string SftAdapter::parameter_checksum() const {
     std::ostringstream serialized;
-    serialized << spec_.adapter_id << '|' << spec_.task_id << '|' << spec_.base_checkpoint_hash << '|' << spec_.training_manifest_hash << '|'
-               << spec_.rank << '|' << spec_.target_module << '|';
+    serialized << spec_.adapter_id << '|' << spec_.task_id << '|' << spec_.domain << '|' << spec_.version << '|'
+               << spec_.base_checkpoint_hash << '|' << spec_.training_manifest_hash << '|' << spec_.rank << '|'
+               << spec_.target_module << '|' << base_config_.feature_dim << '|' << base_config_.label_count << '|'
+               << base_config_.seed << '|';
+    for (const auto& permission : spec_.permissions) serialized << permission << ',';
+    serialized << '|';
     serialized << std::setprecision(17);
     for (const auto value : parameters_) serialized << value << ',';
     return sft_hash(serialized.str());
@@ -568,42 +654,56 @@ std::vector<double> SftAdapter::gradients(const SftModel& base, const SftInstruc
 }
 
 void SftAdapter::apply_gradient(const std::vector<double>& gradient, const SftOptimizerConfig& optimizer) {
-    require(gradient.size() == parameters_.size() && optimizer.learning_rate > 0.0, "invalid adapter update");
+    require(gradient.size() == parameters_.size() && optimizer.learning_rate > 0.0 && optimizer.clip_norm > 0.0 &&
+                std::isfinite(optimizer.learning_rate) && std::isfinite(optimizer.clip_norm),
+            "invalid adapter update");
     double norm = 0.0;
     for (const auto value : gradient) norm += value * value;
     norm = std::sqrt(norm);
     const auto scale = norm > optimizer.clip_norm ? optimizer.clip_norm / norm : 1.0;
     for (std::size_t index = 0; index < parameters_.size(); ++index) parameters_[index] -= optimizer.learning_rate * gradient[index] * scale;
+    require(std::all_of(parameters_.begin(), parameters_.end(), [](const double value) { return std::isfinite(value); }),
+            "adapter update produced non-finite parameter");
 }
 
 void SftAdapter::save(std::ostream& stream) const {
-    stream << "CCT_SFT_ADAPTER_V1\n" << std::quoted(spec_.adapter_id) << ' ' << std::quoted(spec_.task_id) << ' '
+    stream << "CCT_SFT_ADAPTER_V2\n" << std::quoted(spec_.adapter_id) << ' ' << std::quoted(spec_.task_id) << ' '
            << std::quoted(spec_.domain) << ' ' << std::quoted(spec_.version) << ' ' << spec_.rank << ' '
            << std::quoted(spec_.target_module) << ' ' << std::quoted(spec_.base_checkpoint_hash) << ' '
-           << std::quoted(spec_.training_manifest_hash) << ' ' << spec_.permissions.size();
+           << std::quoted(spec_.training_manifest_hash) << ' ' << base_config_.feature_dim << ' ' << base_config_.label_count << ' '
+           << base_config_.seed << ' ' << spec_.permissions.size();
     for (const auto& permission : spec_.permissions) stream << ' ' << std::quoted(permission);
     stream << '\n' << std::setprecision(17);
     for (const auto value : parameters_) stream << value << ' ';
     stream << '\n';
+    require(static_cast<bool>(stream), "could not serialize SFT adapter");
 }
 
 SftAdapter SftAdapter::load(std::istream& stream) {
     std::string version;
     stream >> version;
-    require(version == "CCT_SFT_ADAPTER_V1", "unsupported SFT adapter version");
+    require(version == "CCT_SFT_ADAPTER_V2", "unsupported SFT adapter version");
     SftAdapterSpec spec;
+    SftModelConfig base_config;
     std::size_t permission_count = 0;
     stream >> std::quoted(spec.adapter_id) >> std::quoted(spec.task_id) >> std::quoted(spec.domain) >> std::quoted(spec.version)
-           >> spec.rank >> std::quoted(spec.target_module) >> std::quoted(spec.base_checkpoint_hash) >> std::quoted(spec.training_manifest_hash) >> permission_count;
+           >> spec.rank >> std::quoted(spec.target_module) >> std::quoted(spec.base_checkpoint_hash) >> std::quoted(spec.training_manifest_hash)
+           >> base_config.feature_dim >> base_config.label_count >> base_config.seed >> permission_count;
+    base_config.base_checkpoint_hash = spec.base_checkpoint_hash;
+    base_config.task_id = spec.task_id;
+    require(permission_count <= kMaximumSftFields, "SFT adapter permission count exceeds budget");
     for (std::size_t index = 0; index < permission_count; ++index) {
         std::string permission;
         stream >> std::quoted(permission);
         spec.permissions.push_back(std::move(permission));
     }
-    SftModelConfig base_config{spec.base_checkpoint_hash, spec.task_id, 8U, 2U, 0U};
     SftAdapter adapter(spec, base_config);
     for (auto& value : adapter.parameters_) stream >> value;
     require(static_cast<bool>(stream), "truncated SFT adapter");
+    require(std::all_of(adapter.parameters_.begin(), adapter.parameters_.end(), [](const double value) { return std::isfinite(value); }),
+            "SFT adapter contains non-finite parameter");
+    stream >> std::ws;
+    require(stream.peek() == std::char_traits<char>::eof(), "SFT adapter has trailing data");
     return adapter;
 }
 
@@ -612,18 +712,21 @@ void SftAdapterRegistry::register_adapter(const SftAdapter& adapter) {
     adapters_.push_back(adapter);
 }
 
-bool SftAdapterRegistry::authorize(const std::string& adapter_id, const std::string& task_id, const std::string& base_hash,
+bool SftAdapterRegistry::authorize(const std::string& adapter_id, const std::string& task_id, const std::string& domain,
+                                   const std::string& base_hash, const std::string& training_manifest_hash,
                                    const std::string& permission) const {
     for (const auto& adapter : adapters_) {
-        if (adapter.spec().adapter_id != adapter_id || adapter.spec().task_id != task_id || adapter.spec().base_checkpoint_hash != base_hash) continue;
+        if (adapter.spec().adapter_id != adapter_id || adapter.spec().task_id != task_id || adapter.spec().domain != domain ||
+            adapter.spec().base_checkpoint_hash != base_hash || adapter.spec().training_manifest_hash != training_manifest_hash) continue;
         return std::find(adapter.spec().permissions.begin(), adapter.spec().permissions.end(), permission) != adapter.spec().permissions.end();
     }
     return false;
 }
 
 const SftAdapter& SftAdapterRegistry::load_authorized(const std::string& adapter_id, const std::string& task_id,
-                                                       const std::string& base_hash, const std::string& permission) const {
-    require(authorize(adapter_id, task_id, base_hash, permission), "SFT adapter authorization denied");
+                                                       const std::string& domain, const std::string& base_hash,
+                                                       const std::string& training_manifest_hash, const std::string& permission) const {
+    require(authorize(adapter_id, task_id, domain, base_hash, training_manifest_hash, permission), "SFT adapter authorization denied");
     for (const auto& adapter : adapters_) if (adapter.spec().adapter_id == adapter_id) return adapter;
     throw SftError("authorized SFT adapter disappeared");
 }
@@ -656,25 +759,38 @@ SftAdapterRegistry SftAdapterRegistry::deserialize(const std::string& serialized
         std::istringstream adapter_stream(hex_decode(line));
         registry.register_adapter(SftAdapter::load(adapter_stream));
     }
+    input >> std::ws;
+    require(input.peek() == std::char_traits<char>::eof(), "SFT registry has trailing data");
     return registry;
 }
 
 SftPrediction StructuredDecoder::validate(const SftPrediction& original, const SftInstructionExample& example,
                                           const SftTaskSchema& schema) {
     auto prediction = original;
-    if (prediction.output.size() > schema.maximum_output_bytes) {
-        prediction.schema_valid = false;
-        prediction.abstained = schema.allows_abstention;
+    const bool within_output_bound = prediction.output.size() <= schema.maximum_output_bytes;
+    bool structured_shape_valid = true;
+    if (schema.output_kind == SftOutputKind::Label || schema.output_kind == SftOutputKind::BoundedText) {
+        structured_shape_valid = !prediction.output.empty();
+    } else {
+        structured_shape_valid = prediction.output.size() >= 2U && prediction.output.front() == '{' && prediction.output.back() == '}';
     }
-    if (schema.output_kind == SftOutputKind::Json || schema.output_kind == SftOutputKind::Grounded || schema.output_kind == SftOutputKind::Draft) {
-        prediction.schema_valid = prediction.output.size() >= 2U && prediction.output.front() == '{' && prediction.output.back() == '}';
+    if (schema.output_kind == SftOutputKind::Json) {
+        structured_shape_valid = structured_shape_valid && has_json_member(prediction.output, "task_id") &&
+                                 has_json_member(prediction.output, "label") && has_json_member(prediction.output, "confidence") &&
+                                 has_json_member(prediction.output, "source_start") && has_json_member(prediction.output, "source_end");
+    } else if (schema.output_kind == SftOutputKind::Grounded) {
+        structured_shape_valid = structured_shape_valid && has_json_member(prediction.output, "answer") &&
+                                 has_json_member(prediction.output, "citation") && has_json_member(prediction.output, "uncertainty");
+    } else if (schema.output_kind == SftOutputKind::Draft) {
+        structured_shape_valid = structured_shape_valid && prediction.output.find("\"approval_required\":true") != std::string::npos;
     }
+    const bool closed_label_valid = std::find(schema.labels.begin(), schema.labels.end(), prediction.label) != schema.labels.end();
+    prediction.schema_valid = prediction.schema_valid && within_output_bound && structured_shape_valid && closed_label_valid;
+    if (!prediction.schema_valid && schema.allows_abstention) prediction.abstained = true;
     if (schema.output_kind == SftOutputKind::Grounded) {
-        prediction.citation_valid = !schema.requires_citations || (!example.citation_id.empty() && prediction.output.find(example.citation_id) != std::string::npos);
-        if (schema.requires_citations && !prediction.citation_valid) prediction.abstained = schema.allows_abstention;
-    }
-    if (schema.kind == SftTaskKind::WorkflowDrafting && prediction.output.find("approval_required\":true") == std::string::npos) {
-        prediction.schema_valid = false;
+        const auto expected_citation = "\"citation\":\"" + json_escape(example.citation_id) + "\"";
+        prediction.citation_valid = !schema.requires_citations || (!example.citation_id.empty() && prediction.output.find(expected_citation) != std::string::npos);
+        if (schema.requires_citations && !prediction.citation_valid && schema.allows_abstention) prediction.abstained = true;
     }
     return prediction;
 }
