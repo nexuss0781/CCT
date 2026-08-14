@@ -1,1 +1,1 @@
-{"track":"track1","status":"PASS","pretraining":"WikiText-2","fine_tuning":"SQuAD 2.0","final_test_is_frozen":true,"source_attestation":true,"training_authorized":false}
+{"track":"track1","status":"PASS","pretraining":"WikiText-2","fine_tuning":"SQuAD 2.0","final_test_is_frozen":true,"source_attestation":true,"fresh_native_training_replay":true,"durable_checkpoint_lineage":"fresh-training/pretrain_checkpoint.bin->fresh-training/sft_checkpoint.bin","training_report":"training_report.json","training_authorized":false,"approval_required":true}
