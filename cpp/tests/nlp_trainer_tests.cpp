@@ -216,6 +216,24 @@ void test_invalid_masks_and_nonfinite_parameters_fail_closed() {
         rejected = true;
     }
     require(rejected, "all-false loss mask was accepted");
+    invalid = sequence("invalid-binary-mask", {256, 257, 258});
+    invalid.loss_mask[1] = 2U;
+    rejected = false;
+    try {
+        static_cast<void>(model.loss_only(invalid));
+    } catch (const NlpTrainingError&) {
+        rejected = true;
+    }
+    require(rejected, "non-binary loss mask was accepted");
+    invalid = sequence("invalid-identity", {256, 257, 258});
+    invalid.sequence_id.clear();
+    rejected = false;
+    try {
+        static_cast<void>(model.loss_only(invalid));
+    } catch (const NlpTrainingError&) {
+        rejected = true;
+    }
+    require(rejected, "sequence without identity was accepted");
     auto parameters = model.parameter_vector();
     parameters.front() = std::numeric_limits<double>::quiet_NaN();
     rejected = false;
@@ -225,6 +243,78 @@ void test_invalid_masks_and_nonfinite_parameters_fail_closed() {
         rejected = true;
     }
     require(rejected, "non-finite model parameters were accepted");
+
+    NlpTrainerState state;
+    auto before = model.parameter_vector();
+    auto gradients = std::vector<double>(before.size(), 0.0);
+    gradients.front() = std::numeric_limits<double>::quiet_NaN();
+    rejected = false;
+    try {
+        model.apply_gradient(gradients, NlpOptimizerConfig{}, state);
+    } catch (const NlpTrainingError&) {
+        rejected = true;
+    }
+    require(rejected && model.parameter_vector() == before && state.optimizer_step == 0U,
+            "non-finite simple optimizer update was not rejected atomically");
+
+    NlpModelConfig invalid_kind = model_config(NlpModelKind::Track1CctRecurrence);
+    invalid_kind.kind = static_cast<NlpModelKind>(99);
+    rejected = false;
+    try {
+        NextTokenModel invalid_model(invalid_kind);
+        static_cast<void>(invalid_model);
+    } catch (const NlpTrainingError&) {
+        rejected = true;
+    }
+    require(rejected, "unsupported model kind was accepted");
+
+    NlpModelConfig oversized = model_config(NlpModelKind::Track1CctRecurrence);
+    oversized.vocabulary_size = 1'000'000U;
+    oversized.embedding_dim = 4096U;
+    oversized.hidden_dim = 4096U;
+    rejected = false;
+    try {
+        NextTokenModel invalid_model(oversized);
+        static_cast<void>(invalid_model);
+    } catch (const NlpTrainingError&) {
+        rejected = true;
+    }
+    require(rejected, "oversized model parameter allocation was accepted");
+}
+
+void test_dataset_context_budget_and_optimizer_domain_fail_closed() {
+    const auto data = dataset();
+    NlpOptimizerConfig optimizer;
+    optimizer.warmup_steps = 1U;
+    optimizer.total_steps = 1U;
+    auto trainer = NlpTrainer(model_config(NlpModelKind::Track1CctRecurrence, 37), optimizer, data.tokenizer_hash, data.dataset_hash);
+    auto mismatched = data;
+    mismatched.context_length = 7U;
+    bool rejected = false;
+    try {
+        static_cast<void>(trainer.train_step(mismatched));
+    } catch (const NlpTrainingError&) {
+        rejected = true;
+    }
+    require(rejected, "dataset/model context mismatch was accepted");
+    static_cast<void>(trainer.train_step(data));
+    rejected = false;
+    try {
+        static_cast<void>(trainer.train_step(data));
+    } catch (const NlpTrainingError&) {
+        rejected = true;
+    }
+    require(rejected, "optimizer budget overrun was accepted");
+    NlpOptimizerConfig invalid_optimizer;
+    invalid_optimizer.learning_rate = std::numeric_limits<double>::quiet_NaN();
+    rejected = false;
+    try {
+        NlpTrainer invalid_trainer(model_config(NlpModelKind::Track1CctRecurrence, 39), invalid_optimizer, data.tokenizer_hash, data.dataset_hash);
+        static_cast<void>(invalid_trainer);
+    } catch (const NlpTrainingError&) {
+        rejected = true;
+    }
+    require(rejected, "non-finite optimizer configuration was accepted");
 }
 
 }  // namespace
@@ -237,7 +327,8 @@ int main() {
         {"optimizer_direction_and_schedule", test_optimizer_direction_and_schedule},
         {"deterministic_initialization_and_controls", test_deterministic_initialization_and_controls},
         {"checkpoint_resume_exactness_and_fail_closed", test_checkpoint_resume_exactness_and_fail_closed},
-        {"invalid_masks_and_nonfinite_parameters_fail_closed", test_invalid_masks_and_nonfinite_parameters_fail_closed}};
+        {"invalid_masks_and_nonfinite_parameters_fail_closed", test_invalid_masks_and_nonfinite_parameters_fail_closed},
+        {"dataset_context_budget_and_optimizer_domain_fail_closed", test_dataset_context_budget_and_optimizer_domain_fail_closed}};
     std::size_t passed = 0;
     for (const auto& [name, test] : tests) {
         try {

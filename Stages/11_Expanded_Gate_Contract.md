@@ -5,7 +5,7 @@
 **Predecessor:** Stage 10 — Tokenizer and Representation Engine
 **Successor:** Stage 12 — Scaling and Accelerator Systems
 **Implementation boundary:** Native C++20 only; no Python trainer, optimizer, dataset reader, or gate is accepted.
-**Gate status:** Approval received; implementation in progress.
+**Gate status:** Native C++20 implementation complete; the current formal gate is PASS with thirteen mandatory checks and explicit approval still required for Stage 12.
 
 ## 1. Gate purpose
 
@@ -61,10 +61,10 @@ The harness interrupts training at cursors `0`, `1`, and a mid-epoch position, s
 | Objective | Stable finite cross-entropy, token count, and perplexity with exact loss masks |
 | Optimization | All three CCT seeds improve held-out validation loss; mean improvement ≥5% |
 | Gradient | Analytic/finite-difference maximum relative error ≤1e-4, with absolute tolerance ≤1e-6 near zero |
-| Stability | No NaN/Inf, non-finite logits, or accepted divergent run |
-| Checkpoint | Canonical checkpoint hash, complete fields, malformed/incompatible rejection |
+| Stability | No NaN/Inf, non-finite logits, non-binary masks, unsupported model kinds, or accepted divergent run |
+| Checkpoint | Canonical checkpoint hash, complete fields, malformed/truncated/corrupt/wrong-identity rejection |
 | Resume | Cursor-0, cursor-1, and mid-epoch interruption agree with uninterrupted training within 1e-12 |
-| Data cursor | No duplicate or skipped record beyond declared final cursor policy |
+| Data cursor | No duplicate or skipped record beyond declared final cursor policy; model/dataset context and optimizer budget are enforced |
 | Baselines | Dense attention, GRU, and diagonal SSM all complete under identical declared budgets |
 | Capability | Selected CCT beats its no-training control by ≥1% validation-loss improvement |
 | Regression | Complete prior Stage 0–10 CI remains green |
@@ -76,7 +76,7 @@ Additional hard limits are fixed for the gate environment: the selected CCT run 
 
 ## 8. Adversarial and failure-path requirements
 
-The harness must attempt evaluator-only dataset construction, changed tokenizer hash, changed corpus hash, invalid target ID, all-false loss masks, malformed checkpoint, truncated checkpoint, incompatible model kind, non-finite parameter/gradient injection, over-capacity context, wrong batch shape, cursor regression, and cross-document target leakage. Each must reject deterministically or record a fail-closed diagnostic.
+The harness must attempt evaluator-only dataset construction, duplicate record identity, changed tokenizer hash, changed corpus hash, invalid target ID, non-binary/all-false loss masks, malformed/truncated/corrupt checkpoint, trailing checkpoint data, incompatible model kind, non-finite parameter/gradient/optimizer injection, over-capacity model allocation, dataset/model context mismatch, optimizer-budget overrun, wrong batch shape, cursor regression, and cross-document target leakage. Each must reject deterministically or record a fail-closed diagnostic.
 
 The harness must verify that changing validation or evaluator content after model construction cannot mutate train parameters, dataset hash, tokenizer hash, or checkpoint identity. The baseline accounting must verify model names, parameter counts, context length, optimizer step budget, token budget, and seed metadata rather than comparing only final loss.
 
@@ -87,7 +87,7 @@ The gate writes all artifacts beneath `artifacts/stage-11/cpp-gate/`:
 | Artifact | Required contents |
 |---|---|
 | `checks.json` | One record per mandatory check with status, duration, and measured evidence |
-| `metrics.json` | Objective, loss, perplexity, gradient, stability, throughput, memory, and parameter metrics |
+| `metrics.json` | Mandatory-check count, objective, loss, perplexity, gradient, stability, throughput, memory, and parameter metrics |
 | `seed_comparison.json` | Three-seed CCT initialization/final validation table |
 | `baseline_comparison.json` | Dense attention, GRU, diagonal SSM, and CCT matched accounting |
 | `checkpoint_report.json` | Checkpoint fields, hashes, interruption cursors, and resume equivalence |

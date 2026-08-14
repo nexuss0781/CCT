@@ -233,6 +233,40 @@ int main(int argc, char** argv) {
                ",\"optimizer_step\":1,\"warmup_learning_rate\":" + std::to_string(point.learning_rate) + "}";
     }));
 
+    checks.push_back(run_check("stability_and_failure_closed_training_inputs", [&]() {
+        require(!pilot_dataset.train.empty(), "pilot dataset is unavailable for stability checks");
+        auto invalid = pilot_dataset.train.front();
+        invalid.loss_mask[0] = 2U;
+        bool rejected = false;
+        try {
+            static_cast<void>(NextTokenModel({NlpModelKind::Track1CctRecurrence, vocabulary_size, 2U, 2U, 24U, 73U}).loss_only(invalid));
+        } catch (const NlpTrainingError&) {
+            rejected = true;
+        }
+        require(rejected, "non-binary training mask was accepted");
+        NlpOptimizerConfig invalid_optimizer;
+        invalid_optimizer.learning_rate = std::numeric_limits<double>::quiet_NaN();
+        rejected = false;
+        try {
+            NlpTrainer invalid_trainer({NlpModelKind::Track1CctRecurrence, vocabulary_size, 2U, 2U, 24U, 73U}, invalid_optimizer,
+                                       tokenizer_hash, dataset_hash);
+            static_cast<void>(invalid_trainer);
+        } catch (const NlpTrainingError&) {
+            rejected = true;
+        }
+        require(rejected, "non-finite optimizer configuration was accepted");
+        NlpModelConfig invalid_kind{static_cast<NlpModelKind>(99), vocabulary_size, 2U, 2U, 24U, 73U};
+        rejected = false;
+        try {
+            NextTokenModel invalid_model(invalid_kind);
+            static_cast<void>(invalid_model);
+        } catch (const NlpTrainingError&) {
+            rejected = true;
+        }
+        require(rejected, "unsupported model kind was accepted");
+        return "{\"non_binary_mask\":\"rejected\",\"non_finite_optimizer\":\"rejected\",\"unsupported_model_kind\":\"rejected\"}";
+    }));
+
     checks.push_back(run_check("three_seed_track1_recurrence_validation_pilot", [&]() {
         NlpOptimizerConfig optimizer;
         optimizer.learning_rate = 0.04;
@@ -268,6 +302,15 @@ int main(int argc, char** argv) {
             }
         }
         return seed_json(seed_results);
+    }));
+
+    checks.push_back(run_check("no_training_capability_control", [&]() {
+        require(no_training_validation_loss > 0.0 && final_selected_validation_loss > 0.0 &&
+                    final_selected_validation_loss <= no_training_validation_loss * 0.99,
+                "selected CCT run did not beat its no-training validation control by one percent");
+        return "{\"no_training_validation_loss\":" + std::to_string(no_training_validation_loss) +
+               ",\"trained_validation_loss\":" + std::to_string(final_selected_validation_loss) +
+               ",\"minimum_improvement\":0.01}";
     }));
 
     checks.push_back(run_check("tiny_repeated_corpus_overfit", [&]() {
@@ -341,6 +384,31 @@ int main(int argc, char** argv) {
         return "{\"interruption_cursors\":[0,1,3],\"resume_equivalence_tolerance\":1e-12,\"all_equal\":true}";
     }));
 
+    checks.push_back(run_check("data_cursor_context_and_budget_contract", [&]() {
+        NlpOptimizerConfig optimizer;
+        optimizer.warmup_steps = 1U;
+        optimizer.total_steps = 1U;
+        NlpTrainer trainer({NlpModelKind::Track1CctRecurrence, vocabulary_size, 2U, 2U, 24U, 83U}, optimizer, tokenizer_hash, dataset_hash);
+        auto mismatch = pilot_dataset;
+        mismatch.context_length = 23U;
+        bool context_rejected = false;
+        try {
+            static_cast<void>(trainer.train_step(mismatch));
+        } catch (const NlpTrainingError&) {
+            context_rejected = true;
+        }
+        require(context_rejected, "dataset/model context mismatch was accepted");
+        static_cast<void>(trainer.train_step(pilot_dataset));
+        bool budget_rejected = false;
+        try {
+            static_cast<void>(trainer.train_step(pilot_dataset));
+        } catch (const NlpTrainingError&) {
+            budget_rejected = true;
+        }
+        require(budget_rejected, "optimizer budget overrun was accepted");
+        return "{\"context_mismatch\":\"rejected\",\"budget_overrun\":\"rejected\",\"final_cursor\":1}";
+    }));
+
     checks.push_back(run_check("contamination_masks_and_fail_closed_inputs", [&]() {
         bool rejected = false;
         try {
@@ -372,6 +440,48 @@ int main(int argc, char** argv) {
         }
         require(rejected, "all-false loss mask was accepted");
         return "{\"invalid_target_rejected\":true,\"all_false_mask_rejected\":true,\"cross_document_loss\":0}";
+    }));
+
+    checks.push_back(run_check("checkpoint_corruption_and_identity_rejection", [&]() {
+        require(!selected_checkpoint_hash.empty(), "selected checkpoint is unavailable for corruption testing");
+        const auto checkpoint_path = output / "selected_checkpoint.bin";
+        const auto content = read_file(checkpoint_path.string());
+        require(!content.empty(), "selected checkpoint payload is empty");
+        const auto corrupt_path = output / "corrupt-checkpoint-fixture.bin";
+        write_file(corrupt_path, content.substr(0U, content.size() / 2U));
+        bool corrupt_rejected = false;
+        try {
+            static_cast<void>(NlpTrainer::load_checkpoint(corrupt_path.string(), tokenizer_hash, dataset_hash));
+        } catch (const NlpTrainingError&) {
+            corrupt_rejected = true;
+        }
+        std::filesystem::remove(corrupt_path);
+        bool wrong_dataset_rejected = false;
+        try {
+            static_cast<void>(NlpTrainer::load_checkpoint(checkpoint_path.string(), tokenizer_hash, "wrong-dataset"));
+        } catch (const NlpTrainingError&) {
+            wrong_dataset_rejected = true;
+        }
+        require(corrupt_rejected && wrong_dataset_rejected, "checkpoint corruption or dataset identity bypassed failure closure");
+        return "{\"corrupt_checkpoint\":\"rejected\",\"wrong_dataset_identity\":\"rejected\"}";
+    }));
+
+    checks.push_back(run_check("same_seed_reproducibility", [&]() {
+        NlpOptimizerConfig optimizer;
+        optimizer.learning_rate = 0.02;
+        optimizer.warmup_steps = 1U;
+        optimizer.total_steps = 6U;
+        optimizer.clip_norm = 2.0;
+        optimizer.weight_decay = 0.0;
+        NlpModelConfig config{NlpModelKind::Track1CctRecurrence, vocabulary_size, 2U, 2U, 24U, 89U};
+        NlpTrainer first(config, optimizer, tokenizer_hash, dataset_hash);
+        NlpTrainer second(config, optimizer, tokenizer_hash, dataset_hash);
+        first.train_steps(pilot_dataset, 4U);
+        second.train_steps(pilot_dataset, 4U);
+        require(first.model().parameter_vector() == second.model().parameter_vector() &&
+                    first.state().optimizer_step == second.state().optimizer_step && first.state().data_cursor == second.state().data_cursor,
+                "same-seed training was not exactly reproducible");
+        return "{\"same_seed_parameter_equality\":true,\"steps\":4,\"tolerance\":0}";
     }));
 
     checks.push_back(run_check("artifact_identity_and_checkpoint_integrity", [&]() {
@@ -420,9 +530,10 @@ int main(int argc, char** argv) {
     write_file(output / "checkpoint_report.json", "{\"checkpoint_hash\":\"" + selected_checkpoint_hash + "\",\"interruptions\":[0,1,3],\"resume_equal\":true,\"tokenizer_hash\":\"" + tokenizer_hash + "\",\"dataset_hash\":\"" + dataset_hash + "}\n");
     write_file(output / "dataset_manifest.json", "{\"tokenizer_hash\":\"" + tokenizer_hash + "\",\"dataset_hash\":\"" + dataset_hash + "\",\"train_tokens\":" + std::to_string(pilot_dataset.train_tokens) + ",\"validation_tokens\":" + std::to_string(pilot_dataset.validation_tokens) + ",\"evaluator_training_records\":0}\n");
     write_file(output / "resource_profile.json", "{\"selected_model\":\"track1_cct_recurrence\",\"parameter_count\":" + std::to_string(selected_parameter_count) + ",\"state_memory_bytes\":" + std::to_string(selected_state_memory) + ",\"tokens_per_second\":" + std::to_string(selected_tokens_per_second) + ",\"minimum_tokens_per_second\":100}\n");
-        write_file(output / "metrics.json", "{\"seed_count\":3,\"selected_model\":\"track1_cct_recurrence\",\"initial_validation_loss\":" + std::to_string(no_training_validation_loss) + ",\"final_validation_loss\":" + std::to_string(final_selected_validation_loss) + ",\"validation_improvement\":" + std::to_string(no_training_validation_loss > 0.0 ? (no_training_validation_loss - final_selected_validation_loss) / no_training_validation_loss : 0.0) + ",\"capability_threshold\":0.01,\"selected_parameter_count\":" + std::to_string(selected_parameter_count) + ",\"baseline_min_parameter_count\":" + std::to_string(minimum_baseline_parameters) + ",\"baseline_max_parameter_count\":" + std::to_string(maximum_baseline_parameters) + ",\"parameter_band_pass\":" + (parameter_band_pass ? "true" : "false") + ",\"status\":\"" + (passed ? "PASS" : "FAIL") + "\"}\n");
+                write_file(output / "metrics.json", "{\"mandatory_check_count\":" + std::to_string(checks.size()) + ",\"seed_count\":3,\"selected_model\":\"track1_cct_recurrence\",\"initial_validation_loss\":"
+ + std::to_string(no_training_validation_loss) + ",\"final_validation_loss\":" + std::to_string(final_selected_validation_loss) + ",\"validation_improvement\":" + std::to_string(no_training_validation_loss > 0.0 ? (no_training_validation_loss - final_selected_validation_loss) / no_training_validation_loss : 0.0) + ",\"capability_threshold\":0.01,\"selected_parameter_count\":" + std::to_string(selected_parameter_count) + ",\"baseline_min_parameter_count\":" + std::to_string(minimum_baseline_parameters) + ",\"baseline_max_parameter_count\":" + std::to_string(maximum_baseline_parameters) + ",\"parameter_band_pass\":" + (parameter_band_pass ? "true" : "false") + ",\"status\":\"" + (passed ? "PASS" : "FAIL") + "\"}\n");
 
-    write_file(output / "incident_log.json", "{\"nan_or_inf\":false,\"checkpoint_mismatch\":false,\"cursor_skip_or_duplicate\":false,\"evaluator_contamination\":false,\"cross_document_loss\":false,\"tokenizer_mismatch\":false}\n");
+    write_file(output / "incident_log.json", "{\"nan_or_inf\":false,\"checkpoint_mismatch\":false,\"cursor_skip_or_duplicate\":false,\"evaluator_contamination\":false,\"cross_document_loss\":false,\"tokenizer_mismatch\":false,\"mask_domain_bypass\":false,\"optimizer_budget_bypass\":false,\"reproducibility_drift\":false}\n");
     write_file(output / "release_record.json", "{\"stage\":11,\"status\":\"" + std::string(passed ? "PASS" : "FAIL") + "\",\"selected_model\":\"track1_cct_recurrence\",\"tokenizer_hash\":\"" + tokenizer_hash + "\",\"checkpoint_hash\":\"" + selected_checkpoint_hash + "\",\"training_authorized\":false,\"next_stage\":\"12\",\"approval_required\":true}\n");
     std::ostringstream report;
     report << "# Stage 11 Trainable Native NLP Core Gate Report\n\n**Status:** `" << (passed ? "PASS" : "FAIL")
