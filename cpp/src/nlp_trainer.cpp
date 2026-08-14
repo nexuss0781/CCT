@@ -769,7 +769,10 @@ void NextTokenModel::save_model(std::ostream& stream) const {
     stream << "NLP_MODEL_V3\n" << model_kind_number(config_.kind) << ' ' << config_.vocabulary_size << ' '
            << config_.embedding_dim << ' ' << config_.hidden_dim << ' ' << config_.context_length << ' ' << config_.seed << '\n'
            << parameters_.size() << '\n' << std::setprecision(17);
-    for (const auto value : parameters_) stream << value << ' ';
+    for (std::size_t index = 0U; index < parameters_.size(); ++index) {
+        if (index > 0U) stream << ' ';
+        stream << parameters_[index];
+    }
     stream << '\n';
 }
 
@@ -907,11 +910,74 @@ NlpTrainingPoint NlpTrainer::train_step(const NlpDataset& dataset) {
     return point;
 }
 
+NlpTrainingPoint NlpTrainer::train_preference_step(const NlpPreferencePair& pair, const double margin) {
+    const auto training_started = std::chrono::steady_clock::now();
+    require(std::isfinite(margin) && margin >= 0.0, "NLP preference margin is invalid");
+    require(state_.optimizer_step < optimizer_config_.total_steps, "NLP preference optimizer budget is exhausted");
+    const auto preferred = model_.loss_and_gradients(pair.preferred);
+    const auto rejected = model_.loss_and_gradients(pair.rejected);
+    require(preferred.gradients.size() == rejected.gradients.size() && preferred.token_count > 0U && rejected.token_count > 0U,
+            "NLP preference gradient shape or token count is invalid");
+    const auto raw_margin_loss = preferred.cross_entropy - rejected.cross_entropy + margin;
+    require(std::isfinite(raw_margin_loss), "NLP preference loss is non-finite");
+    std::vector<double> gradients(preferred.gradients.size(), 0.0);
+    if (raw_margin_loss > 0.0) {
+        for (std::size_t index = 0U; index < gradients.size(); ++index) gradients[index] = preferred.gradients[index] - rejected.gradients[index];
+    }
+    require_finite(gradients, "NLP preference gradient is non-finite");
+    const auto gradient_norm = vector_norm(gradients);
+    const auto scale = std::min(1.0, optimizer_config_.clip_norm / std::max(gradient_norm, 1e-12));
+    const auto learning_rate = scheduled_learning_rate();
+    const auto step = state_.optimizer_step + 1U;
+    auto parameters = model_.parameter_vector();
+    auto next_first_moment = first_moment_;
+    auto next_second_moment = second_moment_;
+    for (std::size_t index = 0U; index < parameters.size(); ++index) {
+        const auto gradient = gradients[index] * scale;
+        next_first_moment[index] = optimizer_config_.beta1 * next_first_moment[index] + (1.0 - optimizer_config_.beta1) * gradient;
+        next_second_moment[index] = optimizer_config_.beta2 * next_second_moment[index] + (1.0 - optimizer_config_.beta2) * gradient * gradient;
+        const auto first_correction = 1.0 - std::pow(optimizer_config_.beta1, static_cast<double>(step));
+        const auto second_correction = 1.0 - std::pow(optimizer_config_.beta2, static_cast<double>(step));
+        const auto first_hat = next_first_moment[index] / std::max(first_correction, 1e-12);
+        const auto second_hat = next_second_moment[index] / std::max(second_correction, 1e-12);
+        parameters[index] -= learning_rate * (first_hat / (std::sqrt(second_hat) + optimizer_config_.epsilon) + optimizer_config_.weight_decay * parameters[index]);
+    }
+    require_finite(next_first_moment, "NLP preference optimizer first moment is non-finite");
+    require_finite(next_second_moment, "NLP preference optimizer second moment is non-finite");
+    require_finite(parameters, "NLP preference optimizer parameters are non-finite");
+    auto candidate_model = model_;
+    candidate_model.set_parameter_vector(parameters);
+    first_moment_ = std::move(next_first_moment);
+    second_moment_ = std::move(next_second_moment);
+    model_ = std::move(candidate_model);
+    state_.optimizer_step = step;
+    state_.data_cursor += 1U;
+    NlpTrainingPoint point;
+    point.step = state_.optimizer_step;
+    point.data_cursor = state_.data_cursor;
+    point.learning_rate = learning_rate;
+    point.train_loss = std::max(0.0, raw_margin_loss);
+    point.gradient_norm = gradient_norm;
+    point.token_count = preferred.token_count + rejected.token_count;
+    point.training_elapsed_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - training_started).count();
+    point.validation_performed = false;
+    history_.push_back(point);
+    return point;
+}
+
 std::vector<NlpTrainingPoint> NlpTrainer::train_steps(const NlpDataset& dataset, const std::size_t steps) {
     require(steps > 0U, "NLP training step count must be positive");
     std::vector<NlpTrainingPoint> points;
     points.reserve(steps);
     for (std::size_t index = 0; index < steps; ++index) points.push_back(train_step(dataset));
+    return points;
+}
+
+std::vector<NlpTrainingPoint> NlpTrainer::train_preference_steps(const std::vector<NlpPreferencePair>& pairs, const std::size_t steps, const double margin) {
+    require(!pairs.empty() && steps > 0U, "NLP preference training requires pairs and positive steps");
+    std::vector<NlpTrainingPoint> points;
+    points.reserve(steps);
+    for (std::size_t index = 0U; index < steps; ++index) points.push_back(train_preference_step(pairs[state_.data_cursor % pairs.size()], margin));
     return points;
 }
 
@@ -937,14 +1003,19 @@ void NlpTrainer::save_checkpoint(const std::string& path) const {
     for (const auto& point : history_) {
         serialized << "history=" << point.step << ' ' << point.data_cursor << ' ' << point.learning_rate << ' '
                    << point.train_loss << ' ' << point.validation_loss << ' ' << point.validation_perplexity << ' '
-                   << point.gradient_norm << ' ' << point.token_count << ' ' << (point.validation_performed ? 1 : 0) << ' '
-                   << point.training_elapsed_seconds << ' ' << point.validation_elapsed_seconds << "\n";
+                   << point.gradient_norm << ' ' << point.token_count << ' ' << (point.validation_performed ? 1 : 0) << " 0 0\n";
     }
     serialized << "moments_count=" << first_moment_.size() << "\n";
     serialized << "first_moment=";
-    for (const auto value : first_moment_) serialized << value << ' ';
+    for (std::size_t index = 0U; index < first_moment_.size(); ++index) {
+        if (index > 0U) serialized << ' ';
+        serialized << first_moment_[index];
+    }
     serialized << "\nsecond_moment=";
-    for (const auto value : second_moment_) serialized << value << ' ';
+    for (std::size_t index = 0U; index < second_moment_.size(); ++index) {
+        if (index > 0U) serialized << ' ';
+        serialized << second_moment_[index];
+    }
     serialized << "\nmodel_begin\n";
     model_.save_model(serialized);
     serialized << "end=1\n";
