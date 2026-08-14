@@ -1,3 +1,5 @@
+#include "cct/nlp_trainer.hpp"
+#include "cct/tokenizer.hpp"
 #include "cct/track1.hpp"
 
 #include <algorithm>
@@ -35,6 +37,34 @@ void write_file(const std::filesystem::path& path, const std::string& content) {
     require(static_cast<bool>(output), "cannot write fixture " + path.string());
     output << content;
     require(static_cast<bool>(output), "cannot finish fixture " + path.string());
+}
+
+std::string read_file(const std::filesystem::path& path) {
+    std::ifstream input(path, std::ios::binary);
+    require(static_cast<bool>(input), "cannot read Track 1 gate artifact: " + path.string());
+    std::ostringstream content;
+    content << input.rdbuf();
+    return content.str();
+}
+
+std::string string_field(const std::string& object, const std::string& key) {
+    const auto marker = "\"" + key + "\":\"";
+    const auto start = object.find(marker);
+    require(start != std::string::npos, "Track 1 training report field is missing: " + key);
+    const auto value_start = start + marker.size();
+    const auto value_end = object.find('"', value_start);
+    require(value_end != std::string::npos, "Track 1 training report field is unterminated: " + key);
+    return object.substr(value_start, value_end - value_start);
+}
+
+std::string shell_quote(const std::string& value) {
+    std::string quoted = "'";
+    for (const char character : value) {
+        if (character == '\'') quoted += "'\\''";
+        else quoted.push_back(character);
+    }
+    quoted.push_back('\'');
+    return quoted;
 }
 
 std::string escape_json(const std::string& value) {
@@ -111,6 +141,7 @@ int main(int argc, char** argv) {
     const auto fixture_root = output / "fixture";
     create_fixture(fixture_root);
     std::vector<Check> checks;
+    std::string fresh_training_report;
     Track1Pipeline* prepared = nullptr;
     Track1Pipeline fixture_pipeline(fixture_config(fixture_root));
 
@@ -186,6 +217,45 @@ int main(int argc, char** argv) {
         return "{\"malformed_source_rejected\":true,\"silent_skip\":false}";
     }));
 
+    checks.push_back(run_check("fresh_native_training_and_checkpoint_lineage", [&]() {
+        require(prepared != nullptr, "preparation prerequisite missing for Track 1 training replay");
+        const auto training_root = output / "fresh-training";
+        std::filesystem::remove_all(training_root);
+        const auto executable = std::filesystem::exists("build-seq/cct_track1_train") ? std::filesystem::path("build-seq/cct_track1_train") :
+                                std::filesystem::path("build-cpp/cct_track1_train");
+        require(std::filesystem::exists(executable), "native Track 1 training executable is unavailable");
+        const auto command = shell_quote(std::filesystem::absolute(executable).string()) + " --input " + shell_quote(std::filesystem::absolute(fixture_root).string()) +
+                             " --output " + shell_quote(std::filesystem::absolute(training_root).string()) +
+                             " --tokenizer " + shell_quote(std::filesystem::absolute("data/stage-10/tokenizer_snapshot.bin").string()) +
+                             " --pretrain-steps 4 --sft-steps 4 --context 16 --embedding 2 --hidden 2"
+                             " --pretrain-selection-validation-limit 4 --sft-selection-evaluation-limit 2 --final-test-limit 4"
+                             " --sft-context-bytes 128 --seed 1701";
+        require(std::system(command.c_str()) == 0, "fresh native Track 1 training replay failed");
+        const auto report_path = training_root / "training_report.json";
+        const auto report = read_file(report_path);
+        fresh_training_report = report;
+        require(report.find("\"status\":\"PASS\"") != std::string::npos &&
+                    report.find("\"training_authorized\":false") != std::string::npos &&
+                    report.find("\"durable_checkpoint_paths\":true") != std::string::npos &&
+                    report.find("\"checkpoint_lineage\":\"pretrain_checkpoint->sft_checkpoint\"") != std::string::npos &&
+                    report.find("\"final_test_target_tokens\":0") == std::string::npos,
+                "fresh Track 1 training report is incomplete or overclaims authorization");
+        const auto tokenizer_hash = Tokenizer::from_snapshot(read_file("data/stage-10/tokenizer_snapshot.bin")).snapshot_hash();
+        const auto pretrain_dataset_hash = string_field(report, "pretrain_dataset_hash");
+        const auto sft_dataset_hash = string_field(report, "sft_dataset_hash");
+        const auto pretrain_checkpoint = training_root / "pretrain_checkpoint.bin";
+        const auto sft_checkpoint = training_root / "sft_checkpoint.bin";
+        require(std::filesystem::file_size(pretrain_checkpoint) > 0U && std::filesystem::file_size(sft_checkpoint) > 0U,
+                "fresh Track 1 durable checkpoints are missing or empty");
+        const auto loaded_pretrain = NlpTrainer::load_checkpoint(pretrain_checkpoint.string(), tokenizer_hash, pretrain_dataset_hash);
+        const auto loaded_sft = NlpTrainer::load_checkpoint(sft_checkpoint.string(), tokenizer_hash, sft_dataset_hash);
+        require(loaded_pretrain.checkpoint_info().optimizer_step == 4U && loaded_sft.checkpoint_info().optimizer_step == 4U &&
+                    loaded_pretrain.checkpoint_info().data_cursor == 4U && loaded_sft.checkpoint_info().data_cursor == 4U &&
+                    loaded_pretrain.model().parameter_vector().size() == loaded_sft.model().parameter_vector().size(),
+                "fresh Track 1 checkpoint lineage or cursor recovery is invalid");
+        return "{\"training_replay\":\"PASS\",\"pretrain_checkpoint_reload\":true,\"sft_checkpoint_reload\":true,\"lineage\":\"pretrain->sft\",\"final_test_used_for_updates\":false}";
+    }));
+
     checks.push_back(run_check("evaluation_contract_complete", [&]() {
         require(prepared != nullptr && prepared->evaluation_contract().pretrain_metrics.size() == 3U &&
                     prepared->evaluation_contract().qa_metrics.size() == 7U && prepared->evaluation_contract().required_slices.size() == 3U &&
@@ -210,8 +280,9 @@ int main(int argc, char** argv) {
     write_file(output / "source_manifest.json", prepared == nullptr ? "{}\n" : prepared->serialize_manifest());
     write_file(output / "preparation_report.json", prepared == nullptr ? "{}\n" : prepared->serialize_report());
     write_file(output / "evaluation_contract.json", prepared == nullptr ? "{}\n" : prepared->serialize_evaluation_contract());
-    write_file(output / "README.md", "# Track 1 Acquisition Gate\n\nThis gate uses local copies of pinned Hugging Face response pages and validates the native bounded JSON parser, exact direct-file row counts, unique temporary-file publication, durable cache-integrity sidecars, source-attestation digests, byte-cap behavior, balanced selection, final-test isolation, deterministic replay, and fail-closed acquisition controls used by remote Track 1 preparation.\n");
-    write_file(output / "release_record.json", "{\"track\":\"track1\",\"status\":\"" + std::string(passed ? "PASS" : "FAIL") + "\",\"pretraining\":\"WikiText-2\",\"fine_tuning\":\"SQuAD 2.0\",\"final_test_is_frozen\":true,\"source_attestation\":true,\"training_authorized\":false}\n");
+    write_file(output / "training_report.json", fresh_training_report.empty() ? "{}\n" : fresh_training_report + "\n");
+    write_file(output / "README.md", "# Track 1 Acquisition and Training Gate\n\nThis gate validates pinned-source provenance, native bounded acquisition and parsing, exact row and byte-cap behavior, balanced split selection, final-test isolation, deterministic replay, fail-closed cache/source controls, a fresh native pretraining-to-SFT replay, durable checkpoint reload, checkpoint lineage, target-span masking, and bounded answer-target evaluation. The fixture is a governed local reproduction of the production native path; the report does not claim broad language competence or exact-answer quality.\n");
+    write_file(output / "release_record.json", "{\"track\":\"track1\",\"status\":\"" + std::string(passed ? "PASS" : "FAIL") + "\",\"pretraining\":\"WikiText-2\",\"fine_tuning\":\"SQuAD 2.0\",\"final_test_is_frozen\":true,\"source_attestation\":true,\"fresh_native_training_replay\":true,\"durable_checkpoint_lineage\":\"fresh-training/pretrain_checkpoint.bin->fresh-training/sft_checkpoint.bin\",\"training_report\":\"training_report.json\",\"training_authorized\":false,\"approval_required\":true}\n");
     std::cout << "{\"status\":\"" << (passed ? "PASS" : "FAIL") << "\",\"checks\":" << checks.size() << ",\"output\":\"" << output.string() << "\"}\n";
     return passed ? 0 : 1;
 }

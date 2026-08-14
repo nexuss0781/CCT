@@ -425,7 +425,7 @@ The declared L1-1 scope is the native scalar-field substrate; sequence-state bat
 
 **Dependency:** L1-5 `PASS` and frozen tokenizer identity.
 
-**Current status:** `REVALIDATE` — Track 1 preparation and bounded training are recorded as PASS for their declared contracts; a fresh replay is required after changes or in a new environment.
+**Current status:** `[x] PASS` for the declared Track 1 real-language acquisition and bounded native training contract. The fresh native gate now validates governed preparation, split isolation, deterministic replay, parser/cache failure closure, a fresh pretraining-to-SFT replay, durable checkpoint reload and lineage, target-span masking, frozen final-test isolation, and bounded answer-target metrics. It does not claim exact-answer quality or broad language competence. Transition to L1-7 remains approval-gated.
 
 ## L1-6 implementation tasks
 
@@ -468,8 +468,8 @@ The declared L1-1 scope is the native scalar-field substrate; sequence-state bat
 - [x] Verify no malformed rows and no train/evaluation/final overlap.
 - [x] Verify deterministic manifests under the same seed and source.
 - [x] Verify checkpoint reload under declared identity.
-- [ ] Re-run the complete Track 1 preparation and training command from a fresh Level 1 release checkout.
-- [ ] Preserve fresh non-temporary checkpoint paths in the release artifact bundle.
+- [x] Re-run the complete bounded Track 1 preparation and native training command through the independent gate from the current clean release source.
+- [x] Preserve fresh non-temporary pretraining and SFT checkpoint paths plus the training report in the release artifact bundle.
 
 ## L1-6 artifacts
 
@@ -478,15 +478,15 @@ The declared L1-1 scope is the native scalar-field substrate; sequence-state bat
 - [x] `artifacts/track1/cpp-gate/evaluation_contract.json`
 - [x] `artifacts/track1/real-gem-smoke/preparation_report.json`
 - [x] `artifacts/track1/real-training/training_report.json`
-- [ ] Fresh release-bound preparation report.
-- [ ] Fresh release-bound training report with durable checkpoint references.
+- [x] Fresh release-bound preparation report under `artifacts/track1/cpp-gate/preparation_report.json`.
+- [x] Fresh release-bound training report with durable checkpoint references under `artifacts/track1/cpp-gate/training_report.json` and `fresh-training/`.
 
 ## L1-6 gate and transition
 
 - [x] Record Track 1 preparation `PASS` for the declared contract.
 - [x] Record bounded native training `PASS` for the declared target-token contract.
-- [ ] Run the fresh release-candidate Track 1 gate after any training or data change.
-- [ ] Record transition approval for L1-7 instruction adaptation.
+- [x] Run the fresh release-candidate Track 1 gate after the training, parser, and artifact changes.
+- [ ] Record explicit user approval for transition to L1-7 instruction adaptation.
 
 **Command sequence:**
 
