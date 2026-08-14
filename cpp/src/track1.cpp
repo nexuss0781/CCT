@@ -423,11 +423,19 @@ std::string first_array_string(const std::string& object, const std::string& key
     require(array_end + 1U == field.end, "JSON array field boundary is invalid: " + key);
     auto position = skip_space(object, field.start + 1U);
     if (position == array_end) return {};
-    require(object[position] == '"', "JSON array string element is invalid: " + key);
-    const auto value = parse_json_string(object, position);
-    position = skip_space(object, position);
-    require(position == array_end, "JSON array string field must contain exactly one element: " + key);
-    return value;
+    std::string first;
+    bool first_value = true;
+    while (position < array_end) {
+        require(object[position] == '"', "JSON array string element is invalid: " + key);
+        const auto value = parse_json_string(object, position);
+        if (first_value) first = value;
+        first_value = false;
+        position = skip_space(object, position);
+        if (position == array_end) break;
+        require(object[position] == ',', "JSON array string separator is invalid: " + key);
+        position = skip_space(object, position + 1U);
+    }
+    return first;
 }
 
 std::size_t first_array_integer(const std::string& object, const std::string& key) {
@@ -437,13 +445,21 @@ std::size_t first_array_integer(const std::string& object, const std::string& ke
     require(array_end + 1U == field.end, "JSON array field boundary is invalid: " + key);
     auto position = skip_space(object, field.start + 1U);
     if (position == array_end) return 0U;
-    const auto start = position;
-    while (position < array_end && std::isdigit(static_cast<unsigned char>(object[position])) != 0) ++position;
-    require(position > start, "JSON array integer element is invalid: " + key);
-    const auto value = static_cast<std::size_t>(std::stoull(object.substr(start, position - start)));
-    position = skip_space(object, position);
-    require(position == array_end, "JSON array integer field must contain exactly one element: " + key);
-    return value;
+    std::size_t first = 0U;
+    bool first_value = true;
+    while (position < array_end) {
+        const auto start = position;
+        while (position < array_end && std::isdigit(static_cast<unsigned char>(object[position])) != 0) ++position;
+        require(position > start, "JSON array integer element is invalid: " + key);
+        const auto value = static_cast<std::size_t>(std::stoull(object.substr(start, position - start)));
+        if (first_value) first = value;
+        first_value = false;
+        position = skip_space(object, position);
+        if (position == array_end) break;
+        require(object[position] == ',', "JSON array integer separator is invalid: " + key);
+        position = skip_space(object, position + 1U);
+    }
+    return first;
 }
 
 std::vector<std::string> row_objects(const std::string& page) {
