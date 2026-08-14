@@ -25,6 +25,14 @@ This directory contains the independent implementation and evaluation specificat
 | 16 | [Production Inference and Operations](16_Production_Inference_Operations.md) | Native versioned serving, batching, state/cache isolation, observability, SLOs, fault controls, canaries, and rollback | **PASS — Stage 17 requires explicit approval** |
 | 17 | [Controlled Pilot and Production Release](17_Controlled_Pilot_Production_Release.md) | Shadow, bounded pilot, human oversight, incident response, rollback, deletion, drift, approvals, and terminal release | **PASS — bounded production for named scope; future expansion requires a new specification** |
 
+## Level 1 continuation documents
+
+The original repository stage sequence ends at Stage 17. The active CCT Level 1 roadmap continues with explicit L1 documents that refine the teacher-engine path without renumbering or rewriting the original stage contracts.
+
+| Level 1 stage | Document | Primary outcome | Transition |
+|---|---|---|---|
+| L1-8 | [Operation and API Teacher Adaptation](L1-8_Operation_API_Teacher_Adaptation.md) | Native versioned operation schemas, typed validation, authorization, explanations, corrections, lineage, and side-effect isolation | **PASS — L1-9 requires explicit approval** |
+
 ## Global gate protocol
 
 Every stage must produce an immutable or reviewable gate record containing the stage ID, repository commit, configuration hash, data or environment manifest hash, hardware, software versions, random seeds, test results, benchmark results, threshold definitions, known failures, and the final status.
