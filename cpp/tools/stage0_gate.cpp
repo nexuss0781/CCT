@@ -72,7 +72,7 @@ std::string json_escape(const std::string& value) {
     return output.str();
 }
 
-std::string run_command(const char* command) {
+std::string run_command(const char* command, const char* empty_fallback = "unknown") {
     auto* pipe = popen(command, "r");
     if (pipe == nullptr) return "unknown";
     char buffer[256]{};
@@ -80,7 +80,7 @@ std::string run_command(const char* command) {
     while (fgets(buffer, static_cast<int>(sizeof(buffer)), pipe) != nullptr) value += buffer;
     static_cast<void>(pclose(pipe));
     while (!value.empty() && (value.back() == '\n' || value.back() == '\r')) value.pop_back();
-    return value.empty() ? "unknown" : value;
+    return value.empty() ? std::string(empty_fallback) : value;
 }
 
 Check run(const std::string& name, const std::function<std::string()>& function) {
@@ -216,7 +216,7 @@ int main(int argc, char** argv) {
     const auto config_json = config.canonical_json();
     const auto config_hash = cct::GovernedCorpus::content_sha256(config_json);
     const auto commit = run_command("git rev-parse HEAD 2>/dev/null");
-    const auto dirty = run_command("git status --porcelain -- . ':!artifacts' 2>/dev/null");
+    const auto dirty = run_command("git status --porcelain -- . ':!artifacts' 2>/dev/null", "");
     write_file(output / "config.json", config_json + "\n");
     write_file(output / "environment.json", environment_json(commit, dirty, config_hash));
 
