@@ -688,7 +688,7 @@ cat artifacts/track1/training/training_report.json
 - [x] Analytic-gradient, compact-vocabulary, mini-batch, and checkpoint-resume regressions in `cpp/tests/nlp_trainer_tests.cpp`.
 - [x] Strict Release and expanded-warning builds both pass all `44/44` CTest entries.
 - [x] Direct documentation consistency test passes `1/1`.
-- [x] Final qualification report and gate evidence: `/tmp/cct-architecture-width16-10k/report.json` and `/tmp/cct-architecture-width16-10k/gate-final/`; repository gate source and contract are committed with this milestone.
+- [x] Final qualification report and gate evidence: `artifacts/architecture/qualification/final_report.json`, `gate_checks.json`, `gate_report.md`, and `ablation_findings.md`; repository gate source and contract are committed with this milestone.
 
 ## Architecture qualification transition
 
