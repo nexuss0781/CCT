@@ -214,8 +214,9 @@ int main(int argc, char** argv) {
             item.target_label = label; item.input_provenance = "pg1342#" + id; item.target_provenance = "annotator:" + id;
             item.policy_class = "bounded"; item.split = train ? "train" : "validation"; item.evaluator_owner = "stage14-independent";
             item.source_hash = sft_hash(input); item.target_hash = sft_hash(label);
-            item.example_hash = sft_hash(id + "\nclassification\nv1\n" + input + "\n" + label + "\n" + label + "\n" + item.source_hash + "\n" + item.target_hash + "\n" + item.split);
-            item.training_allowed = train; item.evaluation_allowed = eval; return item;
+            item.source_span_start = 0U; item.source_span_end = input.size();
+            item.training_allowed = train; item.evaluation_allowed = eval;
+            item.example_hash = sft_example_hash(item); return item;
         };
         const std::vector<SftInstructionExample> task_train{make_sft("sft-p", "positive helpful answer", "positive", true, false), make_sft("sft-n", "negative failed answer", "negative", true, false)};
         const std::vector<SftInstructionExample> task_eval{make_sft("sft-ep", "positive clear result", "positive", false, true), make_sft("sft-en", "negative failed result", "negative", false, true)};

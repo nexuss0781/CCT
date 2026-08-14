@@ -1,0 +1,1 @@
+{"mask_policy":"target-span-only-v1","determinism":{"mask_policy":"target-span-only-v1","active_target_tokens":5,"deterministic":true},"loss_mask_coverage":{"trainable_tokens":45,"target_mapped_tokens":45,"inactive_non_target_tokens":650,"coverage":1.000000,"threshold":0.95}}

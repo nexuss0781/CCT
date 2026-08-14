@@ -193,6 +193,7 @@ public:
     explicit SftAdapter(SftAdapterSpec spec, SftModelConfig base_config);
 
     const SftAdapterSpec& spec() const noexcept { return spec_; }
+    const SftModelConfig& base_config() const noexcept { return base_config_; }
     std::size_t parameter_count() const noexcept { return parameters_.size(); }
     std::vector<double> parameter_vector() const { return parameters_; }
     std::string parameter_checksum() const;
@@ -212,10 +213,11 @@ private:
 class SftAdapterRegistry {
 public:
     void register_adapter(const SftAdapter& adapter);
-    bool authorize(const std::string& adapter_id, const std::string& task_id, const std::string& base_hash,
-                   const std::string& permission) const;
-    const SftAdapter& load_authorized(const std::string& adapter_id, const std::string& task_id,
-                                       const std::string& base_hash, const std::string& permission) const;
+    bool authorize(const std::string& adapter_id, const std::string& task_id, const std::string& domain,
+                   const std::string& base_hash, const std::string& training_manifest_hash, const std::string& permission) const;
+    const SftAdapter& load_authorized(const std::string& adapter_id, const std::string& task_id, const std::string& domain,
+                                       const std::string& base_hash, const std::string& training_manifest_hash,
+                                       const std::string& permission) const;
     const std::vector<SftAdapter>& adapters() const noexcept { return adapters_; }
     std::string serialize() const;
     static SftAdapterRegistry deserialize(const std::string& serialized);
@@ -241,5 +243,6 @@ struct SftRetentionReport {
 std::string sft_task_kind_name(SftTaskKind kind);
 std::string sft_output_kind_name(SftOutputKind kind);
 std::string sft_hash(const std::string& serialized);
+std::string sft_example_hash(const SftInstructionExample& example);
 
 }  // namespace cct
