@@ -425,7 +425,7 @@ The declared L1-1 scope is the native scalar-field substrate; sequence-state bat
 
 **Dependency:** L1-5 `PASS` and frozen tokenizer identity.
 
-**Current status:** `[x] PASS` for the declared Track 1 real-language acquisition and bounded native training contract. The fresh native gate now validates governed preparation, split isolation, deterministic replay, parser/cache failure closure, a fresh pretraining-to-SFT replay, durable checkpoint reload and lineage, target-span masking, frozen final-test isolation, and bounded answer-target metrics. It does not claim exact-answer quality or broad language competence. Transition to L1-7 remains approval-gated.
+**Current status:** `[x] PASS` for the declared Track 1 real-language acquisition and bounded native training contract. The fresh native gate validates governed preparation, split isolation, deterministic replay, parser/cache failure closure, a fresh pretraining-to-SFT replay, durable checkpoint reload and lineage, target-span masking, frozen final-test isolation, and bounded answer-target metrics. In addition, a fresh pinned real-source replay prepared `200000` WikiText byte-fallback tokens, `900` SQuAD SFT-train examples, `100` SFT-evaluation examples, and `11873` frozen final-test examples; native training completed with durable pretrain/SFT checkpoints. It does not claim exact-answer quality or broad language competence. Transition to L1-7 remains approval-gated.
 
 ## L1-6 implementation tasks
 
@@ -465,7 +465,7 @@ The declared L1-1 scope is the native scalar-field substrate; sequence-state bat
 - [x] Run the full native suite when the declared toolchain is available.
 - [x] Run a bounded real-source preparation.
 - [x] Run complete governed preparation when the declared source cache and toolchain are available.
-- [x] Verify no malformed rows and no train/evaluation/final overlap.
+- [x] Verify no malformed rows, including multi-annotator answer arrays, and no train/evaluation/final overlap.
 - [x] Verify deterministic manifests under the same seed and source.
 - [x] Verify checkpoint reload under declared identity.
 - [x] Re-run the complete bounded Track 1 preparation and native training command through the independent gate from the current clean release source.
@@ -480,6 +480,7 @@ The declared L1-1 scope is the native scalar-field substrate; sequence-state bat
 - [x] `artifacts/track1/real-training/training_report.json`
 - [x] Fresh release-bound preparation report under `artifacts/track1/cpp-gate/preparation_report.json`.
 - [x] Fresh release-bound training report with durable checkpoint references under `artifacts/track1/cpp-gate/training_report.json` and `fresh-training/`.
+- [x] Fresh pinned real-source preparation and bounded training bundle under `artifacts/track1/real-release/` and `artifacts/track1/real-release-training/`, with tokenizer, manifest, dataset, final-test, and checkpoint identities recorded.
 
 ## L1-6 gate and transition
 
