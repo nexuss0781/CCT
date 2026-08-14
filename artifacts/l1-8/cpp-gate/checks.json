@@ -1,0 +1,19 @@
+[
+  {"name":"operation_schema_registry","status":"PASS","duration_seconds":1.327e-06,"details":{"schema_count":3,"registry_hash":"98bc237f8d2a1a819cd8d955c3e70c410dd2aea71f0ee63d4f88b05ac91eee5e","versions":"cct-operation-v1"}},
+  {"name":"required_optional_types_bounds_defaults","status":"PASS","duration_seconds":5.75e-07,"details":{"required_fields":2,"optional_fields":1,"typed_bounds":true,"default_fields":1}},
+  {"name":"valid_call_serialization_and_validation","status":"PASS","duration_seconds":4.919e-05,"details":{"decision":"accepted","error":"none","error_code":"OK","side_effect_performed":false,"audit_digest":"4cb731b8e8cd3cf344f25168344997a9029893c95389448f23d8be54ab143325"}},
+  {"name":"invalid_argument_error_classes","status":"PASS","duration_seconds":0.000173812,"details":{"required_field":"required_field_missing","type":"type_mismatch","bounds":"bounds_violation","unknown_field":"unknown_field"}},
+  {"name":"unknown_operation_rejection","status":"PASS","duration_seconds":3.2938e-05,"details":{"decision":"rejected","error":"unknown_operation","error_code":"OP_UNKNOWN","side_effect_performed":false,"audit_digest":"94f6e11199476f6d81fafa8037b95fe26a8805f052fc8452042e611c7031f1ae"}},
+  {"name":"authorization_class_enforcement","status":"PASS","duration_seconds":7.7404e-05,"details":{"tenant_member_denied":true,"admin_denied":true,"default":"deny"}},
+  {"name":"ambiguous_and_evidence_boundaries","status":"PASS","duration_seconds":8.0587e-05,"details":{"ambiguous":"abstained","missing_evidence":"evidence_missing","supported":"accepted"}},
+  {"name":"explanation_and_correction","status":"PASS","duration_seconds":6.4534e-05,"details":{"explanation_fields":true,"correction_schema_linked":true}},
+  {"name":"operation_manifest_provenance_and_split_isolation","status":"PASS","duration_seconds":9.04e-07,"details":{"demonstrations":2,"training_evaluator_leakage":0,"source_lineage":true}},
+  {"name":"schema_manifest_checkpoint_identity","status":"PASS","duration_seconds":1.335e-06,"details":{"registry_hash":"98bc237f8d2a1a819cd8d955c3e70c410dd2aea71f0ee63d4f88b05ac91eee5e","manifest_hash":"607b70d224ff40a927d6b47204848a3b13df526ca4103ee85fd622bd3857dcc5","checkpoint_identity":"b99385427d51dceb1318415b28c0a8b1eade33e91f8e2eab8f91132ea41c62f2"}},
+  {"name":"serialization_round_trip","status":"PASS","duration_seconds":0.000417886,"details":{"registry_round_trip":true,"manifest_round_trip":true,"response_replay":true}},
+  {"name":"identity_mismatch_rejection","status":"PASS","duration_seconds":6.9831e-05,"details":{"schema":"identity_mismatch","manifest":"identity_mismatch","checkpoint":"identity_mismatch"}},
+  {"name":"side_effect_isolation","status":"PASS","duration_seconds":2.3796e-05,"details":{"external_actions_allowed":false,"host_execution_allowed":false,"secret_access_allowed":false,"side_effect_performed":false}},
+  {"name":"strict_corruption_rejection","status":"PASS","duration_seconds":8.999e-05,"details":{"call_trailing_rejected":true,"registry_trailing_rejected":true,"identity_trailing_rejected":true}},
+  {"name":"schema_evolution_invalidates_identity","status":"PASS","duration_seconds":7.8413e-05,"details":{"old_registry":"98bc237f8d2a1a819cd8d955c3e70c410dd2aea71f0ee63d4f88b05ac91eee5e","new_registry":"f18c4217201eb3a02c13f546276abb61b8f03ed584ae951d0a2d996796ba418e","old_checkpoint_rejected":true}},
+  {"name":"deterministic_replay","status":"PASS","duration_seconds":8.7405e-05,"details":{"same_seed_replay":true,"response_identity_equal":true}},
+  {"name":"negative_control_coverage","status":"PASS","duration_seconds":4.1551e-05,"details":{"unknown_operation_rejected":true,"unauthenticated_rejected":true}}
+]

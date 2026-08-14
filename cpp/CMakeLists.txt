@@ -38,6 +38,7 @@ add_library(cct_native STATIC
     src/inference.cpp
     src/release.cpp
     src/track1.cpp
+    src/operation.cpp
 )
 target_include_directories(cct_native PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(cct_native PUBLIC PkgConfig::FFTW3)
@@ -181,6 +182,12 @@ target_compile_options(cct_track1_gate PRIVATE ${CCT_WARNING_OPTIONS})
 add_executable(cct_track1_train tools/track1_train.cpp)
 target_link_libraries(cct_track1_train PRIVATE cct_native)
 target_compile_options(cct_track1_train PRIVATE ${CCT_WARNING_OPTIONS})
+add_executable(cct_l1_8_operation_tests tests/operation_tests.cpp)
+target_link_libraries(cct_l1_8_operation_tests PRIVATE cct_native)
+target_compile_options(cct_l1_8_operation_tests PRIVATE ${CCT_WARNING_OPTIONS})
+add_executable(cct_l1_8_gate tools/l1_8_gate.cpp)
+target_link_libraries(cct_l1_8_gate PRIVATE cct_native)
+target_compile_options(cct_l1_8_gate PRIVATE ${CCT_WARNING_OPTIONS})
 add_executable(cct_parser_mutation_tests tests/parser_mutation_tests.cpp)
 target_link_libraries(cct_parser_mutation_tests PRIVATE cct_native)
 target_compile_options(cct_parser_mutation_tests PRIVATE ${CCT_WARNING_OPTIONS})
@@ -251,3 +258,7 @@ set_tests_properties(cct_documentation_consistency_tests PROPERTIES WORKING_DIRE
 set_tests_properties(cct_track1_tests PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/..)
 add_test(NAME cct_track1_gate COMMAND cct_gate_envelope --output ${CMAKE_SOURCE_DIR}/../artifacts/track1/cpp-gate -- $<TARGET_FILE:cct_track1_gate> --output ${CMAKE_SOURCE_DIR}/../artifacts/track1/cpp-gate)
 set_tests_properties(cct_track1_gate PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/..)
+add_test(NAME cct_l1_8_operation_tests COMMAND cct_l1_8_operation_tests)
+set_tests_properties(cct_l1_8_operation_tests PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/..)
+add_test(NAME cct_l1_8_gate COMMAND cct_gate_envelope --output ${CMAKE_SOURCE_DIR}/../artifacts/l1-8/cpp-gate -- $<TARGET_FILE:cct_l1_8_gate> --output ${CMAKE_SOURCE_DIR}/../artifacts/l1-8/cpp-gate)
+set_tests_properties(cct_l1_8_gate PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/..)

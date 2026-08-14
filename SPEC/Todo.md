@@ -566,52 +566,49 @@ cat artifacts/track1/training/training_report.json
 
 **Dependency:** L1-7 `PASS`.
 
-**Current status:** `[ ] PENDING`.
+**Current status:** `[x] PASS` for the declared native C++20 operation/API teacher-contract pilot. The fresh gate records **17/17 mandatory checks PASS** with registry hash `98bc237f8d2a1a819cd8d955c3e70c410dd2aea71f0ee63d4f88b05ac91eee5e`, demonstration manifest hash `607b70d224ff40a927d6b47204848a3b13df526ca4103ee85fd622bd3857dcc5`, and checkpoint identity `b99385427d51dceb1318415b28c0a8b1eade33e91f8e2eab8f91132ea41c62f2`. The strict Release and expanded-warning suites each pass `41/41`; external side effects remain disabled and training authorization remains false.
 
 ## L1-8 implementation tasks
 
-- [ ] Define versioned operation schemas.
-- [ ] Define required and optional fields, types, bounds, defaults, and error classes.
-- [ ] Define authorization class for every operation.
-- [ ] Create governed demonstrations for valid calls.
-- [ ] Create governed demonstrations for invalid calls, retries, missing evidence, refusal, and ambiguity.
-- [ ] Fine-tune serialization and explanation behavior.
-- [ ] Implement schema validation before operation acceptance.
-- [ ] Implement unknown-operation and malformed-argument rejection.
-- [ ] Implement unauthorized-operation rejection.
-- [ ] Preserve operation-schema identity in training, checkpoint, and evaluation manifests.
-- [ ] Keep external side effects disabled in the Level 1 teacher interface.
+- [x] Define versioned operation schemas with required/optional fields, typed values, byte and numeric bounds, defaults, and stable error classes.
+- [x] Define authorization classes for public read, tenant member, reviewer, and admin operations, with authenticated tenant/user and operation allow-list checks.
+- [x] Create governed valid and invalid demonstrations with source IDs, spans, source hashes, split assignments, expected decisions/errors, corrections, and canonical identities.
+- [x] Implement deterministic typed-call serialization, default normalization, explanations, corrections, and audit digests.
+- [x] Validate schemas and arguments before operation acceptance; reject unknown operations, malformed fields, duplicate fields, wrong types, enum/bounds violations, and stale versions.
+- [x] Enforce ambiguity abstention, required-evidence abstention, authorization denial, identity lineage checks, and strict serializer corruption checks.
+- [x] Bind operation schema registry, demonstration manifest, base checkpoint, tokenizer, and training configuration into a checkpoint identity.
+- [x] Keep external actions, host execution, secret access, online learning, and self-modification disabled in the Level 1 teacher interface.
 
 ## L1-8 verification tasks
 
-- [ ] Verify valid calls serialize and validate.
-- [ ] Verify invalid calls fail with the correct error class.
-- [ ] Verify unknown operations fail closed.
-- [ ] Verify malformed arguments fail closed.
-- [ ] Verify unauthorized calls fail closed.
-- [ ] Verify ambiguous requests abstain or request clarification within the contract.
-- [ ] Verify CCT explains required fields and identifies malformed calls.
-- [ ] Verify every demonstration maps to a governed source record.
-- [ ] Verify operation schema changes invalidate incompatible checkpoints.
-- [ ] Verify no test can trigger an unapproved external side effect.
+- [x] Verify valid calls serialize, validate, normalize optional defaults, and replay deterministically.
+- [x] Verify invalid calls map to required-field, type, bounds, unknown-field, duplicate, serialization, and identity error classes.
+- [x] Verify unknown operations and unsupported call/schema versions fail closed.
+- [x] Verify unauthorized, cross-identity, unauthenticated, ambiguous, missing-evidence, and side-effect requests fail closed or abstain as declared.
+- [x] Verify CCT operation explanations and corrections name the required schema fields and correction boundary.
+- [x] Verify every demonstration maps to a governed source record and evaluator-only demonstrations never enter training eligibility.
+- [x] Verify operation schema evolution changes the registry identity and invalidates calls bound to the old checkpoint.
+- [x] Verify call, registry, manifest, teacher, and checkpoint serializers reject trailing corruption and preserve round-trip identity.
+- [x] Verify no test can trigger an unapproved external side effect; every response records `side_effect_performed=false`.
 
 ## L1-8 artifacts
 
-- [ ] Operation schema registry.
-- [ ] Operation demonstration manifest.
-- [ ] Formatter and validator report.
-- [ ] Error-class report.
-- [ ] Authorization report.
-- [ ] API checkpoint identity report.
-- [ ] Side-effect isolation report.
-- [ ] L1-8 gate and transition record.
+- [x] Operation schema registry in `artifacts/l1-8/cpp-gate/operation_schema_registry.json`.
+- [x] Operation demonstration manifest in `artifacts/l1-8/cpp-gate/operation_manifest.json`.
+- [x] Formatter and validator report in `formatter_validator_report.json`.
+- [x] Error-class report in `error_class_report.json`.
+- [x] Authorization report in `authorization_report.json`.
+- [x] API checkpoint identity report in `checkpoint_identity_report.json`.
+- [x] Side-effect isolation report in `side_effect_isolation_report.json`.
+- [x] Seventeen-check gate, release record, and bounded report under `artifacts/l1-8/cpp-gate/`.
+- [x] Standalone contract in `Stages/L1-8_Operation_API_Teacher_Adaptation.md` and stage index entry in `Stages/README.md`.
 
 ## L1-8 gate and transition
 
-- [ ] Freeze operation schemas and authorization classes.
-- [ ] Run the formal L1-8 gate.
-- [ ] Verify invalid and unauthorized operation coverage.
-- [ ] Record transition approval for L1-9.
+- [x] Freeze operation schemas, authorization classes, demonstration split, checkpoint identity, and side-effect policy.
+- [x] Run the formal native L1-8 gate with 17 mandatory checks; all record `PASS`.
+- [x] Verify invalid, unknown, malformed, unauthorized, ambiguous, evidence-missing, identity-mismatched, corrupted, and side-effectful operation coverage.
+- [ ] Record explicit user approval for transition to L1-9 bounded teaching evaluation.
 
 **Transition:** `PASS` authorizes L1-9 bounded teaching evaluation.
 
