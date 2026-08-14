@@ -216,7 +216,7 @@ int main(int argc, char** argv) {
     const auto config_json = config.canonical_json();
     const auto config_hash = cct::GovernedCorpus::content_sha256(config_json);
     const auto commit = run_command("git rev-parse HEAD 2>/dev/null");
-    const auto dirty = run_command("git status --porcelain 2>/dev/null");
+    const auto dirty = run_command("git status --porcelain -- . ':!artifacts' 2>/dev/null");
     write_file(output / "config.json", config_json + "\n");
     write_file(output / "environment.json", environment_json(commit, dirty, config_hash));
 
@@ -270,7 +270,7 @@ int main(int argc, char** argv) {
            << "**Status:** `" << (passed ? "PASS" : "FAIL") << "`  \n"
            << "**Commit:** `" << commit << "`  \n"
            << "**Configuration hash:** `" << config_hash << "`  \n"
-           << "**Dirty tree at execution:** `" << (dirty.empty() ? "False" : "True") << "`\n\n"
+           << "**Tracked source/configuration tree dirty at execution:** `" << (dirty.empty() ? "False" : "True") << "`\n\n"
            << "| Check | Status | Duration (s) |\n|---|---:|---:|\n";
     for (const auto& check : checks) report << "| " << check.name << " | `" << check.status << "` | " << check.duration_seconds << " |\n";
     report << "\nThe gate proves only the native reproducible-baseline contract: configuration identity, deterministic numerical replay, failure-path non-mutation, and deliberate threshold-failure detection. It does not establish language-teacher capability.\n";
