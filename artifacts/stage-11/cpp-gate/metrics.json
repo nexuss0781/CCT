@@ -1,0 +1,1 @@
+{"mandatory_check_count":13,"seed_count":3,"selected_model":"track1_cct_recurrence","initial_validation_loss":6.860653,"final_validation_loss":5.749466,"validation_improvement":0.161965,"capability_threshold":0.01,"selected_parameter_count":3862,"baseline_min_parameter_count":3846,"baseline_max_parameter_count":3870,"parameter_band_pass":true,"status":"PASS"}
