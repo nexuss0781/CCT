@@ -1,0 +1,12 @@
+{
+  "stage": 2,
+  "status": "PASS",
+  "transition": "Stage 3 preparation (approval required)",
+  "implementation": "native-cpp-selective-recurrent-core",
+  "commit": "06b3a99e81fb021621b6036e60fea1f6b98033d2",
+  "dirty_tree": false,
+  "approval_required": true,
+  "complex_state": "enabled",
+  "normalization": "enabled_and_checkpointed",
+  "segmented_mask_scan": "enabled"
+}

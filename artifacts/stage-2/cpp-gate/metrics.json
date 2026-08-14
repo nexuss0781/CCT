@@ -1,0 +1,11 @@
+[
+  {"name":"mandatory_check_count","value":16,"unit":"checks","threshold":"all PASS","status":"PASS"},
+  {"name":"trained_baseline_family_count","value":3,"unit":"families","threshold":"3 trained comparators","status":"PASS"},
+  {"name":"complex_state_path","value":1,"unit":"enabled","threshold":"enabled and equivalent","status":"PASS"},
+  {"name":"normalization_path","value":1,"unit":"enabled","threshold":"enabled and checkpointed","status":"PASS"},
+  {"name":"segmented_mask_path","value":1,"unit":"enabled","threshold":"enabled and equivalent","status":"PASS"},
+  {"name":"copy_train_loss_before","value":0.0894358,"unit":"mse","threshold":"reported","status":"PASS"},
+  {"name":"copy_train_loss_after","value":5.35632e-30,"unit":"mse","threshold":"< 25% of before","status":"PASS"},
+  {"name":"copy_train_accuracy","value":1,"unit":"fraction","threshold":">= 0.75","status":"PASS"},
+  {"name":"copy_extrapolated_accuracy","value":1,"unit":"fraction","threshold":">= 0.50","status":"PASS"}
+]
