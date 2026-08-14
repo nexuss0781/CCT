@@ -1,0 +1,7 @@
+{
+  "evaluator_only": true,
+  "variable_count": 4,
+  "dataset_fingerprint": 8970278167247785064,
+  "ground_truth_edge_count": 5,
+  "contains_model_visible_payloads": false
+}

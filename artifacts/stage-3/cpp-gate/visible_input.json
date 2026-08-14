@@ -1,0 +1,5 @@
+{
+  "schema_version": 1,
+  "visible_fields": ["event_id", "payload", "coordinates", "timestamp", "causal_parent_ids", "intervention_marker", "uncertainty", "provenance"],
+  "evaluator_only_fields_excluded": ["structural_coefficients", "exogenous_noise", "counterfactual_target"]
+}
