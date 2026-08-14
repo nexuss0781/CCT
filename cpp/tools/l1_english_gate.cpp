@@ -130,12 +130,18 @@ int main(const int argc, char** argv) {
         const auto after_validation = object_for(report, "after_validation");
         const auto control_test = object_for(report, "control_test");
         const auto trained_test = object_for(report, "trained_test");
+        const auto has_data_contract = report.find("\"data_contract\":{") != std::string::npos;
+        const auto data_contract = has_data_contract ? object_for(report, "data_contract") : std::string{};
         const auto checkpoint_meta = object_for(report, "checkpoint");
         add("status_pass", string_value(report, "status") == "PASS", "runner status is PASS");
         add("native_backend", string_value(report, "backend") == "native-c++20-track1-cct-recurrence", "native C++ backend is recorded");
         add("source_identity", !string_value(report, "manifest_hash").empty() && !string_value(report, "tokenizer_hash").empty() &&
                                    !string_value(report, "dataset_hash").empty() && !string_value(report, "cola_dataset_hash").empty(),
             "source, tokenizer, WikiText, and CoLA identities are present");
+        add("data_contract", !has_data_contract || (number_value(data_contract, "pretrain_bytes") > 0.0 && number_value(data_contract, "pretrain_model_tokens") > 0.0 &&
+                                  number_value(data_contract, "validation_model_tokens") > 0.0 && number_value(data_contract, "test_model_tokens") > 0.0 &&
+                                  number_value(data_contract, "train_sequences") > 0.0 && number_value(data_contract, "pretraining_target_tokens_processed") > 0.0),
+            has_data_contract ? "raw bytes, model tokens, sequences, and processed training targets are recorded" : "legacy report accepted; new reports must include the data contract");
         add("full_blimp_coverage", number_value(trained_blimp, "files") == 67.0 && number_value(trained_blimp, "pairs") >= 6700.0,
             "all 67 BLiMP files and at least 6,700 pairs are scored");
         add("blimp_finite_above_chance", std::isfinite(number_value(trained_blimp, "accuracy")) && number_value(trained_blimp, "accuracy") >= 0.50,
@@ -155,9 +161,10 @@ int main(const int argc, char** argv) {
         add("checkpoint_nonempty", !checkpoint.empty() && std::filesystem::file_size(checkpoint_path) > 0U, "checkpoint is durable and non-empty");
         add("side_effect_isolation", bool_value(report, "external_actions") == false, "external actions are disabled");
         add("evaluation_only_boundary", bool_value(report, "evaluation_only") == true, "final report was produced through evaluation-only scoring");
-        add("generation_validity", number_value(object_for(report, "generation"), "nonempty") == number_value(object_for(report, "generation"), "prompts") &&
-                                       number_value(object_for(report, "generation"), "valid_utf8") == number_value(object_for(report, "generation"), "prompts"),
-            "bounded generation outputs are non-empty and valid UTF-8");
+        const auto generation = object_for(report, "generation");
+        add("generation_validity", number_value(generation, "nonempty") == number_value(generation, "prompts") &&
+                                       number_value(generation, "valid_utf8") == number_value(generation, "prompts"),
+            "bounded generation outputs are non-empty and valid UTF-8; coherence is qualified separately");
         std::size_t passed = 0U;
         for (const auto& check : checks) if (check.passed) ++passed;
         const bool all_passed = passed == checks.size();

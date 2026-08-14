@@ -97,7 +97,10 @@ public:
         require(trainer_.model().kind() == NlpModelKind::Track1CctRecurrence,
                 "checkpoint inference currently requires the Track 1 CCT recurrence model kind");
         const auto vocabulary_size = static_cast<std::size_t>(tokenizer_.vocabulary().back().id) + 1U;
-        require(trainer_.model().config().vocabulary_size == vocabulary_size, "checkpoint and tokenizer vocabulary sizes differ");
+        const auto expected_slots = trainer_.model().config().compact_vocabulary
+                                        ? 2U + static_cast<std::size_t>(tokenizer_.vocabulary().back().id - Tokenizer::kByteFirstId)
+                                        : vocabulary_size;
+        require(trainer_.model().config().vocabulary_size == expected_slots, "checkpoint and tokenizer vocabulary slots differ");
         identity_ = "checkpoint-backed-" + trainer_.model().name() + "-" + nlp_checkpoint_hash(read_file(checkpoint_path));
     }
 
@@ -123,7 +126,8 @@ public:
         std::size_t inter_token_count = 0U;
         for (std::size_t step = 0U; step < maximum_output_tokens; ++step) {
             const auto logits = trainer_.model().next_logits(context);
-            const auto next = static_cast<TokenId>(std::distance(logits.begin(), std::max_element(logits.begin(), logits.end())));
+            const auto next_slot = static_cast<std::size_t>(std::distance(logits.begin(), std::max_element(logits.begin(), logits.end())));
+            const auto next = trainer_.model().token_id_from_logit_slot(next_slot);
             if (next == Tokenizer::kEosId) break;
             const auto token_text = tokenizer_.decode(std::vector<TokenId>{next}, true);
             const auto now = std::chrono::steady_clock::now();

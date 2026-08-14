@@ -1,11 +1,12 @@
 # L1 English Acquisition Gate
 
 **Status:** `PASS`
-**Checks:** 14/14
+**Checks:** 15/15
 
 - `PASS` **status_pass** — runner status is PASS
 - `PASS` **native_backend** — native C++ backend is recorded
 - `PASS` **source_identity** — source, tokenizer, WikiText, and CoLA identities are present
+- `PASS` **data_contract** — legacy report accepted; new reports must include the data contract
 - `PASS` **full_blimp_coverage** — all 67 BLiMP files and at least 6,700 pairs are scored
 - `PASS` **blimp_finite_above_chance** — trained BLiMP accuracy is finite and at least chance
 - `PASS` **blimp_beats_control** — trained BLiMP preference count beats the matched no-training control
@@ -16,4 +17,4 @@
 - `PASS` **checkpoint_nonempty** — checkpoint is durable and non-empty
 - `PASS` **side_effect_isolation** — external actions are disabled
 - `PASS` **evaluation_only_boundary** — final report was produced through evaluation-only scoring
-- `PASS` **generation_validity** — bounded generation outputs are non-empty and valid UTF-8
+- `PASS` **generation_validity** — bounded generation outputs are non-empty and valid UTF-8; coherence is qualified separately

@@ -637,7 +637,7 @@ cat artifacts/track1/training/training_report.json
 - [x] Held-out CoLA preference improves from control `347/721` to adapted `392/721`.
 - [x] Checkpoint identity `a38aea8e01a6609ddf7705c10dfc1b5513a0445a5fe6ddabbc9ca6c7ac2328b6` matches the report and strict lineage reload.
 - [x] Bounded generation produces non-empty valid UTF-8 outputs for all five fixed prompts; external actions remain disabled.
-- [x] Independent English gate records `14/14 PASS`; focused preference regressions pass; final strict Release and expanded-warning repository validation both pass `43/43`.
+- [x] Independent English gate records `15/15 PASS`; focused preference regressions pass; final strict Release and expanded-warning repository validation both pass `44/44`.
 
 ## English acquisition artifacts
 
@@ -651,8 +651,53 @@ cat artifacts/track1/training/training_report.json
 ## English acquisition transition
 
 - [x] Freeze source, tokenizer, WikiText/CoLA/BLiMP identities, model configuration, seed, optimizer budgets, evaluator, and side-effect policy.
-- [x] Run the independent English gate against the evaluation-only checkpoint report; all 14 checks pass.
+- [x] Run the independent English gate against the evaluation-only checkpoint report; all 15 checks pass.
 - [ ] Record explicit user approval before returning to L1-9 bounded teaching behavior.
+
+---
+
+# Architecture Upgrade and Qualification Milestone — Native Sequence Architectures
+
+**Objective:** Upgrade CCT and the existing GRU, diagonal SSM, and dense causal-attention sequence models, then qualify them under one deterministic real-data contract before any conversational or teaching implementation.
+
+**Status:** `[x] PASS` for the native architecture-upgrade qualification. The final matched run uses the pinned 2,000,000-byte WikiText training source, frozen tokenizer hash `902e5a44f372a3d972b6f21036d62d7878f1d6907805c841e49aa84297ba7b0a`, compact vocabulary with 513 active slots, seed `1701`, context `128`, embedding/hidden width `16`, batch size `8`, and `10,000` optimizer steps over four architectures. The independent native gate records **10/10 PASS**.
+
+## Architecture-upgrade implementation
+
+- [x] Add analytic backpropagation and finite-difference verification for GRU, diagonal SSM, dense causal attention, and the existing CCT recurrence.
+- [x] Add compact vocabulary slot mapping and V4 checkpoint serialization while preserving legacy checkpoint compatibility.
+- [x] Add token-weighted mini-batch gradient accumulation with deterministic cursor advancement and checkpoint-resume coverage.
+- [x] Correct Track 1 retain-bias initialization and state-memory accounting.
+- [x] Update inference, serving, English acquisition, checkpoint identity, and diagnostics to respect compact token slots.
+- [x] Add the matched native qualification harness and independent fail-closed qualification gate.
+- [x] Add production deterministic no-repeat decoding that prevents exact 2-gram/3-gram loops; retain greedy output as an explicit diagnostic baseline.
+
+## Architecture qualification evidence
+
+- [x] All four architectures improve finite held-out validation and frozen-test cross-entropy under the same data, tokenizer, seed, width, context, batch, and step contract.
+- [x] Final validation/test losses are: CCT `3.5447/3.6275`, GRU `3.5531/3.5959`, diagonal SSM `3.5226/3.6279`, and dense causal attention `3.8428/3.8965`.
+- [x] Target-token throughput is recorded for every model: CCT `47,523`, GRU `43,695`, diagonal SSM `53,624`, and dense causal attention `40,628` tokens/second.
+- [x] Parameter/state-memory accounting is recorded for every model; diagonal SSM is the fastest measured architecture in this bounded run, while CCT remains competitive and improves substantially with width.
+- [x] Twelve fixed-prompt production continuations are full-length and non-repetitive under the deterministic no-repeat decoder; the report also records the still-repetitive greedy baseline rather than hiding it.
+- [x] Width, data-coverage, compact-vocabulary, and batch-size ablations are preserved as qualification findings; compact vocabulary reduces allocation by approximately 32.5%, and batch size `8` outperforms smaller tested batches in the bounded runs.
+
+## Architecture qualification artifacts and tests
+
+- [x] Native harness: `cpp/tools/architecture_qualification.cpp`.
+- [x] Independent gate: `cpp/tools/architecture_qualification_gate.cpp`.
+- [x] Analytic-gradient, compact-vocabulary, mini-batch, and checkpoint-resume regressions in `cpp/tests/nlp_trainer_tests.cpp`.
+- [x] Strict Release and expanded-warning builds both pass all `44/44` CTest entries.
+- [x] Direct documentation consistency test passes `1/1`.
+- [x] Final qualification report and gate evidence: `/tmp/cct-architecture-width16-10k/report.json` and `/tmp/cct-architecture-width16-10k/gate-final/`; repository gate source and contract are committed with this milestone.
+
+## Architecture qualification transition
+
+- [x] Freeze architecture kinds, tokenizer, vocabulary mode, seed, optimizer, batch/context/width contract, data splits, evaluation budgets, decoding policy, and gate criteria.
+- [x] Run the independent architecture qualification gate; all 10 checks pass.
+- [x] Preserve the greedy baseline repetition diagnostics as an explicit limitation of greedy decoding; the selected production evaluation/runtime policy is deterministic no-repeat decoding.
+- [ ] Record explicit user approval before implementing L1-9 conversational or bounded teaching behavior.
+
+**Transition:** `PASS` authorizes the next bounded conversational/teaching implementation only after explicit user approval; it does not claim human-speaker equivalence, broad factuality, or general intelligence.
 
 ---
 
@@ -660,7 +705,7 @@ cat artifacts/track1/training/training_report.json
 
 **Objective:** Demonstrate that CCT can communicate, demonstrate, evaluate, correct, and abstain through a defined teacher interface.
 
-**Dependency:** L1-8 `PASS`.
+**Dependency:** L1-8 `PASS`, English Acquisition `PASS`, and Architecture Qualification `PASS`, with explicit user approval.
 
 **Current status:** `[ ] PENDING`.
 

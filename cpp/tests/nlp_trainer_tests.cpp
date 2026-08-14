@@ -92,6 +92,31 @@ void test_track1_recurrence_gradient_finite_difference() {
     }
 }
 
+void test_upgraded_baseline_gradients() {
+    const auto item = sequence("baseline-gradient", {256, 257, 258, 259, 260});
+    for (const auto kind : {NlpModelKind::GRU, NlpModelKind::DiagonalSSM, NlpModelKind::DenseCausalAttention}) {
+        const auto config = model_config(kind, 17);
+        const auto model = NextTokenModel(config);
+        const auto analytical = model.loss_and_gradients(item);
+        const auto original = model.parameter_vector();
+        const std::vector<std::size_t> indices{0U, config.vocabulary_size * config.embedding_dim, original.size() / 2U, original.size() - 1U};
+        for (const auto index : indices) {
+            require(index < original.size(), "baseline gradient spot-check index exceeds model parameters");
+            auto plus_values = original;
+            auto minus_values = original;
+            plus_values[index] += 1e-5;
+            minus_values[index] -= 1e-5;
+            auto plus = NextTokenModel(config);
+            auto minus = NextTokenModel(config);
+            plus.set_parameter_vector(plus_values);
+            minus.set_parameter_vector(minus_values);
+            const auto numerical = (plus.loss_only(item) - minus.loss_only(item)) / 2e-5;
+            require(relative_error(analytical.gradients[index], numerical) <= 1e-4,
+                    "upgraded baseline analytic gradient disagrees with finite difference");
+        }
+    }
+}
+
 void test_track1_model_identity_and_serialization() {
     const auto model = NextTokenModel(model_config(NlpModelKind::Track1CctRecurrence, 29));
     require(model.kind() == NlpModelKind::Track1CctRecurrence, "Track 1 model kind changed at construction");
@@ -114,6 +139,54 @@ void test_track1_model_identity_and_serialization() {
             "legacy model checkpoint did not map to the explicit Track 1 identity");
 }
 
+void test_compact_vocabulary_mapping_and_serialization() {
+    auto config = model_config(NlpModelKind::Track1CctRecurrence, 43);
+    config.vocabulary_size = 513U;
+    config.compact_vocabulary = true;
+    config.token_id_limit = 767U;
+    const auto model = NextTokenModel(config);
+    require(model.logit_slot_for_token_id(Tokenizer::kEosId) == 0U && model.logit_slot_for_token_id(256U) == 1U &&
+                model.token_id_from_logit_slot(0U) == Tokenizer::kEosId && model.token_id_from_logit_slot(1U) == 256U,
+            "compact vocabulary token-slot mapping is incorrect");
+    require(model.parameter_count() < NextTokenModel(model_config(NlpModelKind::Track1CctRecurrence, 43)).parameter_count(),
+            "compact vocabulary did not reduce parameter allocation");
+    const auto item = sequence("compact", {256, 257, 258, 259, 260});
+    require(std::isfinite(model.loss_only(item)) && model.next_logits(item.input_ids).size() == 513U,
+            "compact vocabulary model did not score or decode a valid sequence");
+    std::ostringstream serialized;
+    model.save_model(serialized);
+    require(serialized.str().rfind("NLP_MODEL_V4\n", 0U) == 0U, "compact vocabulary did not publish V4 model identity");
+    std::istringstream stream(serialized.str());
+    const auto restored = NextTokenModel::load_model(stream);
+    require(restored.config().compact_vocabulary && restored.config().token_id_limit == 767U &&
+                restored.parameter_vector() == model.parameter_vector(),
+            "compact vocabulary metadata did not survive V4 serialization");
+    auto invalid = item;
+    invalid.sequence_id = "compact-invalid";
+    invalid.input_ids[0] = 100U;
+    bool rejected = false;
+    try {
+        static_cast<void>(model.loss_only(invalid));
+    } catch (const NlpTrainingError&) {
+        rejected = true;
+    }
+    require(rejected, "compact vocabulary accepted an unavailable control token");
+}
+
+void test_track1_initialization_and_state_accounting() {
+    const auto config = model_config(NlpModelKind::Track1CctRecurrence, 31);
+    const auto model = NextTokenModel(config);
+    const auto parameters = model.parameter_vector();
+    const auto recurrent_offset = config.vocabulary_size * config.embedding_dim;
+    const auto retain_bias_offset = recurrent_offset + 4U * config.hidden_dim * config.embedding_dim + config.hidden_dim;
+    for (std::size_t index = 0U; index < config.hidden_dim; ++index) {
+        require(std::abs(parameters[retain_bias_offset + index] - 2.0) <= 1e-12,
+                "Track 1 retain bias was not initialized at its declared bias offset");
+    }
+    require(model.state_memory_bytes() == (config.embedding_dim + config.hidden_dim) * sizeof(double),
+            "Track 1 recurrent state accounting omitted the previous-input vector");
+}
+
 void test_optimizer_direction_and_schedule() {
     const auto data = dataset();
     NlpOptimizerConfig optimizer;
@@ -132,6 +205,21 @@ void test_optimizer_direction_and_schedule() {
     require(!first.validation_performed && second.validation_performed && first.training_elapsed_seconds >= 0.0 &&
                 second.validation_elapsed_seconds >= 0.0,
             "NLP validation cadence or timing evidence is incorrect");
+}
+
+void test_minibatch_training_contract() {
+    const auto data = dataset();
+    NlpOptimizerConfig optimizer;
+    optimizer.learning_rate = 0.01;
+    optimizer.warmup_steps = 1;
+    optimizer.batch_size = 2U;
+    optimizer.total_steps = 2U;
+    optimizer.validation_interval_steps = 1U;
+    NlpTrainer trainer(model_config(NlpModelKind::GRU, 37), optimizer, data.tokenizer_hash, data.dataset_hash);
+    const auto point = trainer.train_step(data);
+    require(point.step == 1U && point.data_cursor == 2U && point.token_count == 8U && std::isfinite(point.train_loss) &&
+                std::isfinite(point.gradient_norm),
+            "native mini-batch training did not consume or report the configured batch");
 }
 
 void test_deterministic_initialization_and_controls() {
@@ -203,6 +291,21 @@ void test_checkpoint_resume_exactness_and_fail_closed() {
         rejected = true;
     }
     require(rejected, "malformed checkpoint was accepted");
+}
+
+void test_minibatch_checkpoint_resume() {
+    const auto data = dataset();
+    NlpOptimizerConfig optimizer;
+    optimizer.learning_rate = 0.01;
+    optimizer.batch_size = 2U;
+    optimizer.total_steps = 4U;
+    optimizer.validation_interval_steps = 1U;
+    NlpTrainer trainer(model_config(NlpModelKind::GRU, 41), optimizer, data.tokenizer_hash, data.dataset_hash);
+    trainer.train_step(data);
+    trainer.save_checkpoint("artifacts/stage-11-batch-checkpoint.bin");
+    const auto restored = NlpTrainer::load_checkpoint("artifacts/stage-11-batch-checkpoint.bin", data.tokenizer_hash, data.dataset_hash);
+    require(restored.optimizer_config().batch_size == 2U && restored.state().data_cursor == 2U && restored.state().optimizer_step == 1U,
+            "mini-batch optimizer configuration or cursor was not preserved in checkpoint");
 }
 
 void test_invalid_masks_and_nonfinite_parameters_fail_closed() {
@@ -323,10 +426,15 @@ int main() {
     const std::vector<std::pair<std::string, void (*)()>> tests{
         {"objective_mask_and_finite_metrics", test_objective_mask_and_finite_metrics},
         {"track1_recurrence_gradient_finite_difference", test_track1_recurrence_gradient_finite_difference},
+        {"upgraded_baseline_gradients", test_upgraded_baseline_gradients},
         {"track1_model_identity_and_serialization", test_track1_model_identity_and_serialization},
+        {"track1_initialization_and_state_accounting", test_track1_initialization_and_state_accounting},
+        {"compact_vocabulary_mapping_and_serialization", test_compact_vocabulary_mapping_and_serialization},
         {"optimizer_direction_and_schedule", test_optimizer_direction_and_schedule},
+        {"minibatch_training_contract", test_minibatch_training_contract},
         {"deterministic_initialization_and_controls", test_deterministic_initialization_and_controls},
         {"checkpoint_resume_exactness_and_fail_closed", test_checkpoint_resume_exactness_and_fail_closed},
+        {"minibatch_checkpoint_resume", test_minibatch_checkpoint_resume},
         {"invalid_masks_and_nonfinite_parameters_fail_closed", test_invalid_masks_and_nonfinite_parameters_fail_closed},
         {"dataset_context_budget_and_optimizer_domain_fail_closed", test_dataset_context_budget_and_optimizer_domain_fail_closed}};
     std::size_t passed = 0;
