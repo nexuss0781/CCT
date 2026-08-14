@@ -9,6 +9,7 @@
 #include <functional>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -340,6 +341,77 @@ std::string robustness_abstention_check(const CausalDataset& dataset) {
     return details.str();
 }
 
+std::string strict_contract_failure_check(const CausalDataset& dataset) {
+    CausalStoreConfig configuration;
+    configuration.payload_dim = 1;
+    configuration.coordinate_dim = 2;
+    configuration.coordinate_min = {0.0, 0.0};
+    configuration.coordinate_max = {1.0, 1.0};
+    CausalEventStore store(configuration);
+    store.insert(make_gate_event(1, 0));
+    bool missing_parent_rejected = false;
+    try {
+        store.insert(make_gate_event(2, 1, {99}));
+    } catch (const CausalGraphError&) {
+        missing_parent_rejected = true;
+    }
+    auto invalid_provenance = make_gate_event(3, 2, {1});
+    invalid_provenance.provenance = static_cast<ProvenanceKind>(99);
+    bool invalid_enum_rejected = false;
+    try {
+        store.insert(invalid_provenance);
+    } catch (const CausalGraphError&) {
+        invalid_enum_rejected = true;
+    }
+    auto same_time = make_gate_event(4, 0, {1});
+    bool same_time_rejected = false;
+    try {
+        store.insert(same_time);
+    } catch (const CausalGraphError&) {
+        same_time_rejected = true;
+    }
+    const auto duplicate_events = std::vector<CausalEvent>{make_gate_event(5, 3), make_gate_event(5, 4)};
+    bool duplicate_encoder_rejected = false;
+    try {
+        static_cast<void>(CausalEventEncoder().encode(duplicate_events));
+    } catch (const CausalGraphError&) {
+        duplicate_encoder_rejected = true;
+    }
+    auto nonfinite = make_gate_event(6, 5);
+    nonfinite.semantic_payload.front() = std::numeric_limits<double>::quiet_NaN();
+    bool nonfinite_encoder_rejected = false;
+    try {
+        static_cast<void>(CausalEventEncoder().encode({nonfinite}));
+    } catch (const CausalGraphError&) {
+        nonfinite_encoder_rejected = true;
+    }
+    CausalEventLearner learner(dataset.evaluator_truth.variable_count);
+    const auto candidates = candidate_parents(dataset.evaluator_truth.variable_count);
+    learner.fit(dataset.training_samples, candidates, true);
+    const auto before = learner.parent_hypotheses();
+    auto invalid_candidates = candidates;
+    invalid_candidates.back() = {2, 1};
+    bool transactional_fit_rejected = false;
+    try {
+        learner.fit(dataset.training_samples, invalid_candidates, true);
+    } catch (const CausalGraphError&) {
+        transactional_fit_rejected = true;
+    }
+    auto nonfinite_context = dataset.intervention_cases.front().context_values;
+    nonfinite_context.front() = std::numeric_limits<double>::infinity();
+    bool nonfinite_query_rejected = false;
+    try {
+        static_cast<void>(learner.predict_intervention(nonfinite_context, 1, 0.2, 3));
+    } catch (const CausalGraphError&) {
+        nonfinite_query_rejected = true;
+    }
+    require(missing_parent_rejected && invalid_enum_rejected && same_time_rejected && duplicate_encoder_rejected &&
+                nonfinite_encoder_rejected && transactional_fit_rejected && learner.fitted() &&
+                learner.parent_hypotheses() == before && nonfinite_query_rejected,
+            "strict causal metadata or learner failure path did not fail closed");
+    return "{\"missing_parent\":\"rejected\",\"invalid_enum\":\"rejected\",\"same_timestamp\":\"rejected\",\"duplicate_encoder_id\":\"rejected\",\"nonfinite_encoder\":\"rejected\",\"transactional_fit\":\"preserved\",\"nonfinite_query\":\"rejected\"}";
+}
+
 std::string ablation_check(const CausalDataset& dataset) {
     CausalEncodingConfig with_edges;
     CausalEncodingConfig without_edges = with_edges;
@@ -416,6 +488,7 @@ int main(int argc, char** argv) {
         {"intervention_effect_prediction", [&]() { return intervention_check(dataset); }},
         {"counterfactual_consistency", [&]() { return counterfactual_check(dataset); }},
         {"robustness_and_abstention", [&]() { return robustness_abstention_check(dataset); }},
+        {"strict_contract_failure_closure", [&]() { return strict_contract_failure_check(dataset); }},
         {"ablation_integrity", [&]() { return ablation_check(dataset); }},
         {"reproducibility", reproducibility_check},
     };
