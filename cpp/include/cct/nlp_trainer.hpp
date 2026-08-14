@@ -85,6 +85,11 @@ struct NlpGradientResult {
     std::vector<double> gradients;
 };
 
+struct NlpPreferencePair {
+    NlpSequence preferred;
+    NlpSequence rejected;
+};
+
 struct NlpTrainingPoint {
     std::size_t step = 0;
     std::size_t data_cursor = 0;
@@ -170,7 +175,9 @@ public:
 
     NlpEvaluation evaluate(const std::vector<NlpSequence>& sequences) const;
     NlpTrainingPoint train_step(const NlpDataset& dataset);
+    NlpTrainingPoint train_preference_step(const NlpPreferencePair& pair, double margin = 0.0);
     std::vector<NlpTrainingPoint> train_steps(const NlpDataset& dataset, std::size_t steps);
+    std::vector<NlpTrainingPoint> train_preference_steps(const std::vector<NlpPreferencePair>& pairs, std::size_t steps, double margin = 0.0);
     void save_checkpoint(const std::string& path) const;
     static NlpTrainer load_checkpoint(const std::string& path, const std::string& expected_tokenizer_hash = {},
                                       const std::string& expected_dataset_hash = {});

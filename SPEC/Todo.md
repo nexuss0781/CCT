@@ -610,7 +610,49 @@ cat artifacts/track1/training/training_report.json
 - [x] Verify invalid, unknown, malformed, unauthorized, ambiguous, evidence-missing, identity-mismatched, corrupted, and side-effectful operation coverage.
 - [ ] Record explicit user approval for transition to L1-9 bounded teaching evaluation.
 
-**Transition:** `PASS` authorizes L1-9 bounded teaching evaluation.
+**Transition:** `PASS` authorizes L1-9 bounded teaching evaluation only after explicit user approval.
+
+---
+
+# English Acquisition Milestone — Native C++ English Competence Pilot
+
+**Objective:** Train the CCT language core on real English text and grammar supervision before resuming operation or teaching stages.
+
+**Status:** `[x] PASS` for the declared bounded English-acquisition pilot. The release candidate uses native C++20 WikiText-2 raw preparation capped at **2,000,000 pretraining tokens**, official CoLA acceptability supervision, a frozen tokenizer, seed `1701`, a Track 1 CCT recurrence with `54,112` parameters, `30,000` WikiText updates, and `20,000` CoLA preference updates. It is evaluated on the complete **67-file / 6,700-pair BLiMP** slice and the held-out CoLA preference set. This milestone operationalizes “native English speaker” as measurable English-language modeling and grammar preference; it does not claim human-speaker equivalence or broad language competence.
+
+## English acquisition implementation
+
+- [x] Acquire and hash the real BLiMP benchmark: `8c043d41701fff01cabf22fb9a2fd8e15cecac5240b777ff41680f4eb7fffc17`.
+- [x] Acquire and hash the official CoLA archive: `f212fcd832b8f7b435fb991f101abf89f96b933ab400603bf198960dfc32cbff`.
+- [x] Prepare a larger pinned WikiText-2 native bundle with 2,000,000 train tokens and zero governed split leakage.
+- [x] Add native causal language training, matched no-training control, checkpoint persistence, and evaluation-only checkpoint replay.
+- [x] Add native CoLA preference training with explicit acceptable-versus-unacceptable ranking loss and separate CoLA validation pairs.
+- [x] Add native BLiMP full-file parsing, Unicode-safe sentence scoring, per-field reports, malformed-row rejection, and bounded generation diagnostics.
+- [x] Add strict preference optimizer, checkpoint-lineage, token-range, empty-pair, and malformed-input regressions.
+
+## English acquisition verification
+
+- [x] Held-out WikiText validation cross-entropy improves from `6.643524257` to `5.757517432`; frozen WikiText test cross-entropy improves from `6.641137779` to `5.764278294`.
+- [x] Full BLiMP scoring covers all 67 files and 6,700 pairs; adapted accuracy is `0.5288059701`, above chance and above the matched no-training control `0.4929850746`.
+- [x] Held-out CoLA preference improves from control `347/721` to adapted `392/721`.
+- [x] Checkpoint identity `a38aea8e01a6609ddf7705c10dfc1b5513a0445a5fe6ddabbc9ca6c7ac2328b6` matches the report and strict lineage reload.
+- [x] Bounded generation produces non-empty valid UTF-8 outputs for all five fixed prompts; external actions remain disabled.
+- [x] Independent English gate records `14/14 PASS`; focused preference regressions pass; final strict Release and expanded-warning repository validation both pass `43/43`.
+
+## English acquisition artifacts
+
+- [x] Native runner: `cpp/tools/english_acquisition.cpp`.
+- [x] Native preference optimizer: `cpp/include/cct/nlp_trainer.hpp` and `cpp/src/nlp_trainer.cpp`.
+- [x] Focused regressions: `cpp/tests/english_acquisition_tests.cpp`.
+- [x] Independent gate: `cpp/tools/l1_english_gate.cpp`.
+- [x] Contract and source notes: `Stages/L1-English_Acquisition.md` and `Stages/english_acquisition_sources.md`.
+- [x] Durable bundle: `artifacts/english/acquisition/`.
+
+## English acquisition transition
+
+- [x] Freeze source, tokenizer, WikiText/CoLA/BLiMP identities, model configuration, seed, optimizer budgets, evaluator, and side-effect policy.
+- [x] Run the independent English gate against the evaluation-only checkpoint report; all 14 checks pass.
+- [ ] Record explicit user approval before returning to L1-9 bounded teaching behavior.
 
 ---
 

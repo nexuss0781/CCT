@@ -1,0 +1,52 @@
+{
+  "status": "PASS",
+  "milestone": "l1-english-acquisition",
+  "backend": "native-c++20-track1-cct-recurrence",
+  "source": {
+    "wikitext_manifest_hash": "e8fa16f757cfa53c7b58cc42355ed02cfeaa1964b601cfb9724422a588b3ae3e",
+    "wikitext_dataset_hash": "323701ce138ca26b6ee8ae3dc2a93fb49423366c9fe629aadd1176588c62bb1c",
+    "cola_dataset_hash": "544c88f77f81e163377d18e57860a4fc45a40d3dbb0d5920cd09c432ffebf69d",
+    "blimp_archive_hash": "8c043d41701fff01cabf22fb9a2fd8e15cecac5240b777ff41680f4eb7fffc17",
+    "cola_archive_hash": "f212fcd832b8f7b435fb991f101abf89f96b933ab400603bf198960dfc32cbff",
+    "tokenizer_hash": "902e5a44f372a3d972b6f21036d62d7878f1d6907805c841e49aa84297ba7b0a"
+  },
+  "configuration": {
+    "seed": 1701,
+    "pretraining_tokens": 2000000,
+    "pretrain_steps": 30000,
+    "grammar_steps": 20000,
+    "learning_rate": 0.001,
+    "grammar_learning_rate": 0.005,
+    "context_length": 256,
+    "embedding_dim": 32,
+    "hidden_dim": 32,
+    "parameter_count": 54112
+  },
+  "checkpoint": {
+    "path": "english_checkpoint.bin",
+    "sha256": "a38aea8e01a6609ddf7705c10dfc1b5513a0445a5fe6ddabbc9ca6c7ac2328b6"
+  },
+  "evaluation": {
+    "report": "evaluation_report.json",
+    "blimp_files": 67,
+    "blimp_pairs": 6700,
+    "blimp_accuracy": 0.5288059701,
+    "cola_control_correct": 347,
+    "cola_adapted_correct": 392,
+    "cola_evaluation_pairs": 721,
+    "external_actions": false,
+    "evaluation_only": true
+  },
+  "gate": {
+    "report": "gate/report.md",
+    "checks": "gate/checks.json",
+    "passed": 14,
+    "total": 14
+  },
+  "claims": {
+    "bounded_english_modeling_and_grammar_preference": true,
+    "human_native_speaker_equivalence": false,
+    "broad_language_competence": false,
+    "production_readiness": false
+  }
+}
