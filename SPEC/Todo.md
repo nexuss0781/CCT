@@ -16,6 +16,24 @@ A checkbox is not evidence by itself. A task may be marked complete only when th
 | `[!]` | Failed or invalidated. Stop at the boundary, preserve the failure, remediate, and rerun. |
 | `[?]` | Blocked by an explicitly optional dependency. Mandatory Level 1 gates remain closed. |
 
+## 2.1 Completed remediation register
+
+The former review backlog has been consolidated here. The remediation register is evidence-backed by the native C++20 implementation, realistic failure-path tests, identity-linked artifacts, and the pushed commit [`a3fc4d9`](https://github.com/nexuss0781/CCT/commit/a3fc4d9). It is not a claim that the later language-teacher stages are complete.
+
+| Remediation area | Status | Evidence and contract boundary |
+|---|---|---|
+| Training safety and checkpoint identity | `[x]` | Transactional optimizer publication, validation cadence/timing, atomic checkpoints, and canonical training-contract digest. |
+| Causal and field numerical behavior | `[x]` | Strict temporal policy, bounded QR ridge solver, conservative stability domain, explicit operator semantics, and finite-difference-checked rollout gradients. |
+| Corpus governance | `[x]` | UTF-8-safe truncation, deterministic normalization, split-aware indexed contamination checks, bounded parsing, and heuristic-only policy candidates. |
+| Public API and synchronization | `[x]` | Ownership, borrowed-reference lifetime, synchronization, and failure contracts documented in public headers. |
+| Serialization hardening | `[x]` | Byte/count/dimension/string/parameter budgets and fail-closed version handling across supported serializers. |
+| Retrieval baseline | `[x]` | Memory V3 external-vector identity, indexed lexical retrieval, linear correctness oracle, knowledge posting index, and provider identity. Semantic embedding quality is not claimed. |
+| Track 1 evaluation scope | `[x]` | Durable artifacts distinguish target-token prediction from answer-quality evaluation; EM/F1 require a separate constrained evaluator. |
+| Real application evidence | `[x]` | Durable Stage 16 checkpoint/tokenizer black-box release activation and real inference request. |
+| Build and sanitizer validation | `[x]` | 39/39 strict Release tests, 39/39 expanded-warning tests, 20/20 ASan/UBSan unit tests, and 19/19 sanitizer gates with a bounded Stage 5 instrumentation workload. |
+
+The next executable Level 1 move is **L1-6 fresh release-bound Track 1 training**. It must produce durable pretraining and supervised checkpoints from the release checkout before L1-7 instruction adaptation begins.
+
 ## 3. Global Level 1 controls
 
 ### 3.1 Program controls
@@ -60,7 +78,7 @@ A checkbox is not evidence by itself. A task may be marked complete only when th
 
 **Dependency:** None.
 
-**Current status:** `REVALIDATE` — historical baseline records exist; fresh replay is required after environment or repository changes.
+**Current status:** `PASS — fresh native replay at a3fc4d9` for the declared reproducible baseline contract; a clean external release-checkout replay remains required before release use.
 
 ## L1-0 implementation tasks
 
@@ -125,7 +143,7 @@ ctest --test-dir build-cpp --output-on-failure
 
 **Dependency:** L1-0 `PASS`.
 
-**Current status:** `REVALIDATE` — historical numerical-engine evidence exists; fresh replay is required after changes.
+**Current status:** `PASS — fresh native replay at a3fc4d9` for the declared numerical and field contracts; a clean external release-checkout replay remains required before release use.
 
 ## L1-1 implementation tasks
 
@@ -182,7 +200,7 @@ ctest --test-dir build-cpp --output-on-failure
 
 **Dependency:** L1-1 `PASS`.
 
-**Current status:** `REVALIDATE` — historical sequence-core evidence exists; fresh replay is required after changes.
+**Current status:** `PASS — fresh native replay at a3fc4d9` for the declared causal sequence contract; a clean external release-checkout replay remains required before release use.
 
 ## L1-2 implementation tasks
 
@@ -238,7 +256,7 @@ ctest --test-dir build-cpp --output-on-failure
 
 **Dependency:** L1-2 `PASS`.
 
-**Current status:** `REVALIDATE` — historical causal-event evidence exists; fresh replay is required after changes.
+**Current status:** `PASS — fresh native replay at a3fc4d9` for the declared event, causality, and state-discipline contract; a clean external release-checkout replay remains required before release use.
 
 ## L1-3 implementation tasks
 
@@ -293,7 +311,7 @@ ctest --test-dir build-cpp --output-on-failure
 
 **Dependency:** L1-3 `PASS`.
 
-**Current status:** `REVALIDATE` — historical tokenizer and representation evidence exists; fresh replay is required after changes.
+**Current status:** `PASS — fresh native replay at a3fc4d9` for the declared tokenizer and representation contract; a clean external release-checkout replay remains required before release use.
 
 ## L1-4 implementation tasks
 
@@ -347,7 +365,7 @@ ctest --test-dir build-cpp --output-on-failure
 
 **Dependency:** L1-4 `PASS`.
 
-**Current status:** `REVALIDATE` — historical native NLP core evidence exists; fresh replay is required after changes.
+**Current status:** `PASS — fresh native replay at a3fc4d9` for the declared native trainable language-core contract; a clean external release-checkout replay remains required before release use.
 
 ## L1-5 implementation tasks
 

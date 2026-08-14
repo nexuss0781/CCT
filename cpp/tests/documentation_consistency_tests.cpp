@@ -26,7 +26,6 @@ void test_authority_and_stage_contracts() {
     const auto todo = read_file(root / "SPEC" / "Todo.md");
     const auto status = read_file(root / "SPEC" / "Status.md");
     const auto architecture = read_file(root / "Architecture.md");
-    const auto issues = read_file(root / "ISSUES_TODO.md");
     require(goal.find("Native C++20") != std::string::npos && goal.find("Level 1") != std::string::npos,
             "canonical goal does not declare the native Level 1 contract");
     require(todo.find("SPEC/Goal.md") != std::string::npos && todo.find("A checkbox is not evidence") != std::string::npos,
@@ -35,8 +34,8 @@ void test_authority_and_stage_contracts() {
             "status authority does not declare the identity envelope");
     require(architecture.find("C++20") != std::string::npos && architecture.find("checkpoint-backed") != std::string::npos,
             "architecture does not describe the current native implementation");
-    require(issues.find("BUILD-001") != std::string::npos && issues.find("TEST-003") != std::string::npos,
-            "issue backlog is not linked to the documentation authority");
+    require(todo.find("Completed remediation register") != std::string::npos && todo.find("Build and sanitizer validation") != std::string::npos,
+            "canonical todo does not retain the completed remediation authority");
     for (unsigned int stage = 0U; stage <= 17U; ++stage) {
         const auto prefix = (stage < 10U ? "0" : "") + std::to_string(stage) + "_";
         bool found = false;
