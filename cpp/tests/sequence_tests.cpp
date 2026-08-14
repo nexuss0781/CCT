@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <limits>
 #include <random>
@@ -348,6 +349,103 @@ void test_normalization_ablation() {
     std::filesystem::remove(path);
 }
 
+void test_state_contract_checkpoint_and_failure_paths() {
+    SequenceConfig state_config{3, 8, 2, 1e-5, 83};
+    SelectiveSequenceCore core(state_config);
+    const auto sequence = inputs(13, 3);
+    const auto full = core.forward(sequence);
+    std::vector<std::uint8_t> mask{1U, 0U, 1U, 0U, 1U};
+    const auto masked = core.forward(std::vector<std::vector<double>>(sequence.begin(), sequence.begin() + 5), mask);
+    require(masked.final_state.position == 3U && masked.final_state.reset_epoch == 0U,
+            "masked active-position accounting is incorrect");
+    const auto reset = core.reset_state(masked.final_state, 3U);
+    require(reset.position == 0U && reset.reset_epoch == 1U && core.state_norm(reset) == 0.0,
+            "explicit reset did not clear state or advance epoch");
+    bool rejected = false;
+    try {
+        static_cast<void>(core.reset_state(masked.final_state, 2U));
+    } catch (const SequenceError&) {
+        rejected = true;
+    }
+    require(rejected, "out-of-order reset request was accepted");
+    rejected = false;
+    try {
+        static_cast<void>(core.forward(std::vector<std::vector<double>>(sequence.begin(), sequence.begin() + 2), {1U, 2U}));
+    } catch (const SequenceError&) {
+        rejected = true;
+    }
+    require(rejected, "non-binary state mask was accepted");
+
+    const std::vector<std::vector<double>> prefix(sequence.begin(), sequence.begin() + 5);
+    const std::vector<std::vector<double>> suffix(sequence.begin() + 5, sequence.end());
+    const auto prefix_result = core.forward(prefix);
+    const auto path = std::filesystem::temp_directory_path() / "cct_sequence_state_resume.chk";
+    core.save_checkpoint(path.string(), 91U, &prefix_result.final_state);
+    std::uint64_t optimizer_step = 0U;
+    SequenceState restored_state;
+    const auto restored = SelectiveSequenceCore::load_checkpoint(path.string(), &optimizer_step, &restored_state);
+    const auto resumed = restored.forward(suffix, {}, &restored_state);
+    std::vector<std::vector<double>> expected_suffix(full.outputs.begin() + 5, full.outputs.end());
+    require(optimizer_step == 91U && restored_state.position == 5U && restored_state.reset_epoch == 0U,
+            "recurrent checkpoint state metadata was not restored");
+    require(max_output_difference(expected_suffix, resumed.outputs) < 1e-15 && resumed.final_state.position == full.final_state.position,
+            "recurrent checkpoint resume diverged from uninterrupted execution");
+    std::filesystem::remove(path);
+
+    const auto corrupt = std::filesystem::temp_directory_path() / "cct_sequence_corrupt.chk";
+    {
+        std::ofstream stream(corrupt);
+        stream << "CCT_SEQUENCE_CHECKPOINT_V3\\n";
+    }
+    rejected = false;
+    try {
+        static_cast<void>(SelectiveSequenceCore::load_checkpoint(corrupt.string()));
+    } catch (const SequenceError&) {
+        rejected = true;
+    }
+    std::filesystem::remove(corrupt);
+    require(rejected, "truncated checkpoint was accepted");
+
+    auto parameters = core.parameter_vector();
+    parameters.front() = std::numeric_limits<double>::quiet_NaN();
+    rejected = false;
+    try {
+        core.set_parameter_vector(parameters);
+    } catch (const SequenceError&) {
+        rejected = true;
+    }
+    require(rejected, "non-finite parameter vector was accepted");
+    const std::vector<std::vector<double>> target(sequence.size(), std::vector<double>(state_config.output_dim, 0.0));
+    auto gradients = core.loss_and_gradients(sequence, target);
+    gradients.d_bias.front() = std::numeric_limits<double>::infinity();
+    const auto before_parameters = core.parameter_vector();
+    rejected = false;
+    try {
+        core.apply_sgd(gradients, 0.01, 1.0);
+    } catch (const SequenceError&) {
+        rejected = true;
+    }
+    require(rejected && core.parameter_vector() == before_parameters, "non-finite update was accepted or mutated parameters");
+}
+
+void test_adversarial_gate_clamp_scan_equivalence() {
+    SequenceConfig gate_config{1, 4, 1, 1e-3, 89};
+    SelectiveSequenceCore core(gate_config);
+    auto parameters = core.parameter_vector();
+    const auto retain_bias_offset = 4U * gate_config.hidden_dim * gate_config.input_dim +
+                                    gate_config.output_dim * gate_config.hidden_dim + gate_config.output_dim * gate_config.input_dim +
+                                    gate_config.hidden_dim;
+    for (std::size_t index = 0U; index < gate_config.hidden_dim; ++index) parameters[retain_bias_offset + index] = -100.0;
+    core.set_parameter_vector(parameters);
+    const auto sequence = inputs(33, 1);
+    const auto loop = core.forward(sequence);
+    const auto scan = core.forward_scan(sequence);
+    require(max_output_difference(loop.outputs, scan.outputs) < 1e-12 &&
+                max_difference(loop.final_state.hidden, scan.final_state.hidden) < 1e-12 &&
+                loop.final_state.position == scan.final_state.position,
+            "adversarial gate-clamp scan diverged from the reference recurrence");
+}
+
 void test_segmented_mask_scan() {
     SelectiveSequenceCore core(config());
     const auto sequence = inputs(40, 3);
@@ -379,6 +477,8 @@ int main() {
         {"checkpoint_recovery", test_checkpoint_recovery},
         {"stability_and_updates", test_stability_and_updates},
         {"invalid_input_safety", test_invalid_inputs},
+        {"state_contract_checkpoint_and_failure_paths", test_state_contract_checkpoint_and_failure_paths},
+        {"adversarial_gate_clamp_scan_equivalence", test_adversarial_gate_clamp_scan_equivalence},
         {"complex_state_equivalence", test_complex_state_equivalence},
         {"normalization_ablation_and_checkpoint", test_normalization_ablation},
         {"segmented_mask_scan", test_segmented_mask_scan},

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <vector>
 
 namespace cct {
@@ -16,7 +17,7 @@ double sigmoid(double value) {
     return z / (1.0 + z);
 }
 
-double stable_gate(double raw) { return std::clamp(sigmoid(raw), 1e-4, 1.0 - 1e-4); }
+double stable_gate(double raw, double epsilon) { return std::clamp(sigmoid(raw), epsilon, 1.0 - epsilon); }
 
 }  // namespace
 
@@ -24,7 +25,7 @@ SequenceOutput SelectiveSequenceCore::forward_scan(
     const std::vector<std::vector<double>>& inputs,
     const std::vector<std::uint8_t>& mask,
     const SequenceState* initial) const {
-    if (!mask.empty() && mask.size() != inputs.size()) throw SequenceError("mask length mismatch");
+    validate_mask(mask, inputs.size());
     if (config_.normalize_state) return forward(inputs, mask, initial);
     auto state = initial == nullptr ? initial_state() : *initial;
     validate_state(state);
@@ -63,7 +64,7 @@ SequenceOutput SelectiveSequenceCore::forward_scan(
             std::vector<double> hidden(config_.hidden_dim, 0.0);
             std::vector<double> hidden_imag(config_.hidden_dim, 0.0);
             for (std::size_t index = 0; index < config_.hidden_dim; ++index) {
-                const auto retain = config_.selective_gates ? stable_gate(retain_raw[index]) : 0.95;
+                const auto retain = config_.selective_gates ? stable_gate(retain_raw[index], config_.gate_epsilon) : 0.95;
                 const auto write = config_.selective_gates ? sigmoid(write_raw[index]) : 0.5;
                 const auto candidate = std::tanh(candidate_raw[index] + previous_projection[index]);
                 if (!config_.complex_state) {
@@ -114,7 +115,12 @@ SequenceOutput SelectiveSequenceCore::forward_scan(
                     state.hidden_imag[index] = prefix_m10[index] * initial_hidden[index] + prefix_m11[index] * initial_imag[index] + prefix_bi[index];
                 }
             }
+            const auto active_count = static_cast<std::uint64_t>(time - segment_start);
+            if (active_count > std::numeric_limits<std::uint64_t>::max() - state.position) {
+                throw SequenceError("sequence position overflow");
+            }
             state.previous_input = inputs[time - 1];
+            state.position += active_count;
         }
     }
     result.final_state = std::move(state);

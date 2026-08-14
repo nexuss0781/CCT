@@ -25,6 +25,10 @@ struct SequenceState {
     std::vector<double> hidden;
     std::vector<double> hidden_imag;
     std::vector<double> previous_input;
+    /** Number of active events consumed since the most recent explicit reset. */
+    std::uint64_t position = 0;
+    /** Monotonic reset generation used to make reset boundaries auditable. */
+    std::uint64_t reset_epoch = 0;
 };
 
 struct SequenceOutput {
@@ -56,7 +60,9 @@ public:
     explicit SelectiveSequenceCore(SequenceConfig config);
 
     const SequenceConfig& config() const noexcept { return config_; }
-    SequenceState initial_state() const;
+    SequenceState initial_state(std::uint64_t reset_epoch = 0) const;
+    /** Reset only the supplied state at its declared position; mismatched reset requests fail closed. */
+    SequenceState reset_state(const SequenceState& state, std::uint64_t expected_position) const;
     SequenceState step(const std::vector<double>& input, const SequenceState& state,
                        std::vector<double>* output = nullptr) const;
     SequenceOutput forward(const std::vector<std::vector<double>>& inputs,
@@ -86,9 +92,12 @@ public:
     double hidden_rms(const SequenceState& state) const;
     double output_rms(const std::vector<double>& output) const;
 
-    void save_checkpoint(const std::string& path, std::uint64_t optimizer_step = 0) const;
+    void save_checkpoint(const std::string& path,
+                         std::uint64_t optimizer_step = 0,
+                         const SequenceState* recurrent_state = nullptr) const;
     static SelectiveSequenceCore load_checkpoint(const std::string& path,
-                                                 std::uint64_t* optimizer_step = nullptr);
+                                                 std::uint64_t* optimizer_step = nullptr,
+                                                 SequenceState* recurrent_state = nullptr);
 
 private:
     struct Parameters {
@@ -108,6 +117,7 @@ private:
     Parameters parameters_;
 
     void validate_input(const std::vector<double>& input) const;
+    void validate_mask(const std::vector<std::uint8_t>& mask, std::size_t expected) const;
     void validate_state(const SequenceState& state) const;
     std::vector<double> matvec(const std::vector<double>& matrix,
                                std::size_t rows, std::size_t columns,
