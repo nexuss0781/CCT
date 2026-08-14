@@ -4,7 +4,7 @@
 **Stage ID:** 2  
 **Predecessor:** Stage 1 — Differentiable Numerical Engine  
 **Successor:** Stage 3 — Causal Event Learning  
-**Status:** Implemented in native C++; Stage 2 gate PASS
+**Status:** Implemented in native C++; Stage 2 gate PASS with explicit state position/reset epochs, recurrent-state checkpoint recovery, configured gate-clamp equivalence, and fail-closed state/update validation.
 
 ## Purpose
 
@@ -29,6 +29,8 @@ y_t = C_t ⊙ h_t + D ⊙ x_t
 
 where `A_t` is bounded so that the retained state is stable, and `B_t`, `Bprev_t`, and `C_t` may be content-dependent. The implementation must specify whether each tensor is scalar, diagonal, block-diagonal, low-rank, or dense. No undocumented broadcasting is allowed.
 
+`SequenceState` owns real and optional imaginary hidden vectors, the previous input, an active-event `position`, and a monotonic `reset_epoch`. A masked event does not advance `position`; an explicit `reset_state(state, expected_position)` rejects an out-of-order reset request and advances only the supplied state’s reset epoch. The checkpoint format persists this state when requested, so a resumed suffix is compared directly with uninterrupted execution.
+
 The public native API is:
 
 ```cpp
@@ -47,14 +49,14 @@ The prefix-scan path and one-step decode path share the same real diagonal recur
 | Input encoder | Accept an explicit fixed-width event/token feature vector; metadata channels can be included in `input_dim` without hidden broadcasting | Feature dimensions and missing-feature behavior are explicit |
 | Transition parameterization | Use bounded decay or stable matrix parameterization; expose spectral-radius diagnostics | Invalid or unstable transition is rejected or regularized |
 | Selective gates | Compute write, retain, and read controls from the current input using a documented projection | Gate values are finite and within declared ranges |
-| Reference recurrence | Implement a pure scan or loop with explicit state updates | Reference outputs are reproducible and differentiable |
+| Reference recurrence | Implement a pure scan or loop with explicit state updates, active-event position, and reset epoch | Reference outputs are reproducible, differentiable, and reset-boundary auditable |
 | Parallel training path | Implement an associative prefix scan for real and complex diagonal recurrence segments; masked positions preserve state and use a segmented scan | Matches reference outputs within tolerance across multiple mask boundaries |
 | Decode path | Implement constant-state `step` API | Step-by-step outputs match batched path |
 | Complex option | Enable complex state behind an explicit configuration flag with real/imaginary conventions and checkpoint persistence | Complex loop/scan/step paths are equivalent and finite |
 | MIMO projection | Support multiple inputs and outputs without unbounded state growth | Parameter count and state size are reported |
 | Normalization | Provide state/output RMS normalization disabled by default with exact on/off ablation and checkpoint persistence | Enabled path reaches declared RMS target and ablation is measurable |
 | Output heads | Expose generic MIMO output projection for deterministic next-event objectives | Output projection does not alter recurrence state semantics |
-| Checkpointing | Save model, optimizer, config, vocabulary/schema, and RNG state | Resume reproduces the next training step within tolerance |
+| Checkpointing | Save model configuration, parameters, optimizer step, and optional recurrent state in bounded versioned records | Resume reproduces the next suffix within tolerance; corrupt, oversized, non-finite, mismatched, and trailing records are rejected |
 
 ## Reference baselines
 
@@ -104,7 +106,7 @@ Run the same sequence in one batched call, fixed-size chunks, and one event at a
 
 For randomly initialized small models, compare the reference step loop, parallel scan, and optimized kernel. Use finite differences or an independent autodiff implementation for selected parameters. Test gradients through sequence length, metadata features, and state initialization.
 
-Run long-horizon stability tests with random inputs and adversarial gate patterns. Record state norms, transition radii, gradient norms, and output saturation. The harness must fail on NaN, infinity, unexplained state explosion, or silent truncation.
+Run long-horizon stability tests with random inputs and adversarial gate patterns. Record state norms, transition radii, gradient norms, and output saturation. The harness must fail on NaN, infinity, unexplained state explosion, silent truncation, non-binary masks, malformed checkpoints, out-of-order reset requests, and non-finite atomic updates.
 
 ## Complexity and efficiency harness
 
@@ -142,7 +144,7 @@ The stage passes only when all mandatory criteria are satisfied. A quality impro
 
 Stage 3 may begin when the sequence core is a stable reusable module with documented interfaces, matched baseline results, and an evaluation report showing where it succeeds and fails. The model must support metadata channels needed for causal events, but those channels must not yet be treated as proven causal understanding.
 
-The transition package includes the native model configuration schema, reference and prefix-scan implementations, segmented-mask logic, complex/normalization toggles, deterministic copy/parity/associative/overwrite generators, fully trained baseline metrics, scaling data, checkpoint-resume test, expanded ablation report, source research notes, and final limitation-closure evidence.
+The transition package includes the native model configuration schema, reference and prefix-scan implementations, segmented-mask logic, state-position/reset contract, complex/normalization toggles, deterministic copy/parity/associative/overwrite generators, fully trained baseline metrics, scaling data, recurrent-state checkpoint-resume test, adversarial gate-clamp equivalence, expanded ablation report, source research notes, and final limitation-closure evidence.
 
 If the stage fails, the team must first determine whether the failure comes from recurrence mathematics, optimizer/training setup, data encoding, or evaluation leakage. New complexity must not be added merely to hide a failure on a basic state-tracking task.
 
@@ -150,7 +152,7 @@ If the stage fails, the team must first determine whether the failure comes from
 
 The exit report contains per-task training and extrapolation results, trained matched-baseline losses, state memory and timing profiles, real/complex loop/scan equivalence results, gradient discrepancies, checkpoint recovery evidence, normalization and selective-gate ablations, segmented-mask evidence, and explicit micro-comparison scope.
 
-**Transition decision:** `PASS` authorizes Stage 3 preparation. `FAIL` requires correction. The strengthened gate has **12 mandatory checks**; no Stage 2 limitation remains deferred. Stage 3 implementation still requires explicit user approval.
+**Transition decision:** `PASS` authorizes Stage 3 preparation. `FAIL` requires correction. The strengthened gate has **16 mandatory checks**; no declared Stage 2 limitation remains deferred. Stage 3 implementation still requires explicit user approval.
 
 ## References
 

@@ -203,51 +203,51 @@ The declared L1-1 scope is the native scalar-field substrate; sequence-state bat
 
 **Dependency:** L1-1 `PASS`.
 
-**Current status:** `PASS — fresh native replay at a3fc4d9` for the declared causal sequence contract; a clean external release-checkout replay remains required before release use.
+**Current status:** `[x] PASS` for the declared native selective recurrent sequence contract. The fresh gate covers reference/scan/streaming equivalence, complex and segmented paths, selected and all-mode gradients, long-horizon stability, controlled algorithmic training and matched baselines, state-position/reset semantics, recurrent-state checkpoint resume, adversarial configured gate clamps, and realistic fail-closed inputs, updates, and checkpoint fixtures. Artifact publication remains approval-gated for L1-3.
 
 ## L1-2 implementation tasks
 
-- [ ] Define state initialization and reset semantics.
-- [ ] Define update order and causal boundaries.
-- [ ] Implement typed recurrent state.
-- [ ] Implement state ownership, serialization, versioning, and loading.
-- [ ] Implement full-sequence execution.
-- [ ] Implement chunked execution.
-- [ ] Implement streaming execution.
-- [ ] Implement incremental state reuse and flush behavior.
-- [ ] Bound state memory and allocations.
-- [ ] Add invalid state-version failure.
-- [ ] Add wrong-shape state failure.
-- [ ] Add out-of-order event failure.
-- [ ] Add unexpected reset failure.
-- [ ] Add non-finite recurrence failure.
+- [x] Define state initialization, active-position, and explicit reset-epoch semantics.
+- [x] Define causal update order: only active events advance the supplied state; masked events preserve state and position.
+- [x] Implement typed recurrent state with real/optional-imaginary hidden vectors, previous input, position, and reset epoch.
+- [x] Implement state ownership, V3 serialization, versioning, bounded loading, and optional recurrent-state recovery.
+- [x] Implement full-sequence reference execution.
+- [x] Implement chunked execution with exact carried-state equivalence.
+- [x] Implement one-event streaming execution with exact carried-state equivalence.
+- [x] Implement incremental state reuse, suffix resume, and explicit reset with audited epochs.
+- [x] Bound model dimensions, matrix arithmetic, checkpoint vector budgets, and constant decode-state storage.
+- [x] Add invalid checkpoint-version, truncated, oversized, non-finite, mismatched-size, invalid-boolean, and trailing-data failures.
+- [x] Add wrong-shape state, input, target, and mask failures.
+- [x] Add non-binary masks and out-of-order reset-request failures.
+- [x] Add unexpected reset position and reset-epoch-overflow failures.
+- [x] Add non-finite recurrence input/state/parameter/gradient/update failures with atomic parameter publication.
 
 ## L1-2 verification tasks
 
-- [ ] Compare full-sequence and streaming outputs within declared tolerances.
-- [ ] Compare full-sequence and chunked outputs.
-- [ ] Verify state reload, reset, and replay.
-- [ ] Measure memory, throughput, latency, and allocation behavior.
-- [ ] Exercise long-sequence and repeated-reset fixtures.
-- [ ] Verify invalid state transitions fail closed.
-- [ ] Verify no future event is consumed.
+- [x] Compare full-sequence and streaming outputs within the frozen `1e-12` tolerance.
+- [x] Compare full-sequence and chunked outputs with carried-state equality.
+- [x] Verify model reload, recurrent-state suffix resume, explicit reset, and deterministic replay.
+- [x] Measure forward scaling, decode state memory, matched-baseline state memory, parameters, and timing.
+- [x] Exercise 16,384-event long-horizon, segmented-mask, adversarial gate-clamp, and reset/resume fixtures.
+- [x] Verify invalid state transitions, masks, configuration, checkpoint, parameter, and update paths fail closed.
+- [x] Verify no future event is consumed: recurrence state advances only from the current active input and stored previous active input.
 
 ## L1-2 artifacts
 
-- [ ] State contract.
-- [ ] Full-vs-streaming equivalence report.
-- [ ] Resource profile.
-- [ ] State recovery report.
-- [ ] Failure-path report.
-- [ ] L1-2 gate record.
-- [ ] L1-2 transition record.
+- [x] State contract in `cpp/include/cct/sequence.hpp` and `Stages/02_Sequence_Core.md`.
+- [x] Full-vs-streaming/scan/chunked equivalence report in `artifacts/stage-2/cpp-gate/checks.json`.
+- [x] Resource and matched-baseline profile in the same native gate bundle.
+- [x] State recovery report covering V3 recurrent-state suffix resume and normalization checkpoint recovery.
+- [x] Failure-path report covering non-binary masks, state/reset ordering, non-finite parameters and updates, and corrupt checkpoints.
+- [x] L1-2 gate record under `artifacts/stage-2/cpp-gate/`.
+- [x] L1-2 transition record encoded as `PASS` with user approval required for L1-3.
 
 ## L1-2 gate and transition
 
-- [ ] Freeze equivalence and resource thresholds.
-- [ ] Run the formal L1-2 gate.
-- [ ] Preserve the simple sequence path as a correctness oracle.
-- [ ] Record transition approval for L1-3.
+- [x] Freeze equivalence, gradient, stability, resource, and algorithmic thresholds before the final run.
+- [x] Run the formal native L1-2 gate.
+- [x] Preserve the reference loop as the oracle for scan, chunked, streaming, masked, complex, normalized, and adversarial-gate paths.
+- [ ] Record explicit user approval for transition to L1-3.
 
 **Transition:** `PASS` authorizes L1-3 event and state discipline.
 

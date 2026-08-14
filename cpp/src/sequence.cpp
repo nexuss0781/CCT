@@ -14,7 +14,15 @@
 namespace cct {
 namespace {
 
-std::size_t matrix_size(std::size_t rows, std::size_t columns) { return rows * columns; }
+constexpr std::size_t kMaximumSequenceDimension = 8192U;
+constexpr std::size_t kMaximumCheckpointValues = 64U * 1024U * 1024U;
+
+std::size_t matrix_size(std::size_t rows, std::size_t columns) {
+    if (rows != 0U && columns > std::numeric_limits<std::size_t>::max() / rows) {
+        throw SequenceError("matrix dimensions overflow size_t");
+    }
+    return rows * columns;
+}
 
 double sigmoid(double value) {
     if (value >= 0.0) {
@@ -45,9 +53,10 @@ void check_same_size(const std::vector<double>& left, const std::vector<double>&
 }
 
 std::vector<double> read_vector(std::istream& stream, std::size_t count) {
+    if (count > kMaximumCheckpointValues) throw SequenceError("checkpoint vector exceeds safety budget");
     std::vector<double> values(count, 0.0);
     for (auto& value : values) {
-        if (!(stream >> value)) throw SequenceError("checkpoint ended before parameter vector");
+        if (!(stream >> value) || !std::isfinite(value)) throw SequenceError("checkpoint contains invalid parameter value");
     }
     return values;
 }
@@ -68,11 +77,13 @@ std::vector<double> read_counted_vector(std::istream& stream) {
 
 SelectiveSequenceCore::SelectiveSequenceCore(SequenceConfig config)
     : config_(std::move(config)) {
-    if (config_.input_dim == 0 || config_.hidden_dim == 0 || config_.output_dim == 0) {
-        throw SequenceError("input, hidden, and output dimensions must be positive");
+    if (config_.input_dim == 0 || config_.hidden_dim == 0 || config_.output_dim == 0 ||
+        config_.input_dim > kMaximumSequenceDimension || config_.hidden_dim > kMaximumSequenceDimension ||
+        config_.output_dim > kMaximumSequenceDimension) {
+        throw SequenceError("sequence dimensions are outside the supported safety budget");
     }
-    if (!(config_.gate_epsilon > 0.0 && config_.gate_epsilon < 0.5)) {
-        throw SequenceError("gate_epsilon must be in (0, 0.5)");
+    if (!std::isfinite(config_.gate_epsilon) || !(config_.gate_epsilon > 0.0 && config_.gate_epsilon < 0.5)) {
+        throw SequenceError("gate_epsilon must be finite and in (0, 0.5)");
     }
     if (!(config_.normalization_epsilon > 0.0) || !std::isfinite(config_.normalization_epsilon)) {
         throw SequenceError("normalization_epsilon must be finite and positive");
@@ -108,16 +119,38 @@ void SelectiveSequenceCore::initialize_parameters() {
     initialize(parameters_.skip_projection);
 }
 
-SequenceState SelectiveSequenceCore::initial_state() const {
+SequenceState SelectiveSequenceCore::initial_state(std::uint64_t reset_epoch) const {
     return SequenceState{std::vector<double>(config_.hidden_dim, 0.0),
                           std::vector<double>(config_.hidden_dim, 0.0),
-                          std::vector<double>(config_.input_dim, 0.0)};
+                          std::vector<double>(config_.input_dim, 0.0),
+                          0U,
+                          reset_epoch};
+}
+
+SequenceState SelectiveSequenceCore::reset_state(const SequenceState& state,
+                                                 std::uint64_t expected_position) const {
+    validate_state(state);
+    if (state.position != expected_position) {
+        throw SequenceError("reset position does not match the supplied state");
+    }
+    if (state.reset_epoch == std::numeric_limits<std::uint64_t>::max()) {
+        throw SequenceError("reset epoch overflow");
+    }
+    return initial_state(state.reset_epoch + 1U);
 }
 
 void SelectiveSequenceCore::validate_input(const std::vector<double>& input) const {
     if (input.size() != config_.input_dim) throw SequenceError("input dimension mismatch");
     for (const auto value : input) {
         if (!std::isfinite(value)) throw SequenceError("input contains non-finite value");
+    }
+}
+
+void SelectiveSequenceCore::validate_mask(const std::vector<std::uint8_t>& mask,
+                                              std::size_t expected) const {
+    if (!mask.empty() && mask.size() != expected) throw SequenceError("mask length mismatch");
+    if (std::any_of(mask.begin(), mask.end(), [](const std::uint8_t value) { return value != 0U && value != 1U; })) {
+        throw SequenceError("mask values must be binary");
     }
 }
 
@@ -176,8 +209,10 @@ std::vector<double> SelectiveSequenceCore::output_from_state(
         double squared = 0.0;
         for (const auto value : output) squared += value * value;
         const auto rms = std::sqrt(squared / static_cast<double>(output.size()) + config_.normalization_epsilon);
+        if (!std::isfinite(rms) || rms <= 0.0) throw SequenceError("output normalization became non-finite");
         for (auto& value : output) value /= rms;
     }
+    require_finite(output, "sequence output");
     return output;
 }
 
@@ -220,20 +255,24 @@ SequenceState SelectiveSequenceCore::step(const std::vector<double>& input,
             squared += next_hidden[index] * next_hidden[index] + next_hidden_imag[index] * next_hidden_imag[index];
         }
         const auto rms = std::sqrt(squared / static_cast<double>(config_.hidden_dim) + config_.normalization_epsilon);
+        if (!std::isfinite(rms) || rms <= 0.0) throw SequenceError("state normalization became non-finite");
         for (std::size_t index = 0; index < config_.hidden_dim; ++index) {
             next_hidden[index] /= rms;
             next_hidden_imag[index] /= rms;
         }
     }
+    if (state.position == std::numeric_limits<std::uint64_t>::max()) {
+        throw SequenceError("sequence position overflow");
+    }
     if (output != nullptr) *output = output_from_state(input, next_hidden);
-    return SequenceState{std::move(next_hidden), std::move(next_hidden_imag), input};
+    return SequenceState{std::move(next_hidden), std::move(next_hidden_imag), input, state.position + 1U, state.reset_epoch};
 }
 
 SequenceOutput SelectiveSequenceCore::forward(
     const std::vector<std::vector<double>>& inputs,
     const std::vector<std::uint8_t>& mask,
     const SequenceState* initial) const {
-    if (!mask.empty() && mask.size() != inputs.size()) throw SequenceError("mask length mismatch");
+    validate_mask(mask, inputs.size());
     auto state = initial == nullptr ? initial_state() : *initial;
     validate_state(state);
     SequenceOutput result;
@@ -259,7 +298,7 @@ SequenceGradients SelectiveSequenceCore::loss_and_gradients(
     const SequenceState* initial) const {
     if (inputs.size() != targets.size()) throw SequenceError("input and target lengths differ");
     if (inputs.empty()) throw SequenceError("cannot train on an empty sequence");
-    if (!mask.empty() && mask.size() != inputs.size()) throw SequenceError("mask length mismatch");
+    validate_mask(mask, inputs.size());
     for (const auto& target : targets) {
         if (target.size() != config_.output_dim) throw SequenceError("target dimension mismatch");
         for (const auto value : target) {
@@ -296,6 +335,7 @@ SequenceGradients SelectiveSequenceCore::loss_and_gradients(
     std::vector<Cache> cache;
     cache.reserve(inputs.size());
     auto state = initial == nullptr ? initial_state() : *initial;
+    validate_state(state);
     SequenceGradients gradients;
     gradients.d_input_projection.assign(parameters_.input_projection.size(), 0.0);
     gradients.d_previous_projection.assign(parameters_.previous_projection.size(), 0.0);
@@ -412,7 +452,10 @@ SequenceGradients SelectiveSequenceCore::loss_and_gradients(
             item.output_rms = std::sqrt(squared / static_cast<double>(config_.output_dim) + config_.normalization_epsilon);
             for (auto& value : item.output) value /= item.output_rms;
         }
-        state = SequenceState{std::move(next_hidden), std::move(next_hidden_imag), inputs[time]};
+        if (state.position == std::numeric_limits<std::uint64_t>::max()) {
+            throw SequenceError("sequence position overflow");
+        }
+        state = SequenceState{std::move(next_hidden), std::move(next_hidden_imag), inputs[time], state.position + 1U, state.reset_epoch};
         cache.push_back(std::move(item));
     }
     if (active_count == 0) throw SequenceError("mask excludes every training position");
@@ -538,28 +581,50 @@ void SelectiveSequenceCore::add_vector(std::vector<double>& target,
 void SelectiveSequenceCore::apply_sgd(const SequenceGradients& gradients,
                                       double learning_rate,
                                       double clip_norm) {
-    if (!(learning_rate > 0.0) || !(clip_norm > 0.0)) throw SequenceError("learning rate and clip norm must be positive");
-    const auto squared = [&](const std::vector<double>& values) { return std::inner_product(values.begin(), values.end(), values.begin(), 0.0); };
-    double total_squared = squared(gradients.d_input_projection) + squared(gradients.d_previous_projection) +
-                           squared(gradients.d_retain_projection) + squared(gradients.d_write_projection) +
-                           squared(gradients.d_output_projection) + squared(gradients.d_skip_projection) +
-                           squared(gradients.d_bias) + squared(gradients.d_retain_bias) + squared(gradients.d_write_bias) +
-                           squared(gradients.d_output_bias);
-    const auto scale = std::min(1.0, clip_norm / std::max(std::sqrt(total_squared), 1e-12));
-    const auto update = [&](std::vector<double>& parameter, const std::vector<double>& gradient) {
-        check_same_size(parameter, gradient, "parameter gradient");
-        for (std::size_t index = 0; index < parameter.size(); ++index) parameter[index] -= learning_rate * scale * gradient[index];
+    if (!std::isfinite(learning_rate) || !std::isfinite(clip_norm) || !(learning_rate > 0.0) || !(clip_norm > 0.0)) {
+        throw SequenceError("learning rate and clip norm must be finite and positive");
+    }
+    const auto validate_gradient = [](const std::vector<double>& parameter, const std::vector<double>& gradient, const char* name) {
+        check_same_size(parameter, gradient, name);
+        require_finite(gradient, name);
     };
-    update(parameters_.input_projection, gradients.d_input_projection);
-    update(parameters_.previous_projection, gradients.d_previous_projection);
-    update(parameters_.retain_projection, gradients.d_retain_projection);
-    update(parameters_.write_projection, gradients.d_write_projection);
-    update(parameters_.output_projection, gradients.d_output_projection);
-    update(parameters_.skip_projection, gradients.d_skip_projection);
-    update(parameters_.bias, gradients.d_bias);
-    update(parameters_.retain_bias, gradients.d_retain_bias);
-    update(parameters_.write_bias, gradients.d_write_bias);
-    update(parameters_.output_bias, gradients.d_output_bias);
+    validate_gradient(parameters_.input_projection, gradients.d_input_projection, "input projection gradient");
+    validate_gradient(parameters_.previous_projection, gradients.d_previous_projection, "previous projection gradient");
+    validate_gradient(parameters_.retain_projection, gradients.d_retain_projection, "retain projection gradient");
+    validate_gradient(parameters_.write_projection, gradients.d_write_projection, "write projection gradient");
+    validate_gradient(parameters_.output_projection, gradients.d_output_projection, "output projection gradient");
+    validate_gradient(parameters_.skip_projection, gradients.d_skip_projection, "skip projection gradient");
+    validate_gradient(parameters_.bias, gradients.d_bias, "candidate bias gradient");
+    validate_gradient(parameters_.retain_bias, gradients.d_retain_bias, "retain bias gradient");
+    validate_gradient(parameters_.write_bias, gradients.d_write_bias, "write bias gradient");
+    validate_gradient(parameters_.output_bias, gradients.d_output_bias, "output bias gradient");
+    const auto squared = [&](const std::vector<double>& values) { return std::inner_product(values.begin(), values.end(), values.begin(), 0.0); };
+    const double total_squared = squared(gradients.d_input_projection) + squared(gradients.d_previous_projection) +
+                                 squared(gradients.d_retain_projection) + squared(gradients.d_write_projection) +
+                                 squared(gradients.d_output_projection) + squared(gradients.d_skip_projection) +
+                                 squared(gradients.d_bias) + squared(gradients.d_retain_bias) + squared(gradients.d_write_bias) +
+                                 squared(gradients.d_output_bias);
+    if (!std::isfinite(total_squared) || total_squared < 0.0) throw SequenceError("gradient norm is non-finite");
+    const auto scale = std::min(1.0, clip_norm / std::max(std::sqrt(total_squared), 1e-12));
+    const auto updated = [&](const std::vector<double>& parameter, const std::vector<double>& gradient) {
+        auto candidate = parameter;
+        for (std::size_t index = 0; index < candidate.size(); ++index) candidate[index] -= learning_rate * scale * gradient[index];
+        require_finite(candidate, "updated parameter");
+        return candidate;
+    };
+    auto input_projection = updated(parameters_.input_projection, gradients.d_input_projection);
+    auto previous_projection = updated(parameters_.previous_projection, gradients.d_previous_projection);
+    auto retain_projection = updated(parameters_.retain_projection, gradients.d_retain_projection);
+    auto write_projection = updated(parameters_.write_projection, gradients.d_write_projection);
+    auto output_projection = updated(parameters_.output_projection, gradients.d_output_projection);
+    auto skip_projection = updated(parameters_.skip_projection, gradients.d_skip_projection);
+    auto bias = updated(parameters_.bias, gradients.d_bias);
+    auto retain_bias = updated(parameters_.retain_bias, gradients.d_retain_bias);
+    auto write_bias = updated(parameters_.write_bias, gradients.d_write_bias);
+    auto output_bias = updated(parameters_.output_bias, gradients.d_output_bias);
+    parameters_ = Parameters{std::move(input_projection), std::move(previous_projection), std::move(retain_projection),
+                             std::move(write_projection), std::move(output_projection), std::move(skip_projection),
+                             std::move(bias), std::move(retain_bias), std::move(write_bias), std::move(output_bias)};
 }
 
 std::size_t SelectiveSequenceCore::parameter_count() const noexcept {
@@ -604,15 +669,18 @@ double SelectiveSequenceCore::output_rms(const std::vector<double>& output) cons
 }
 
 void SelectiveSequenceCore::save_checkpoint(const std::string& path,
-                                            std::uint64_t optimizer_step) const {
+                                            std::uint64_t optimizer_step,
+                                            const SequenceState* recurrent_state) const {
+    if (recurrent_state != nullptr) validate_state(*recurrent_state);
     std::ofstream stream(path);
     if (!stream) throw SequenceError("could not open checkpoint for writing");
-    stream << "CCT_SEQUENCE_CHECKPOINT_V2\n";
+    stream << "CCT_SEQUENCE_CHECKPOINT_V3\n";
     stream << config_.input_dim << ' ' << config_.hidden_dim << ' ' << config_.output_dim << ' '
            << std::setprecision(17) << config_.gate_epsilon << ' ' << config_.seed << ' '
            << static_cast<int>(config_.complex_state) << ' ' << static_cast<int>(config_.normalize_state) << ' '
            << static_cast<int>(config_.normalize_output) << ' ' << config_.normalization_epsilon << ' '
-           << static_cast<int>(config_.selective_gates) << ' ' << optimizer_step << '\n';
+           << static_cast<int>(config_.selective_gates) << ' ' << optimizer_step << ' '
+           << static_cast<int>(recurrent_state != nullptr) << '\n';
     write_vector(stream, parameters_.input_projection);
     write_vector(stream, parameters_.previous_projection);
     write_vector(stream, parameters_.retain_projection);
@@ -623,48 +691,83 @@ void SelectiveSequenceCore::save_checkpoint(const std::string& path,
     write_vector(stream, parameters_.retain_bias);
     write_vector(stream, parameters_.write_bias);
     write_vector(stream, parameters_.output_bias);
+    if (recurrent_state != nullptr) {
+        write_vector(stream, recurrent_state->hidden);
+        write_vector(stream, recurrent_state->hidden_imag);
+        write_vector(stream, recurrent_state->previous_input);
+        stream << recurrent_state->position << ' ' << recurrent_state->reset_epoch << '\n';
+    }
+    if (!stream) throw SequenceError("could not write complete checkpoint");
 }
 
 SelectiveSequenceCore SelectiveSequenceCore::load_checkpoint(const std::string& path,
-                                                              std::uint64_t* optimizer_step) {
+                                                              std::uint64_t* optimizer_step,
+                                                              SequenceState* recurrent_state) {
     std::ifstream stream(path);
     if (!stream) throw SequenceError("could not open checkpoint for reading");
     std::string header;
     std::getline(stream, header);
-    if (header != "CCT_SEQUENCE_CHECKPOINT_V1" && header != "CCT_SEQUENCE_CHECKPOINT_V2") {
+    if (header != "CCT_SEQUENCE_CHECKPOINT_V1" && header != "CCT_SEQUENCE_CHECKPOINT_V2" &&
+        header != "CCT_SEQUENCE_CHECKPOINT_V3") {
         throw SequenceError("unsupported checkpoint version");
     }
     SequenceConfig config;
     std::uint64_t saved_step = 0;
-    if (header == "CCT_SEQUENCE_CHECKPOINT_V2") {
+    bool has_recurrent_state = false;
+    if (header == "CCT_SEQUENCE_CHECKPOINT_V2" || header == "CCT_SEQUENCE_CHECKPOINT_V3") {
         int complex_state = 0;
         int normalize_state = 0;
         int normalize_output = 0;
         int selective_gates = 1;
+        int serialized_state = 0;
         if (!(stream >> config.input_dim >> config.hidden_dim >> config.output_dim >> config.gate_epsilon >> config.seed
-              >> complex_state >> normalize_state >> normalize_output >> config.normalization_epsilon >> selective_gates >> saved_step)) {
+              >> complex_state >> normalize_state >> normalize_output >> config.normalization_epsilon >> selective_gates >> saved_step) ||
+            (header == "CCT_SEQUENCE_CHECKPOINT_V3" && !(stream >> serialized_state))) {
             throw SequenceError("checkpoint configuration is incomplete");
+        }
+        if ((complex_state != 0 && complex_state != 1) || (normalize_state != 0 && normalize_state != 1) ||
+            (normalize_output != 0 && normalize_output != 1) || (selective_gates != 0 && selective_gates != 1) ||
+            (header == "CCT_SEQUENCE_CHECKPOINT_V3" && serialized_state != 0 && serialized_state != 1)) {
+            throw SequenceError("checkpoint contains invalid boolean configuration");
         }
         config.complex_state = complex_state != 0;
         config.normalize_state = normalize_state != 0;
         config.normalize_output = normalize_output != 0;
         config.selective_gates = selective_gates != 0;
+        has_recurrent_state = header == "CCT_SEQUENCE_CHECKPOINT_V3" && serialized_state != 0;
     } else if (!(stream >> config.input_dim >> config.hidden_dim >> config.output_dim >> config.gate_epsilon >> config.seed >> saved_step)) {
         throw SequenceError("checkpoint configuration is incomplete");
     }
     SelectiveSequenceCore core(config);
-    core.parameters_.input_projection = read_counted_vector(stream);
-    core.parameters_.previous_projection = read_counted_vector(stream);
-    core.parameters_.retain_projection = read_counted_vector(stream);
-    core.parameters_.write_projection = read_counted_vector(stream);
-    core.parameters_.output_projection = read_counted_vector(stream);
-    core.parameters_.skip_projection = read_counted_vector(stream);
-    core.parameters_.bias = read_counted_vector(stream);
-    core.parameters_.retain_bias = read_counted_vector(stream);
-    core.parameters_.write_bias = read_counted_vector(stream);
-    core.parameters_.output_bias = read_counted_vector(stream);
+    const auto read_parameter = [&](std::vector<double>& target, const char* name) {
+        auto values = read_counted_vector(stream);
+        if (values.size() != target.size()) throw SequenceError(std::string("checkpoint ") + name + " size mismatch");
+        target = std::move(values);
+    };
+    read_parameter(core.parameters_.input_projection, "input projection");
+    read_parameter(core.parameters_.previous_projection, "previous projection");
+    read_parameter(core.parameters_.retain_projection, "retain projection");
+    read_parameter(core.parameters_.write_projection, "write projection");
+    read_parameter(core.parameters_.output_projection, "output projection");
+    read_parameter(core.parameters_.skip_projection, "skip projection");
+    read_parameter(core.parameters_.bias, "candidate bias");
+    read_parameter(core.parameters_.retain_bias, "retain bias");
+    read_parameter(core.parameters_.write_bias, "write bias");
+    read_parameter(core.parameters_.output_bias, "output bias");
+    SequenceState restored_state = core.initial_state();
+    if (has_recurrent_state) {
+        restored_state.hidden = read_counted_vector(stream);
+        restored_state.hidden_imag = read_counted_vector(stream);
+        restored_state.previous_input = read_counted_vector(stream);
+        if (!(stream >> restored_state.position >> restored_state.reset_epoch)) {
+            throw SequenceError("checkpoint recurrent state is incomplete");
+        }
+        core.validate_state(restored_state);
+    }
+    std::string trailing;
+    if (stream >> trailing) throw SequenceError("checkpoint contains trailing data");
     if (optimizer_step != nullptr) *optimizer_step = saved_step;
-    if (core.parameter_count() == 0) throw SequenceError("checkpoint contains no parameters");
+    if (recurrent_state != nullptr) *recurrent_state = std::move(restored_state);
     return core;
 }
 
@@ -697,6 +800,7 @@ std::vector<double> SelectiveSequenceCore::parameter_vector() const {
 
 void SelectiveSequenceCore::set_parameter_vector(const std::vector<double>& values) {
     if (values.size() != parameter_count()) throw SequenceError("parameter vector size mismatch");
+    require_finite(values, "parameter vector");
     std::size_t offset = 0;
     const auto assign = [&](std::vector<double>& target) {
         std::copy(values.begin() + static_cast<std::ptrdiff_t>(offset),
