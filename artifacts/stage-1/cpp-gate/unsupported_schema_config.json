@@ -1,0 +1,12 @@
+{
+  "schema_version": 2,
+  "precision": "float64",
+  "shape": [8],
+  "spacing": [1.0],
+  "wave_speed": 1.0,
+  "dt": 0.05,
+  "boundary": "periodic",
+  "method": "leapfrog",
+  "cfl_safety": 0.9,
+  "maximum_abs_potential": 1.0
+}

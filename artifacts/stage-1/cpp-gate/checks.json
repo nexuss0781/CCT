@@ -1,0 +1,17 @@
+[
+  {"name":"transform_correctness","status":"PASS","duration_seconds":0.000910939,"details":{"max_abs_error":1.1102230246251565e-15}},
+  {"name":"spectral_reference_operator_agreement","status":"PASS","duration_seconds":0.000267947,"details":{"max_abs_error":7.73889e-06,"relative_l2_error":0.000802932}},
+  {"name":"spectral_reference_rollout_agreement","status":"PASS","duration_seconds":0.00134199,"details":{"max_abs_rollout_error":3.86325e-06,"steps":20}},
+  {"name":"manufactured_solution_accuracy","status":"PASS","duration_seconds":0.00175749,"details":{"max_abs_error":4.8634e-10,"final_time":1}},
+  {"name":"forced_manufactured_solution","status":"PASS","duration_seconds":0.00104652,"details":{"phi_max_abs_error":1.11022e-16,"psi_max_abs_error":3.33067e-16,"final_time":2}},
+  {"name":"temporal_convergence","status":"PASS","duration_seconds":0.00298432,"details":{"errors":[8.80434e-08,5.50296e-09,3.43939e-10],"rates":[3.99993,3.99998]}},
+  {"name":"energy_stability","status":"PASS","duration_seconds":0.0204929,"details":{"relative_drift":2.40124e-09,"steps":400}},
+  {"name":"cfl_rejection","status":"PASS","duration_seconds":5.2272e-05,"details":{"rejected":true}},
+  {"name":"analytic_finite_difference_gradients","status":"PASS","duration_seconds":0.000498477,"details":{"source_max_abs_error":1.31938e-12,"potential_max_abs_error":1.41967e-12}},
+  {"name":"boundary_residuals","status":"PASS","duration_seconds":0.000740218,"details":{"dirichlet_residual":0,"neumann_residual":0}},
+  {"name":"serialization_round_trip","status":"PASS","duration_seconds":0.000165437,"details":{"schema_version":1,"precision":"float64"}},
+  {"name":"precision_policy","status":"PASS","duration_seconds":1.2871e-05,"details":{"float64":"accepted","float32":"rejected"}},
+  {"name":"nonfinite_input_rejection_and_source_causality","status":"PASS","duration_seconds":2.5168e-05,"details":{"nonfinite_initial":"rejected","nonfinite_source":"rejected","source_causality":"verified"}},
+  {"name":"schema_version_validation","status":"PASS","duration_seconds":0.000127823,"details":{"schema_version":2,"result":"rejected"}},
+  {"name":"performance_scaling","status":"PASS","duration_seconds":0.00450709,"details":{"times":[9.55392e-05,9.1123e-05,0.0001366],"log_log_slope":0.257894}}
+]
