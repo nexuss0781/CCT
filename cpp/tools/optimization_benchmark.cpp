@@ -115,8 +115,10 @@ DecodeMeasurement measure_decode(const cct::NextTokenModel& model, const Tokeniz
     for (const auto& token : encoded.tokens) context.push_back(token.id);
     context = context_window(context, model.config().context_length);
 
+    auto state = model.create_inference_state();
+    std::vector<double> logits(model.config().vocabulary_size, 0.0);
     const auto prefill_started = std::chrono::steady_clock::now();
-    auto logits = model.next_logits(context);
+    for (const auto token : context) model.next_logits_incremental_into(token, state, logits);
     const auto prefill_finished = std::chrono::steady_clock::now();
     const auto decode_started = prefill_finished;
     std::size_t generated = 0U;
@@ -124,10 +126,8 @@ DecodeMeasurement measure_decode(const cct::NextTokenModel& model, const Tokeniz
         const auto slot = static_cast<std::size_t>(std::distance(logits.begin(), std::max_element(logits.begin(), logits.end())));
         const auto token = model.token_id_from_logit_slot(slot);
         if (token == Tokenizer::kEosId) break;
-        context.push_back(token);
         ++generated;
-        if (context.size() > model.config().context_length) context.erase(context.begin());
-        if (step + 1U < maximum_tokens) logits = model.next_logits(context);
+        if (step + 1U < maximum_tokens) model.next_logits_incremental_into(token, state, logits);
     }
     const auto finished = std::chrono::steady_clock::now();
     const auto prefill_seconds = std::chrono::duration<double>(prefill_finished - prefill_started).count();
@@ -248,6 +248,7 @@ int main(const int argc, char** argv) {
         const auto evaluation_sequence_limit = argument_size(argc, argv, "--eval-sequences", 32U);
         const auto decode_tokens = argument_size(argc, argv, "--decode-tokens", 64U);
         const auto repeats = argument_size(argc, argv, "--repeats", 3U);
+        const auto worker_count = argument_size(argc, argv, "--workers", 1U);
         const auto vocabulary_mode = argument_path(argc, argv, "--vocab-mode", "compact");
         require(vocabulary_mode == "compact" || vocabulary_mode == "legacy", "benchmark vocabulary mode must be compact or legacy");
 
@@ -279,6 +280,7 @@ int main(const int argc, char** argv) {
         optimizer.batch_size = batch_size;
         optimizer.total_steps = steps;
         optimizer.validation_interval_steps = steps;
+        optimizer.worker_count = worker_count;
         const std::vector<NlpModelKind> kinds{NlpModelKind::Track1CctRecurrence, NlpModelKind::GRU,
                                               NlpModelKind::DiagonalSSM, NlpModelKind::DenseCausalAttention};
         std::vector<BenchmarkResult> results;
@@ -290,8 +292,8 @@ int main(const int argc, char** argv) {
         report << std::setprecision(12) << "{\"status\":\"COMPLETE\",\"contract\":{\"train_tokens\":" << dataset.train_tokens
                << ",\"validation_tokens\":" << dataset.validation_tokens << ",\"test_tokens\":" << test_dataset.validation_tokens
                << ",\"context_length\":" << context_length << ",\"embedding_dim\":" << embedding_dim << ",\"hidden_dim\":" << hidden_dim
-               << ",\"steps\":" << steps << ",\"batch_size\":" << batch_size << ",\"repeats\":" << repeats
-               << ",\"decode_tokens\":" << decode_tokens << ",\"train_sequences_used\":" << dataset.train.size()
+               << ",\"steps\":" << steps << ",\"batch_size\":" << batch_size << ",\"worker_count\":" << worker_count << ",\"repeats\":" << repeats
+               << ",\"decode_tokens\":" << decode_tokens << ",\"decode_mode\":\"incremental_state_or_kv_cache\",\"train_sequences_used\":" << dataset.train.size()
                << ",\"evaluation_sequences_used\":" << dataset.validation.size() << ",\"tokenizer_hash\":\"" << tokenizer_hash
                << "\",\"active_vocabulary_size\":" << vocabulary_size << ",\"vocabulary_mode\":\"" << vocabulary_mode << "\"},\"results\":[";
         for (std::size_t index = 0U; index < results.size(); ++index) {

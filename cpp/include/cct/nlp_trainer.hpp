@@ -69,6 +69,7 @@ struct NlpOptimizerConfig {
     std::size_t batch_size = 1;
     std::size_t total_steps = 100;
     std::size_t validation_interval_steps = 1;
+    std::size_t worker_count = 1;
 };
 
 struct NlpEvaluation {
@@ -87,6 +88,26 @@ struct NlpGradientResult {
     std::size_t token_count = 0;
     double gradient_norm = 0.0;
     std::vector<double> gradients;
+};
+
+struct NlpInferenceState {
+    NlpModelKind kind = NlpModelKind::Track1CctRecurrence;
+    std::size_t context_length = 0;
+    std::size_t valid_length = 0;
+    std::size_t write_index = 0;
+    std::vector<double> hidden;
+    std::vector<double> previous_input;
+    std::vector<double> input;
+    std::vector<double> query;
+    std::vector<double> scores;
+    std::vector<double> context;
+    std::vector<double> logits;
+    std::vector<double> scratch1;
+    std::vector<double> scratch2;
+    std::vector<double> scratch3;
+    std::vector<double> scratch4;
+    std::vector<double> keys;
+    std::vector<double> values;
 };
 
 struct NlpPreferencePair {
@@ -125,10 +146,15 @@ public:
     std::size_t parameter_count() const noexcept { return parameters_.size(); }
     std::size_t state_memory_bytes() const noexcept;
     std::vector<double> parameter_vector() const { return parameters_; }
+    void copy_parameter_vector_to(std::vector<double>& values) const;
     void set_parameter_vector(const std::vector<double>& values);
+    void set_parameter_vector(std::vector<double>&& values);
 
     NlpGradientResult loss_and_gradients(const NlpSequence& sequence) const;
     std::vector<double> next_logits(const std::vector<TokenId>& context) const;
+    NlpInferenceState create_inference_state() const;
+    void next_logits_incremental_into(TokenId token, NlpInferenceState& state, std::vector<double>& output) const;
+    std::vector<double> next_logits_incremental(TokenId token, NlpInferenceState& state) const;
     TokenId token_id_from_logit_slot(std::size_t slot) const;
     std::size_t logit_slot_for_token_id(TokenId token) const;
     NlpEvaluation evaluate(const std::vector<NlpSequence>& sequences) const;
@@ -147,6 +173,7 @@ private:
     void initialize();
     std::vector<double> embedding(const TokenId id) const;
     void validate_sequence(const NlpSequence& sequence) const;
+    void validate_inference_state(const NlpInferenceState& state) const;
     std::size_t embedding_offset() const noexcept;
     std::size_t cct_offset() const noexcept;
     std::size_t gru_offset() const noexcept;
@@ -205,6 +232,9 @@ private:
     NlpTrainerState state_;
     std::vector<double> first_moment_;
     std::vector<double> second_moment_;
+    std::vector<double> update_parameters_;
+    std::vector<double> update_first_moment_;
+    std::vector<double> update_second_moment_;
     std::vector<NlpTrainingPoint> history_;
     mutable NlpCheckpointInfo checkpoint_info_;
 

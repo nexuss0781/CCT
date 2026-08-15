@@ -55,6 +55,7 @@ Useful environment overrides:
   MODULE1_EMBEDDING_DIM=32            Module 1 embedding width.
   MODULE1_HIDDEN_DIM=32               Module 1 hidden width.
   MODULE1_BATCH_SIZE=16               Module 1 token batch size.
+  MODULE1_WORKERS=2                   Module 1 bounded batch-gradient workers.
   MODULE1_PAGE_DELAY_MS=1000          Module 1 dataset page pacing.
 
 The default path is a real-data run. SMOKE=1 is only for checking the orchestration locally and
@@ -244,6 +245,7 @@ if [[ "${CURRICULUM_MODE}" == "1" && "${CURRICULUM_MODULE1}" == "1" ]]; then
   MODULE1_EMBEDDING_DIM="$(number_or_default MODULE1_EMBEDDING_DIM "${MODULE1_EMBEDDING_DIM:-32}")"
   MODULE1_HIDDEN_DIM="$(number_or_default MODULE1_HIDDEN_DIM "${MODULE1_HIDDEN_DIM:-32}")"
   MODULE1_BATCH_SIZE="$(number_or_default MODULE1_BATCH_SIZE "${MODULE1_BATCH_SIZE:-16}")"
+  MODULE1_WORKERS="$(number_or_default MODULE1_WORKERS "${MODULE1_WORKERS:-2}")"
   mkdir -p "${MODULE1_VALIDATION_ROOT}" "${MODULE1_SESSIONS_ROOT}" "${MODULE1_DATA_ROOT}"
 
   if [[ "${SMOKE}" == "1" ]]; then
@@ -259,6 +261,7 @@ if [[ "${CURRICULUM_MODE}" == "1" && "${CURRICULUM_MODULE1}" == "1" ]]; then
     MODULE1_EMBEDDING_DIM=4
     MODULE1_HIDDEN_DIM=4
     MODULE1_BATCH_SIZE=2
+    MODULE1_WORKERS=1
   fi
 
   log "running native Module 1 regression and documentation checks"
@@ -462,6 +465,7 @@ EOF
     --embedding "${MODULE1_EMBEDDING_DIM}" \
     --hidden "${MODULE1_HIDDEN_DIM}" \
     --batch "${MODULE1_BATCH_SIZE}" \
+    --workers "${MODULE1_WORKERS}" \
     --seed "${SEED}" \
     2>&1 | tee "${RUN_DIR}/module1_session.log"
   [[ -s "${MODULE1_SESSION_DIR}/session_report.json" && -s "${MODULE1_SESSION_DIR}/checkpoint.bin" ]] || fatal "Module 1 session did not publish checkpoint and report"

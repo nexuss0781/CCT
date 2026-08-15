@@ -2,6 +2,7 @@
 
 #include "cct/corpus.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <filesystem>
@@ -94,6 +95,7 @@ struct Options {
     std::size_t embedding_dim = 16U;
     std::size_t hidden_dim = 16U;
     std::size_t batch_size = 8U;
+    std::size_t worker_count = 1U;
     std::uint64_t seed = 1701U;
 };
 
@@ -119,16 +121,17 @@ Options parse_options(const int argc, char** argv) {
         else if (key == "--embedding") options.embedding_dim = number(value(), key);
         else if (key == "--hidden") options.hidden_dim = number(value(), key);
         else if (key == "--batch") options.batch_size = number(value(), key);
+        else if (key == "--workers") options.worker_count = number(value(), key);
         else if (key == "--seed") options.seed = static_cast<std::uint64_t>(number(value(), key));
         else if (key == "--help") {
             std::cout << "cct_curriculum_session --input PATH --output PATH --tokenizer PATH --module NAME --submodule NAME [--parent-checkpoint PATH] "
-                         "--session-id ID --level N --pretrain-steps N --sft-steps N --context N --embedding N --hidden N --batch N --seed N\n";
+                         "--session-id ID --level N --pretrain-steps N --sft-steps N --context N --embedding N --hidden N --batch N --workers N --seed N\n";
             std::exit(0);
         } else throw NlpTrainingError("unknown argument " + key);
     }
     require(!options.module.empty() && !options.submodule.empty() && !options.session_id.empty() && options.pretrain_steps > 0U &&
                 options.sft_steps > 0U && options.context_length >= 2U &&
-                options.embedding_dim > 0U && options.hidden_dim > 0U && options.batch_size > 0U,
+                options.embedding_dim > 0U && options.hidden_dim > 0U && options.batch_size > 0U && options.worker_count > 0U,
             "curriculum session configuration is invalid");
     return options;
 }
@@ -157,7 +160,7 @@ NlpDataset make_dataset(const Tokenizer& tokenizer, const std::filesystem::path&
                              encode_records(tokenizer, validation_records, prefix + "-validation", false), tokenizer_hash, context_length);
 }
 
-NlpOptimizerConfig optimizer_config(const std::size_t steps, const std::size_t batch_size) {
+NlpOptimizerConfig optimizer_config(const std::size_t steps, const std::size_t batch_size, const std::size_t worker_count) {
     NlpOptimizerConfig optimizer;
     optimizer.learning_rate = 0.001;
     optimizer.beta1 = 0.9;
@@ -168,7 +171,8 @@ NlpOptimizerConfig optimizer_config(const std::size_t steps, const std::size_t b
     optimizer.warmup_steps = std::min<std::size_t>(10U, steps);
     optimizer.batch_size = batch_size;
     optimizer.total_steps = steps;
-    optimizer.validation_interval_steps = 1U;
+    optimizer.validation_interval_steps = std::max<std::size_t>(1U, steps / 10U);
+    optimizer.worker_count = worker_count;
     return optimizer;
 }
 
@@ -226,7 +230,7 @@ int main(int argc, char** argv) {
         const auto started = std::chrono::steady_clock::now();
         const auto session_start_parent = options.parent_checkpoint.empty() ? std::string("GENESIS") : std::string();
         NlpTrainer trainer = options.parent_checkpoint.empty()
-                                 ? NlpTrainer(model_config, optimizer_config(options.pretrain_steps, options.batch_size), tokenizer_hash, pretrain.dataset_hash)
+                                 ? NlpTrainer(model_config, optimizer_config(options.pretrain_steps, options.batch_size, options.worker_count), tokenizer_hash, pretrain.dataset_hash)
                                  : NlpTrainer::load_checkpoint(options.parent_checkpoint.string(), tokenizer_hash);
         const auto parent_checkpoint_hash = options.parent_checkpoint.empty() ? std::string("GENESIS") : trainer.checkpoint_info().checkpoint_hash;
         if (!options.parent_checkpoint.empty()) {
@@ -258,7 +262,8 @@ int main(int argc, char** argv) {
         std::ostringstream report;
         report << std::setprecision(12) << "{\"status\":\"PASS\",\"module\":\"" << json_escape(options.module)
                << "\",\"submodule\":\"" << json_escape(options.submodule) << "\",\"session_id\":\"" << json_escape(options.session_id)
-               << "\",\"level\":" << options.level << ",\"tokenizer_hash\":\"" << tokenizer_hash << "\",\"parent_checkpoint_hash\":\""
+               << "\",\"level\":" << options.level << ",\"worker_count\":" << options.worker_count << ",\"validation_interval_steps\":" << optimizer_config(options.pretrain_steps, options.batch_size, options.worker_count).validation_interval_steps
+               << ",\"tokenizer_hash\":\"" << tokenizer_hash << "\",\"parent_checkpoint_hash\":\""
                << parent_checkpoint_hash << "\",\"pretrain_dataset_hash\":\"" << pretrain.dataset_hash << "\",\"sft_dataset_hash\":\""
                << sft.dataset_hash << "\",\"pretrain_test_sha256\":\"" << pretrain_test_hash
                << "\",\"human_test_file\":\"pretrain_test.txt\",\"human_test_automatic\":false,\"pretrain_checkpoint_hash\":\""

@@ -424,6 +424,66 @@ void test_invalid_masks_and_nonfinite_parameters_fail_closed() {
     require(rejected, "oversized model parameter allocation was accepted");
 }
 
+void test_incremental_inference_equivalence() {
+    const std::vector<NlpModelKind> kinds{NlpModelKind::Track1CctRecurrence, NlpModelKind::GRU, NlpModelKind::DiagonalSSM,
+                                          NlpModelKind::DenseCausalAttention};
+    const std::vector<TokenId> tokens{256U, 257U, 258U, 259U, 260U, 261U};
+    for (const auto kind : kinds) {
+        const auto model = NextTokenModel(model_config(kind, 101U + static_cast<std::uint64_t>(kind)));
+        auto state = model.create_inference_state();
+        std::vector<TokenId> prefix;
+        std::vector<double> incremental;
+        for (const auto token : tokens) {
+            prefix.push_back(token);
+            incremental = model.next_logits_incremental(token, state);
+            const auto reference = model.next_logits(prefix);
+            require(incremental.size() == reference.size(), "incremental logits shape mismatch");
+            double maximum_error = 0.0;
+            for (std::size_t index = 0U; index < reference.size(); ++index) maximum_error = std::max(maximum_error, std::abs(incremental[index] - reference[index]));
+            require(maximum_error <= 1e-10, "incremental logits diverged from full-context logits for " + model.name());
+        }
+        require(state.valid_length == tokens.size(), "incremental state length did not advance");
+    }
+}
+
+void test_parallel_optimizer_determinism() {
+    const auto data = dataset();
+    NlpOptimizerConfig optimizer;
+    optimizer.total_steps = 2U;
+    optimizer.warmup_steps = 1U;
+    optimizer.batch_size = 3U;
+    optimizer.worker_count = 2U;
+    NlpTrainer first(model_config(NlpModelKind::GRU, 109U), optimizer, data.tokenizer_hash, data.dataset_hash);
+    NlpTrainer second(model_config(NlpModelKind::GRU, 109U), optimizer, data.tokenizer_hash, data.dataset_hash);
+    static_cast<void>(first.train_steps(data, 2U));
+    static_cast<void>(second.train_steps(data, 2U));
+    const auto first_parameters = first.model().parameter_vector();
+    const auto second_parameters = second.model().parameter_vector();
+    require(first_parameters == second_parameters, "parallel optimizer execution was not deterministic");
+    require(first.history().size() == second.history().size() && first.history().back().train_loss == second.history().back().train_loss,
+            "parallel optimizer history was not deterministic");
+}
+
+void test_worker_contract_and_fail_closed_zero_workers() {
+    const auto data = dataset();
+    NlpOptimizerConfig optimizer;
+    optimizer.total_steps = 2U;
+    optimizer.warmup_steps = 1U;
+    optimizer.worker_count = 2U;
+    NlpTrainer trainer(model_config(NlpModelKind::Track1CctRecurrence, 103U), optimizer, data.tokenizer_hash, data.dataset_hash);
+    static_cast<void>(trainer.train_step(data));
+    require(trainer.checkpoint_info().training_contract_hash.size() == 64U, "worker-aware training contract hash is missing");
+    optimizer.worker_count = 0U;
+    bool rejected = false;
+    try {
+        NlpTrainer invalid(model_config(NlpModelKind::Track1CctRecurrence, 107U), optimizer, data.tokenizer_hash, data.dataset_hash);
+        static_cast<void>(invalid);
+    } catch (const NlpTrainingError&) {
+        rejected = true;
+    }
+    require(rejected, "zero worker count was accepted");
+}
+
 void test_dataset_context_budget_and_optimizer_domain_fail_closed() {
     const auto data = dataset();
     NlpOptimizerConfig optimizer;
@@ -476,6 +536,9 @@ int main() {
         {"minibatch_checkpoint_resume", test_minibatch_checkpoint_resume},
         {"continuation_lineage_and_dataset_rebinding", test_continuation_lineage_and_dataset_rebinding},
         {"invalid_masks_and_nonfinite_parameters_fail_closed", test_invalid_masks_and_nonfinite_parameters_fail_closed},
+        {"incremental_inference_equivalence", test_incremental_inference_equivalence},
+        {"parallel_optimizer_determinism", test_parallel_optimizer_determinism},
+        {"worker_contract_and_fail_closed_zero_workers", test_worker_contract_and_fail_closed_zero_workers},
         {"dataset_context_budget_and_optimizer_domain_fail_closed", test_dataset_context_budget_and_optimizer_domain_fail_closed}};
     std::size_t passed = 0;
     for (const auto& [name, test] : tests) {
