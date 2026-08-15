@@ -40,6 +40,7 @@ Useful environment overrides:
   INSTALL_DEPENDENCIES=0            Do not attempt apt installation; fail if missing.
   SMOKE=1                           Use a bounded local validation configuration.
   CURRICULUM_MODE=1                 Use competency-based continual sessions (default).
+  CURRICULUM_MODULE1=1              Run the approved Module 1 submodule curriculum (default).
   CURRICULUM_ROOT=...               Durable curriculum state, data, sessions, and validation packets.
   HUMAN_VALIDATION_FILE=...         JSON result for the pending session; required before advancing.
   CURRICULUM_CHUNK_ROWS=100         FineWeb/OASST training rows per session.
@@ -50,6 +51,11 @@ Useful environment overrides:
   CURRICULUM_PAGE_DELAY_MS=5000      Delay between dataset API pages.
   CURRICULUM_RETRY_COUNT=12          Curl retries for transient/rate-limit failures.
   CURRICULUM_SFT_SCAN_MULTIPLIER=100 OpenAssistant rows scanned per accepted row.
+  MODULE1_CONTEXT_LENGTH=128          Module 1 context length.
+  MODULE1_EMBEDDING_DIM=32            Module 1 embedding width.
+  MODULE1_HIDDEN_DIM=32               Module 1 hidden width.
+  MODULE1_BATCH_SIZE=16               Module 1 token batch size.
+  MODULE1_PAGE_DELAY_MS=1000          Module 1 dataset page pacing.
 
 The default path is a real-data run. SMOKE=1 is only for checking the orchestration locally and
 is not an architecture or language-quality result.
@@ -134,7 +140,15 @@ RUN_FULL_CTEST="${RUN_FULL_CTEST:-0}"
 SKIP_DATA_PREPARATION="${SKIP_DATA_PREPARATION:-0}"
 SMOKE="${SMOKE:-0}"
 CURRICULUM_MODE="${CURRICULUM_MODE:-1}"
-CURRICULUM_ROOT="${CURRICULUM_ROOT:-${ROOT_DIR}/runs/curriculum-focused-english}"
+CURRICULUM_MODULE1="${CURRICULUM_MODULE1:-1}"
+CURRICULUM_ROOT="${CURRICULUM_ROOT:-}"
+if [[ -z "${CURRICULUM_ROOT}" ]]; then
+  if [[ "${CURRICULUM_MODULE1}" == "1" ]]; then
+    CURRICULUM_ROOT="${ROOT_DIR}/runs/curriculum-module1"
+  else
+    CURRICULUM_ROOT="${ROOT_DIR}/runs/curriculum-focused-english"
+  fi
+fi
 CURRICULUM_CHUNK_ROWS="$(number_or_default CURRICULUM_CHUNK_ROWS "${CURRICULUM_CHUNK_ROWS:-100}")"
 CURRICULUM_VALIDATION_ROWS="$(number_or_default CURRICULUM_VALIDATION_ROWS "${CURRICULUM_VALIDATION_ROWS:-40}")"
 CURRICULUM_TEST_ROWS="$(number_or_default CURRICULUM_TEST_ROWS "${CURRICULUM_TEST_ROWS:-40}")"
@@ -189,6 +203,8 @@ cat > "${RUN_DIR}/run_config.json" <<EOF
   "architecture_batch":${ARCHITECTURE_BATCH},
   "architecture_train_sequences":${ARCHITECTURE_TRAIN_SEQUENCES},
   "architecture_eval_sequences":${ARCHITECTURE_EVAL_SEQUENCES},
+  "curriculum_module1":${CURRICULUM_MODULE1},
+  "curriculum_root":"${CURRICULUM_ROOT}",
   "training_authorized":false
 }
 EOF
@@ -203,9 +219,309 @@ else
   cmake --build "${BUILD_DIR}" --parallel "${JOBS}" \
     --target cct_track1_prepare cct_track1_train cct_track1_gate \
              cct_architecture_qualification cct_architecture_qualification_gate \
-             cct_curriculum_prepare cct_curriculum_session \
+             cct_curriculum_prepare cct_curriculum_session cct_curriculum_inspect \
              cct_nlp_trainer_tests cct_track1_tests cct_documentation_consistency_tests \
     2>&1 | tee "${RUN_DIR}/build.log"
+fi
+
+if [[ "${CURRICULUM_MODE}" == "1" && "${CURRICULUM_MODULE1}" == "1" ]]; then
+  MODULE1_STATE_FILE="${CURRICULUM_ROOT}/state.env"
+  MODULE1_VALIDATION_ROOT="${CURRICULUM_ROOT}/validation"
+  MODULE1_SESSIONS_ROOT="${CURRICULUM_ROOT}/sessions"
+  MODULE1_DATA_ROOT="${CURRICULUM_ROOT}/data"
+  MODULE1_CHUNK_STRIDE="$(number_or_default MODULE1_CHUNK_STRIDE "${MODULE1_CHUNK_STRIDE:-100000}")"
+  MODULE1_RETRY_STRIDE="$(number_or_default MODULE1_RETRY_STRIDE "${MODULE1_RETRY_STRIDE:-50000}")"
+  MODULE1_VALIDATION_GAP="$(number_or_default MODULE1_VALIDATION_GAP "${MODULE1_VALIDATION_GAP:-1000}")"
+  MODULE1_TEST_GAP="$(number_or_default MODULE1_TEST_GAP "${MODULE1_TEST_GAP:-2000}")"
+  MODULE1_SFT_VALIDATION_GAP="$(number_or_default MODULE1_SFT_VALIDATION_GAP "${MODULE1_SFT_VALIDATION_GAP:-1000}")"
+  MODULE1_PAGE_DELAY_MS="$(number_or_default MODULE1_PAGE_DELAY_MS "${MODULE1_PAGE_DELAY_MS:-1000}")"
+  MODULE1_RETRY_COUNT="$(number_or_default MODULE1_RETRY_COUNT "${MODULE1_RETRY_COUNT:-12}")"
+  MODULE1_SFT_SCAN_MULTIPLIER="$(number_or_default MODULE1_SFT_SCAN_MULTIPLIER "${MODULE1_SFT_SCAN_MULTIPLIER:-100}")"
+  MODULE1_FINEWEB_REVISION="${MODULE1_FINEWEB_REVISION:-87f09149ef4734204d70ed1d046ddc9ca3f2b8f9}"
+  MODULE1_OASST_REVISION="${MODULE1_OASST_REVISION:-fdf72ae0827c1cda404aff25b6603abec9e3399b}"
+  MODULE1_MINIMUM_EDUCATION_SCORE="${MODULE1_MINIMUM_EDUCATION_SCORE:-2.0}"
+  MODULE1_CONTEXT_LENGTH="$(number_or_default MODULE1_CONTEXT_LENGTH "${MODULE1_CONTEXT_LENGTH:-128}")"
+  MODULE1_EMBEDDING_DIM="$(number_or_default MODULE1_EMBEDDING_DIM "${MODULE1_EMBEDDING_DIM:-32}")"
+  MODULE1_HIDDEN_DIM="$(number_or_default MODULE1_HIDDEN_DIM "${MODULE1_HIDDEN_DIM:-32}")"
+  MODULE1_BATCH_SIZE="$(number_or_default MODULE1_BATCH_SIZE "${MODULE1_BATCH_SIZE:-16}")"
+  mkdir -p "${MODULE1_VALIDATION_ROOT}" "${MODULE1_SESSIONS_ROOT}" "${MODULE1_DATA_ROOT}"
+
+  if [[ "${SMOKE}" == "1" ]]; then
+    MODULE1_CHUNK_STRIDE=100
+    MODULE1_RETRY_STRIDE=50
+    MODULE1_VALIDATION_GAP=10
+    MODULE1_TEST_GAP=20
+    MODULE1_SFT_VALIDATION_GAP=10
+    MODULE1_PAGE_DELAY_MS=0
+    MODULE1_RETRY_COUNT=2
+    MODULE1_SFT_SCAN_MULTIPLIER=100
+    MODULE1_CONTEXT_LENGTH=16
+    MODULE1_EMBEDDING_DIM=4
+    MODULE1_HIDDEN_DIM=4
+    MODULE1_BATCH_SIZE=2
+  fi
+
+  log "running native Module 1 regression and documentation checks"
+  "${BUILD_DIR}/cct_nlp_trainer_tests" 2>&1 | tee "${RUN_DIR}/module1_nlp_trainer_tests.log"
+  "${BUILD_DIR}/cct_track1_tests" 2>&1 | tee "${RUN_DIR}/module1_track1_tests.log"
+  "${BUILD_DIR}/cct_documentation_consistency_tests" 2>&1 | tee "${RUN_DIR}/module1_documentation_consistency.log"
+  grep -q 'SUMMARY 14/14 passed' "${RUN_DIR}/module1_nlp_trainer_tests.log" || fatal "Module 1 NLP trainer regressions did not pass 14/14"
+  grep -q 'SUMMARY 1/1 passed' "${RUN_DIR}/module1_documentation_consistency.log" || fatal "Module 1 documentation consistency did not pass 1/1"
+  if [[ "${RUN_FULL_CTEST}" == "1" ]]; then
+    log "running complete native CTest suite before Module 1 session"
+    ctest --test-dir "${BUILD_DIR}" --output-on-failure 2>&1 | tee "${RUN_DIR}/module1_ctest.log"
+  fi
+
+  write_module1_state() {
+    local status="$1" submodule_index="$2" failures="$3" pending_session="$4" pending_checkpoint="$5" pending_hash="$6" parent_checkpoint="$7"
+    cat > "${MODULE1_STATE_FILE}" <<EOF
+MODULE1_STATUS=${status}
+MODULE1_SUBMODULE_INDEX=${submodule_index}
+MODULE1_FAILURES=${failures}
+MODULE1_PENDING_SESSION=${pending_session}
+MODULE1_PENDING_CHECKPOINT=${pending_checkpoint}
+MODULE1_PENDING_CHECKPOINT_HASH=${pending_hash}
+MODULE1_PARENT_CHECKPOINT=${parent_checkpoint}
+EOF
+  }
+
+  write_module1_summary() {
+    local status="$1" message="$2"
+    cat > "${RUN_DIR}/run_summary.json" <<EOF
+{
+  "status":"${status}",
+  "curriculum":"module-1",
+  "curriculum_status":"${status}",
+  "message":"${message}",
+  "curriculum_root":"${CURRICULUM_ROOT}",
+  "state_file":"${MODULE1_STATE_FILE}",
+  "training_authorized":false,
+  "claim_boundary":"Module 1 submodule research workflow; human competency validation is mandatory"
+}
+EOF
+    sed -i 's/"status":"RUNNING"/"status":"'"${status}"'/g' "${RUN_DIR}/run_config.json"
+  }
+
+  if [[ -f "${MODULE1_STATE_FILE}" ]]; then
+    # This file is generated by this script and contains only scalar state values.
+    # shellcheck disable=SC1090
+    source "${MODULE1_STATE_FILE}"
+  else
+    MODULE1_STATUS=READY_TO_TRAIN
+    MODULE1_SUBMODULE_INDEX=1
+    MODULE1_FAILURES=0
+    MODULE1_PENDING_SESSION=
+    MODULE1_PENDING_CHECKPOINT=
+    MODULE1_PENDING_CHECKPOINT_HASH=
+    MODULE1_PARENT_CHECKPOINT=
+    write_module1_state "${MODULE1_STATUS}" "${MODULE1_SUBMODULE_INDEX}" "${MODULE1_FAILURES}" "" "" "" ""
+  fi
+
+  if [[ "${MODULE1_STATUS}" == "AWAITING_HUMAN_VALIDATION" ]]; then
+    HUMAN_VALIDATION_FILE="${HUMAN_VALIDATION_FILE:-${MODULE1_VALIDATION_ROOT}/${MODULE1_PENDING_SESSION}.json}"
+    MASTERY_PACKET="${MODULE1_SESSIONS_ROOT}/${MODULE1_PENDING_SESSION}/mastery_prompt.md"
+    if [[ ! -s "${HUMAN_VALIDATION_FILE}" ]]; then
+      log "Module 1 session ${MODULE1_PENDING_SESSION} is awaiting human validation"
+      log "review ${MASTERY_PACKET} and write PASS/FAIL JSON to ${HUMAN_VALIDATION_FILE}"
+      write_module1_summary "AWAITING_HUMAN_VALIDATION" "one Module 1 submodule session completed; human mastery validation is required"
+      exit 0
+    fi
+    grep -Eq '"session_id"[[:space:]]*:[[:space:]]*"'"${MODULE1_PENDING_SESSION}"'"' "${HUMAN_VALIDATION_FILE}" || fatal "Module 1 validation session_id does not match pending session"
+    grep -Eq '"submodule"[[:space:]]*:[[:space:]]*"module-1-submodule-'"${MODULE1_SUBMODULE_INDEX}"'"' "${HUMAN_VALIDATION_FILE}" || fatal "Module 1 validation submodule does not match pending submodule"
+    grep -Eq '"checkpoint_hash"[[:space:]]*:[[:space:]]*"'"${MODULE1_PENDING_CHECKPOINT_HASH}"'"' "${HUMAN_VALIDATION_FILE}" || fatal "Module 1 validation checkpoint hash does not match pending checkpoint"
+    if grep -Eq '"result"[[:space:]]*:[[:space:]]*"PASS"' "${HUMAN_VALIDATION_FILE}"; then
+      log "human mastery PASS for ${MODULE1_PENDING_SESSION}; advancing exactly one Module 1 submodule"
+      PREVIOUS_MODULE1_CHECKPOINT="${MODULE1_PENDING_CHECKPOINT}"
+      if ((MODULE1_SUBMODULE_INDEX >= 4)); then
+        write_module1_state "MODULE1_COMPLETE" "5" "0" "" "" "" "${MODULE1_PENDING_CHECKPOINT}"
+        write_module1_summary "MODULE1_COMPLETE" "all four Module 1 submodules have human PASS records"
+        exit 0
+      fi
+      NEXT_SUBMODULE=$((MODULE1_SUBMODULE_INDEX + 1))
+      write_module1_state "READY_TO_TRAIN" "${NEXT_SUBMODULE}" "0" "" "" "" "${MODULE1_PENDING_CHECKPOINT}"
+      MODULE1_STATUS=READY_TO_TRAIN
+      MODULE1_SUBMODULE_INDEX=${NEXT_SUBMODULE}
+      MODULE1_FAILURES=0
+      MODULE1_PENDING_SESSION=
+      MODULE1_PENDING_CHECKPOINT=
+      MODULE1_PENDING_CHECKPOINT_HASH=
+      MODULE1_PARENT_CHECKPOINT="${PREVIOUS_MODULE1_CHECKPOINT}"
+      MODULE1_PENDING_CHECKPOINT=""
+      MODULE1_PENDING_CHECKPOINT_HASH=""
+    elif grep -Eq '"result"[[:space:]]*:[[:space:]]*"FAIL"' "${HUMAN_VALIDATION_FILE}"; then
+      if ((MODULE1_FAILURES == 0)); then
+        write_module1_state "READY_TO_RETRY" "${MODULE1_SUBMODULE_INDEX}" "1" "" "" "" "${MODULE1_PARENT_CHECKPOINT}"
+        cat > "${CURRICULUM_ROOT}/retry_required.md" <<EOF
+# Module 1 Retry Required
+
+Human validation failed for ${MODULE1_PENDING_SESSION}. The same Module 1 submodule will be retrained on a fresh disjoint source chunk using the original parent checkpoint and the same submodule contract.
+
+The failed checkpoint remains immutable at ${MODULE1_PENDING_CHECKPOINT}.
+EOF
+        write_module1_summary "READY_TO_RETRY" "Module 1 submodule failed once; a fresh disjoint retry is required"
+        exit 0
+      fi
+      write_module1_state "ARCHITECTURE_DIAGNOSIS_REQUIRED" "${MODULE1_SUBMODULE_INDEX}" "${MODULE1_FAILURES}" "" "${MODULE1_PENDING_CHECKPOINT}" "${MODULE1_PENDING_CHECKPOINT_HASH}" "${MODULE1_PARENT_CHECKPOINT}"
+      cat > "${CURRICULUM_ROOT}/architecture_diagnosis_required.md" <<EOF
+# Module 1 Diagnosis Required
+
+The same Module 1 submodule failed twice under disjoint chunks with the same parent, model, tokenizer, and evaluation contract. Preserve both session directories and diagnose data coverage, optimization, decoding, or architecture before continuing.
+EOF
+      write_module1_summary "ARCHITECTURE_DIAGNOSIS_REQUIRED" "the same Module 1 submodule failed twice; diagnosis is required"
+      exit 0
+    else
+      fatal "Module 1 validation result must be PASS or FAIL"
+    fi
+  elif [[ "${MODULE1_STATUS}" == "READY_TO_RETRY" ]]; then
+    MODULE1_STATUS=READY_TO_TRAIN
+  elif [[ "${MODULE1_STATUS}" == "ARCHITECTURE_DIAGNOSIS_REQUIRED" || "${MODULE1_STATUS}" == "MODULE1_COMPLETE" ]]; then
+    write_module1_summary "${MODULE1_STATUS}" "Module 1 state is terminal until reviewed"
+    exit 0
+  fi
+
+  case "${MODULE1_SUBMODULE_INDEX}" in
+    1)
+      MODULE1_SUBMODULE_ID=1.1
+      MODULE1_SUBMODULE_NAME=character_and_symbol_awareness
+      MODULE1_PRETRAIN_ROWS=500; MODULE1_VALIDATION_ROWS=100; MODULE1_TEST_ROWS=100; MODULE1_SFT_ROWS=250; MODULE1_SFT_VALIDATION_ROWS=50; MODULE1_PRETRAIN_STEPS=500; MODULE1_SFT_STEPS=250; MODULE1_PROMPT_COUNT=10
+      MODULE1_OBJECTIVE="Reproduce letters, digits, punctuation, and common symbols without invalid or degenerate output."
+      MODULE1_ACCEPTANCE="PASS requires at least 8 of 10 unseen prompts to produce inspectable non-degenerate output and both adversarial symbol cases to remain valid."
+      ;;
+    2)
+      MODULE1_SUBMODULE_ID=1.2
+      MODULE1_SUBMODULE_NAME=whitespace_and_word_boundaries
+      MODULE1_PRETRAIN_ROWS=750; MODULE1_VALIDATION_ROWS=150; MODULE1_TEST_ROWS=150; MODULE1_SFT_ROWS=375; MODULE1_SFT_VALIDATION_ROWS=75; MODULE1_PRETRAIN_STEPS=750; MODULE1_SFT_STEPS=375; MODULE1_PROMPT_COUNT=10
+      MODULE1_OBJECTIVE="Preserve spaces, word separation, punctuation spacing, contractions, and quoted boundaries."
+      MODULE1_ACCEPTANCE="PASS requires at least 8 of 10 unseen prompts to preserve readable word separation and punctuation boundaries."
+      ;;
+    3)
+      MODULE1_SUBMODULE_ID=1.3
+      MODULE1_SUBMODULE_NAME=common_word_patterns
+      MODULE1_PRETRAIN_ROWS=1000; MODULE1_VALIDATION_ROWS=200; MODULE1_TEST_ROWS=200; MODULE1_SFT_ROWS=500; MODULE1_SFT_VALIDATION_ROWS=100; MODULE1_PRETRAIN_STEPS=1000; MODULE1_SFT_STEPS=500; MODULE1_PROMPT_COUNT=10
+      MODULE1_OBJECTIVE="Learn frequent English words, short and long word shapes, common affixes, repeated letters, and function-word patterns."
+      MODULE1_ACCEPTANCE="PASS requires at least 8 of 10 unseen prompts to continue with recognizable English word patterns without unrelated or degenerate output."
+      ;;
+    4)
+      MODULE1_SUBMODULE_ID=1.4
+      MODULE1_SUBMODULE_NAME=stable_short_continuation
+      MODULE1_PRETRAIN_ROWS=1250; MODULE1_VALIDATION_ROWS=250; MODULE1_TEST_ROWS=250; MODULE1_SFT_ROWS=625; MODULE1_SFT_VALIDATION_ROWS=125; MODULE1_PRETRAIN_STEPS=1250; MODULE1_SFT_STEPS=625; MODULE1_PROMPT_COUNT=12
+      MODULE1_OBJECTIVE="Combine symbol, boundary, and word-pattern knowledge in stable short English continuations."
+      MODULE1_ACCEPTANCE="PASS requires at least 10 of 12 unseen prompts to remain valid, readable, non-degenerate, and structurally consistent."
+      ;;
+    *) fatal "invalid Module 1 submodule index ${MODULE1_SUBMODULE_INDEX}" ;;
+  esac
+  if [[ "${SMOKE}" == "1" ]]; then
+    MODULE1_PRETRAIN_ROWS=4; MODULE1_VALIDATION_ROWS=2; MODULE1_TEST_ROWS=2; MODULE1_SFT_ROWS=4; MODULE1_SFT_VALIDATION_ROWS=2; MODULE1_PRETRAIN_STEPS=2; MODULE1_SFT_STEPS=2; MODULE1_PROMPT_COUNT=2
+  fi
+  MODULE1_BASE_OFFSET=$(((MODULE1_SUBMODULE_INDEX - 1) * MODULE1_CHUNK_STRIDE + MODULE1_FAILURES * MODULE1_RETRY_STRIDE))
+  MODULE1_SESSION_ID="module-1-submodule-${MODULE1_SUBMODULE_INDEX}-attempt-${MODULE1_FAILURES}"
+  MODULE1_SESSION_DIR="${MODULE1_SESSIONS_ROOT}/${MODULE1_SESSION_ID}"
+  MODULE1_DATA_DIR="${MODULE1_DATA_ROOT}/${MODULE1_SESSION_ID}"
+  MODULE1_PROMPTS="${ROOT_DIR}/data/curriculum/module-1/prompts/${MODULE1_SUBMODULE_ID}.txt"
+  mkdir -p "${MODULE1_SESSION_DIR}" "${MODULE1_DATA_DIR}"
+  [[ -s "${MODULE1_PROMPTS}" ]] || fatal "Module 1 prompt packet is missing: ${MODULE1_PROMPTS}"
+  log "preparing Module 1 submodule ${MODULE1_SUBMODULE_ID} at source offset ${MODULE1_BASE_OFFSET}"
+  "${BUILD_DIR}/cct_curriculum_prepare" \
+    --output "${MODULE1_DATA_DIR}" \
+    --module module-1 \
+    --submodule "${MODULE1_SUBMODULE_ID}" \
+    --pretrain-offset "${MODULE1_BASE_OFFSET}" \
+    --pretrain-rows "${MODULE1_PRETRAIN_ROWS}" \
+    --validation-offset "$((MODULE1_BASE_OFFSET + MODULE1_PRETRAIN_ROWS + MODULE1_VALIDATION_GAP))" \
+    --validation-rows "${MODULE1_VALIDATION_ROWS}" \
+    --test-offset "$((MODULE1_BASE_OFFSET + MODULE1_PRETRAIN_ROWS + MODULE1_VALIDATION_GAP + MODULE1_VALIDATION_ROWS + MODULE1_TEST_GAP))" \
+    --test-rows "${MODULE1_TEST_ROWS}" \
+    --sft-offset "${MODULE1_BASE_OFFSET}" \
+    --sft-rows "${MODULE1_SFT_ROWS}" \
+    --sft-validation-offset "$((MODULE1_BASE_OFFSET + MODULE1_SFT_ROWS * MODULE1_SFT_SCAN_MULTIPLIER + MODULE1_SFT_VALIDATION_GAP))" \
+    --sft-validation-rows "${MODULE1_SFT_VALIDATION_ROWS}" \
+    --page-length 100 \
+    --page-delay-ms "${MODULE1_PAGE_DELAY_MS}" \
+    --retry-count "${MODULE1_RETRY_COUNT}" \
+    --sft-scan-multiplier "${MODULE1_SFT_SCAN_MULTIPLIER}" \
+    --minimum-education-score "${MODULE1_MINIMUM_EDUCATION_SCORE}" \
+    --fineweb-revision "${MODULE1_FINEWEB_REVISION}" \
+    --oasst-revision "${MODULE1_OASST_REVISION}" \
+    2>&1 | tee "${RUN_DIR}/module1_prepare.log"
+  [[ -s "${MODULE1_DATA_DIR}/manifest.json" && -s "${MODULE1_DATA_DIR}/pretrain_test.txt" ]] || fatal "Module 1 preparation did not publish governed data"
+  PARENT_ARG=()
+  if [[ -n "${MODULE1_PARENT_CHECKPOINT}" ]]; then PARENT_ARG=(--parent-checkpoint "${MODULE1_PARENT_CHECKPOINT}"); fi
+  log "training exactly one Module 1 submodule from its immutable parent checkpoint"
+  "${BUILD_DIR}/cct_curriculum_session" \
+    --input "${MODULE1_DATA_DIR}" \
+    --output "${MODULE1_SESSION_DIR}" \
+    --tokenizer "${TOKENIZER}" \
+    --module module-1 \
+    --submodule "${MODULE1_SUBMODULE_ID}" \
+    "${PARENT_ARG[@]}" \
+    --session-id "${MODULE1_SESSION_ID}" \
+    --level 1 \
+    --pretrain-steps "${MODULE1_PRETRAIN_STEPS}" \
+    --sft-steps "${MODULE1_SFT_STEPS}" \
+    --context "${MODULE1_CONTEXT_LENGTH}" \
+    --embedding "${MODULE1_EMBEDDING_DIM}" \
+    --hidden "${MODULE1_HIDDEN_DIM}" \
+    --batch "${MODULE1_BATCH_SIZE}" \
+    --seed "${SEED}" \
+    2>&1 | tee "${RUN_DIR}/module1_session.log"
+  [[ -s "${MODULE1_SESSION_DIR}/session_report.json" && -s "${MODULE1_SESSION_DIR}/checkpoint.bin" ]] || fatal "Module 1 session did not publish checkpoint and report"
+  MODULE1_PENDING_HASH="$(grep -o '"checkpoint_hash":"[0-9a-f]*"' "${MODULE1_SESSION_DIR}/session_report.json" | head -1 | cut -d'"' -f4)"
+  [[ "${#MODULE1_PENDING_HASH}" -eq 64 ]] || fatal "Module 1 report does not contain a valid checkpoint hash"
+  log "running native deterministic Module 1 checkpoint inspection"
+  "${BUILD_DIR}/cct_curriculum_inspect" \
+    --checkpoint "${MODULE1_SESSION_DIR}/checkpoint.bin" \
+    --tokenizer "${TOKENIZER}" \
+    --prompts "${MODULE1_PROMPTS}" \
+    --output "${MODULE1_SESSION_DIR}/inference.jsonl" \
+    --max-new-tokens 64 \
+    2>&1 | tee "${RUN_DIR}/module1_inspect.log"
+  grep -q '"status":"PASS"' "${RUN_DIR}/module1_inspect.log" || fatal "Module 1 checkpoint inspection failed"
+  [[ -s "${MODULE1_SESSION_DIR}/inference.jsonl" ]] || fatal "Module 1 inference output is missing"
+  OBSERVATION_TEMPLATE=""
+  for ((OBSERVATION_INDEX=1; OBSERVATION_INDEX<=MODULE1_PROMPT_COUNT; OBSERVATION_INDEX++)); do
+    if [[ -n "${OBSERVATION_TEMPLATE}" ]]; then OBSERVATION_TEMPLATE+=", "; fi
+    OBSERVATION_TEMPLATE+="\"prompt ${OBSERVATION_INDEX}: ...\""
+  done
+  cat > "${MODULE1_SESSION_DIR}/mastery_prompt.md" <<EOF
+# Module 1 Human Competency Validation — ${MODULE1_SESSION_ID}
+
+**Submodule:** ${MODULE1_SUBMODULE_ID} — ${MODULE1_SUBMODULE_NAME}
+
+**Learning objective:** ${MODULE1_OBJECTIVE}
+
+**Training and checkpoint report:** ${MODULE1_SESSION_DIR}/session_report.json
+
+**Held-out source material:** ${MODULE1_DATA_DIR}/pretrain_test.txt
+
+**Actual deterministic inference outputs:** ${MODULE1_SESSION_DIR}/inference.jsonl
+
+Review the session report, the held-out material, and every generated continuation in inference.jsonl. The prompt file used by the native inspector was ${MODULE1_PROMPTS}. Use the generated outputs as evidence and add your own unseen prompts appropriate to this submodule. Record at least ${MODULE1_PROMPT_COUNT} prompt-by-prompt observations, including at least one adversarial or boundary case.
+
+${MODULE1_ACCEPTANCE}
+
+Do not mark PASS from loss, perplexity, or token accuracy alone. Reject invalid output, empty output, all-EOS output, systematic repetition, or output that fails the submodule objective. If the output packet is missing or the checkpoint cannot be run, record INSUFFICIENT_EVIDENCE and do not advance.
+
+Write the result to ${MODULE1_VALIDATION_ROOT}/${MODULE1_SESSION_ID}.json using this exact shape:
+
+{
+  "module": "module-1",
+  "submodule": "module-1-submodule-${MODULE1_SUBMODULE_INDEX}",
+  "session_id": "${MODULE1_SESSION_ID}",
+  "checkpoint_hash": "${MODULE1_PENDING_HASH}",
+  "result": "PASS",
+  "evaluator": "replace-with-your-identifier",
+  "timestamp_utc": "replace-with-UTC-timestamp",
+  "observations": [${OBSERVATION_TEMPLATE}]
+}
+
+The script will stop until this record exists. It will never self-approve the submodule.
+EOF
+  write_module1_state "AWAITING_HUMAN_VALIDATION" "${MODULE1_SUBMODULE_INDEX}" "${MODULE1_FAILURES}" "${MODULE1_SESSION_ID}" "${MODULE1_SESSION_DIR}/checkpoint.bin" "${MODULE1_PENDING_HASH}" "${MODULE1_PARENT_CHECKPOINT}"
+  write_module1_summary "AWAITING_HUMAN_VALIDATION" "Module 1 submodule completed; human competency validation is required before advancement"
+  log "Module 1 submodule ${MODULE1_SUBMODULE_ID} complete; review ${MODULE1_SESSION_DIR}/mastery_prompt.md"
+  log "actual inference outputs: ${MODULE1_SESSION_DIR}/inference.jsonl"
+  cat "${MODULE1_SESSION_DIR}/inference.jsonl"
+  exit 0
 fi
 
 if [[ "${CURRICULUM_MODE}" == "1" ]]; then
