@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <chrono>
 #include <cctype>
 #include <cerrno>
 #include <cmath>
@@ -13,6 +14,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <unordered_set>
 #include <unistd.h>
 #include <utility>
@@ -283,18 +285,40 @@ std::vector<std::map<std::string, std::string>> array_objects(const std::string&
     return objects;
 }
 
-std::vector<std::map<std::string, std::string>> fetch_page(const std::string& dataset, const std::string& config,
-                                                           const std::string& revision, const std::size_t offset,
-                                                           const std::size_t length, const std::filesystem::path& temporary) {
-    const auto url = "https://datasets-server.huggingface.co/rows?dataset=" + url_encode(dataset) + "&config=" + url_encode(config) +
-                     "&split=train&offset=" + std::to_string(offset) + "&length=" + std::to_string(length) + "&revision=" + revision;
-    const auto command = "curl --fail --location --retry 5 --retry-delay 3 --connect-timeout 20 --max-time 180 -sS --output " +
-                         shell_quote(temporary.string()) + " " + shell_quote(url);
-    require(std::system(command.c_str()) == 0, "failed to download dataset rows at offset " + std::to_string(offset));
-    const auto response = read_file(temporary);
+std::vector<std::map<std::string, std::string>> parse_cached_page(const std::filesystem::path& cache_path) {
+    const auto response = read_file(cache_path);
     const auto top = JsonParser(response).object();
     require(top.contains("rows"), "dataset rows response is missing rows");
     return array_objects(top.at("rows"));
+}
+
+std::vector<std::map<std::string, std::string>> fetch_page(const std::string& dataset, const std::string& config,
+                                                           const std::string& revision, const std::size_t offset,
+                                                           const std::size_t length, const std::filesystem::path& cache_base,
+                                                           const std::size_t retry_count) {
+    const auto cache_path = cache_base.parent_path() /
+                            (cache_base.stem().string() + ".revision-" + revision + ".offset-" + std::to_string(offset) + ".length-" +
+                             std::to_string(length) + ".json");
+    if (std::filesystem::is_regular_file(cache_path)) {
+        try {
+            return parse_cached_page(cache_path);
+        } catch (const std::exception&) {
+            std::error_code ignored;
+            std::filesystem::remove(cache_path, ignored);
+        }
+    }
+    const auto url = "https://datasets-server.huggingface.co/rows?dataset=" + url_encode(dataset) + "&config=" + url_encode(config) +
+                     "&split=train&offset=" + std::to_string(offset) + "&length=" + std::to_string(length) + "&revision=" + revision;
+    const auto partial_path = cache_path.string() + ".partial";
+    std::error_code ignored;
+    std::filesystem::remove(partial_path, ignored);
+    const auto command = "curl --fail --location --retry " + std::to_string(retry_count) +
+                         " --retry-all-errors --retry-delay 10 --retry-max-time 600 --connect-timeout 30 --max-time 180 -sS"
+                         " --user-agent 'CCT-curriculum-preparer/1.0' --output " + shell_quote(partial_path) + " " + shell_quote(url);
+    require(std::system(command.c_str()) == 0, "failed to download dataset rows at offset " + std::to_string(offset) +
+                                                   "; rerun to resume from cached pages");
+    std::filesystem::rename(partial_path, cache_path);
+    return parse_cached_page(cache_path);
 }
 
 struct RowRecord {
@@ -355,6 +379,9 @@ struct Options {
     std::size_t sft_validation_offset = 1000U;
     std::size_t sft_validation_rows = 40U;
     std::size_t page_length = 100U;
+    std::size_t page_delay_ms = 1500U;
+    std::size_t retry_count = 12U;
+    std::size_t sft_scan_multiplier = 100U;
     double minimum_education_score = 2.0;
     std::string fineweb_revision = "87f09149ef4734204d70ed1d046ddc9ca3f2b8f9";
     std::string oasst_revision = "fdf72ae0827c1cda404aff25b6603abec9e3399b";
@@ -391,18 +418,22 @@ Options parse_options(const int argc, char** argv) {
         else if (key == "--sft-validation-offset") options.sft_validation_offset = number(value(), key);
         else if (key == "--sft-validation-rows") options.sft_validation_rows = number(value(), key);
         else if (key == "--page-length") options.page_length = number(value(), key);
+        else if (key == "--page-delay-ms") options.page_delay_ms = number(value(), key);
+        else if (key == "--retry-count") options.retry_count = number(value(), key);
+        else if (key == "--sft-scan-multiplier") options.sft_scan_multiplier = number(value(), key);
         else if (key == "--minimum-education-score") options.minimum_education_score = std::stod(value());
         else if (key == "--fineweb-revision") options.fineweb_revision = value();
         else if (key == "--oasst-revision") options.oasst_revision = value();
         else if (key == "--help") {
             std::cout << "cct_curriculum_prepare --output PATH --pretrain-offset N --pretrain-rows N --validation-offset N --validation-rows N "
-                         "--test-offset N --test-rows N --sft-offset N --sft-rows N --sft-validation-offset N --sft-validation-rows N --minimum-education-score N "
-                         "[--fineweb-revision SHA] [--oasst-revision SHA]\n";
+                         "--test-offset N --test-rows N --sft-offset N --sft-rows N --sft-validation-offset N --sft-validation-rows N --page-delay-ms N --retry-count N "
+                         "--sft-scan-multiplier N --minimum-education-score N [--fineweb-revision SHA] [--oasst-revision SHA]\n";
             std::exit(0);
         } else throw PreparationError("unknown argument " + key);
     }
-    require(options.page_length > 0U && options.page_length <= 100U && options.pretrain_rows > 0U && options.validation_rows > 0U &&
-                options.test_rows > 0U && options.sft_rows > 0U && options.sft_validation_rows > 0U && std::isfinite(options.minimum_education_score),
+    require(options.page_length > 0U && options.page_length <= 100U && options.page_delay_ms <= 60000U && options.retry_count > 0U &&
+                options.sft_scan_multiplier > 0U && options.pretrain_rows > 0U && options.validation_rows > 0U && options.test_rows > 0U &&
+                options.sft_rows > 0U && options.sft_validation_rows > 0U && std::isfinite(options.minimum_education_score),
             "curriculum range configuration is invalid");
     return options;
 }
@@ -423,15 +454,17 @@ Collection collect(const std::string& dataset, const std::string& config, const 
     const auto temporary = options.output / (source_name + ".page.json");
     for (std::size_t consumed = 0U; consumed < requested; consumed += options.page_length) {
         const auto length = std::min(options.page_length, requested - consumed);
-        const auto page = fetch_page(dataset, config, revision, offset + consumed, length, temporary);
+        const auto page = fetch_page(dataset, config, revision, offset + consumed, length, temporary, options.retry_count);
         ++collection.pages;
         for (const auto& wrapper : page) {
             const auto row = parse_row(wrapper, source_name);
             if (ids.insert(row.id).second) collection.rows.push_back(row);
         }
         if (page.size() < length) break;
+        if (consumed + length < requested && options.page_delay_ms > 0U) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(options.page_delay_ms));
+        }
     }
-    std::filesystem::remove(temporary);
     return collection;
 }
 
@@ -475,13 +508,14 @@ int main(int argc, char** argv) {
                                                 options.validation_offset, options.validation_rows, "fineweb_validation", options);
         const auto fineweb_test = collect("HuggingFaceFW/fineweb-edu", "sample-10BT", options.fineweb_revision,
                                           options.test_offset, options.test_rows, "fineweb_test", options);
-        require(options.sft_rows <= std::numeric_limits<std::size_t>::max() / 100U &&
-                    options.sft_validation_rows <= std::numeric_limits<std::size_t>::max() / 100U,
+        require(options.sft_rows <= std::numeric_limits<std::size_t>::max() / options.sft_scan_multiplier &&
+                    options.sft_validation_rows <= std::numeric_limits<std::size_t>::max() / options.sft_scan_multiplier,
                 "OpenAssistant scan range would overflow");
         const auto oasst_train = collect("OpenAssistant/oasst1", "default", options.oasst_revision,
-                                         options.sft_offset, options.sft_rows * 100U, "oasst_sft", options);
+                                         options.sft_offset, options.sft_rows * options.sft_scan_multiplier, "oasst_sft", options);
         const auto oasst_validation = collect("OpenAssistant/oasst1", "default", options.oasst_revision,
-                                              options.sft_validation_offset, options.sft_validation_rows * 100U, "oasst_validation", options);
+                                              options.sft_validation_offset, options.sft_validation_rows * options.sft_scan_multiplier,
+                                              "oasst_validation", options);
         const auto pretrain_train_path = options.output / "pretrain_train.txt";
         const auto pretrain_validation_path = options.output / "pretrain_validation.txt";
         const auto pretrain_test_path = options.output / "pretrain_test.txt";
@@ -510,12 +544,13 @@ int main(int argc, char** argv) {
                    << options.pretrain_rows << ",\"validation_offset\":" << options.validation_offset << ",\"validation_requested_rows\":"
                    << options.validation_rows << ",\"test_offset\":" << options.test_offset << ",\"test_requested_rows\":" << options.test_rows
                    << ",\"minimum_education_score\":" << std::setprecision(17) << options.minimum_education_score
-                   << ",\"pretrain_selected_ids\":" << json_ids(pretrain_train_ids) << ",\"validation_selected_ids\":" << json_ids(pretrain_validation_ids)
+                   << ",\"page_length\":" << options.page_length << ",\"page_delay_ms\":" << options.page_delay_ms
+                   << ",\"retry_count\":" << options.retry_count << ",\"pretrain_selected_ids\":" << json_ids(pretrain_train_ids) << ",\"validation_selected_ids\":" << json_ids(pretrain_validation_ids)
                    << ",\"test_selected_ids\":" << json_ids(pretrain_test_ids) << "},\n"
                    << "  \"oasst\":{\"dataset\":\"OpenAssistant/oasst1\",\"config\":\"default\",\"split\":\"train\",\"revision\":\""
                    << json_escape(options.oasst_revision) << "\",\"sft_offset\":" << options.sft_offset << ",\"sft_requested_rows\":"
                    << options.sft_rows << ",\"sft_validation_offset\":" << options.sft_validation_offset << ",\"sft_validation_requested_rows\":"
-                   << options.sft_validation_rows << ",\"sft_selected_ids\":" << json_ids(sft_train_ids) << ",\"sft_validation_selected_ids\":"
+                   << options.sft_validation_rows << ",\"scan_multiplier\":" << options.sft_scan_multiplier << ",\"sft_selected_ids\":" << json_ids(sft_train_ids) << ",\"sft_validation_selected_ids\":"
                    << json_ids(sft_validation_ids) << "},\n"
                    << "  \"files\":{\"pretrain_train\":\"pretrain_train.txt\",\"pretrain_validation\":\"pretrain_validation.txt\",\"pretrain_test\":\"pretrain_test.txt\",\"sft_train\":\"sft_train.txt\",\"sft_validation\":\"sft_validation.txt\"}\n}\n";
             return output.str();

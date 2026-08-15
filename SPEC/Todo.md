@@ -724,6 +724,8 @@ cat artifacts/track1/training/training_report.json
 - [x] Add regression coverage for V3 lineage, wrong-parent rejection, dataset rebinding, cursor reset, and global optimizer-step continuation; the NLP trainer suite passes `14/14`.
 - [x] Integrate preparation, one-session training, human validation stop, PASS advancement, one controlled retry, and terminal two-failure diagnosis into root `run.sh`.
 - [x] Make the human test non-automatic: the session report records `pretrain_test_sha256`, `human_test_file`, and `human_test_automatic:false`; the evaluator supplies the result.
+- [x] Add revision-bound per-page cache files, resumable acquisition after interruption, curl retry-all-errors handling, 12-attempt retry budget, inter-page pacing, and bounded OpenAssistant scan controls for Hugging Face 429 resilience.
+- [x] Make `RUN_FULL_CTEST=1` build the complete CMake target graph before invoking all 44 tests, fixing fresh-clone missing-executable failures.
 
 ## State-machine and validation evidence
 
