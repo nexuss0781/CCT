@@ -11,7 +11,7 @@ The repository root `run.sh` is now the canonical focused-English continual-lear
 
 The first invocation creates the durable state directory `runs/curriculum-focused-english/`, prepares the first session, trains it, and stops with `AWAITING_HUMAN_VALIDATION`. Review the generated mastery packet and test the checkpoint on unseen prompts yourself. Then write the required validation JSON at the path printed by the script and run `bash run.sh` again. A human `PASS` advances exactly one curriculum level. A human `FAIL` causes one controlled retry at the same level on a disjoint source range. Two failures stop the workflow in `ARCHITECTURE_DIAGNOSIS_REQUIRED`.
 
-The script requires Internet access for the pinned Hugging Face rows API. If a dependency is missing, it attempts non-interactive Ubuntu installation with `apt-get`; this requires root or passwordless `sudo`. No Python runtime is used by data preparation, training, checkpointing, or evaluation. The native requirements are C++20, CMake, `pkg-config`, FFTW3 development files, `curl`, `sha256sum`, `zip`, and `unzip`. When `RUN_FULL_CTEST=1`, the script builds the complete CMake target graph before invoking all 44 tests, including targets not needed by the curriculum session itself.
+The script requires Internet access for the pinned Hugging Face rows API. If a dependency is missing, it attempts non-interactive Ubuntu installation with `apt-get`; this requires root or passwordless `sudo`. No Python runtime is used by data preparation, training, checkpointing, or evaluation. The native requirements are C++20, CMake, `pkg-config`, FFTW3 development files, `curl`, `sha256sum`, `zip`, and `unzip`. The default `bash run.sh` path skips the full CTest suite so training can start directly; setting `RUN_FULL_CTEST=1` builds the complete CMake target graph before invoking all 44 tests.
 
 ## Dataset contract
 
@@ -78,7 +78,7 @@ Do not mark `PASS` from training loss, perplexity, token accuracy, or a short au
 | `FINEWEB_REVISION` | pinned SHA | FineWeb-Edu dataset revision. |
 | `OASST_REVISION` | pinned SHA | OpenAssistant dataset revision. |
 | `MINIMUM_EDUCATION_SCORE` | `2.0` | FineWeb-Edu quality threshold. |
-| `RUN_FULL_CTEST` | `1` | Runs the full native repository suite after the build. |
+| `RUN_FULL_CTEST` | `0` | Skips the full native repository suite by default; set to `1` for engineering validation. |
 | `INSTALL_DEPENDENCIES` | `1` | Allows automatic package installation when needed. |
 
 For a bounded orchestration check that does not count as language evidence, use an isolated state root:
