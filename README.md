@@ -93,9 +93,13 @@ make stage17-test
 make stage17-gate
 make ci-stage17
 
-# Colab GPU, strict native C++20/CUDA companion experiment
+# One-command native C++20 real-data training and qualification
 cd /home/ubuntu/CCT
 bash run.sh
+
+# Optional separate Colab GPU companion experiment
+cd /home/ubuntu/CCT
+bash colab-gpu/run.sh
 ```
 
 `make native-build` configures and compiles the C++ library and executables under `build-cpp/`. `make native-test` runs the CTest suite. The gate commands create machine-readable artifacts beneath the corresponding `artifacts/stage-{id}/cpp-gate/` directories. `make ci-stage4` executes the complete native Stage 4 pipeline, including all prior gates, and returns a nonzero status if any mandatory check fails. `make ci-stage5` extends this to the manifest-audited language/code scaling suite and Stage 5 gate. `make ci-stage6` adds the bounded deliberation, independent-verifier, offline policy, replay, interruption, and incident harness. `make ci-stage7` adds the multimodal event, alignment, fusion, typed-memory, simulation, transfer, audit, and safety harness. `make ci-stage8` adds governance and application policy fixtures. `make ci-stage9` adds real-source corpus rights, privacy, deduplication, contamination, shard, and deletion controls. `make ci-stage10` adds the byte/subword/hybrid tokenizer comparison, immutable snapshot, provenance-offset, packed/padded causal-batch, version-compatibility, efficiency, and evaluator-isolation harness. `make ci-stage11` extends the chain with stable categorical next-token loss, analytic CCT gradients, optimizer scheduling, three-seed validation, repeated-corpus overfit, matched dense-attention/GRU/diagonal-SSM controls, checkpoint interruption/resume, evaluator-only exclusion, and fail-closed anomaly checks. `make ci-stage12` adds the 72-point CPU reference/fused matrix, parity, repeatability, ordered worker equivalence, resource thresholds, atomic checkpoint recovery, unavailable-accelerator rejection, and architecture decision record. `make ci-stage13` adds six governed task schemas, deterministic instruction formatting and target-only masks, three-seed full SFT, representative structured extraction, rank-1 adapter efficiency and isolation, merged/runtime parity, grounded citation and abstention checks, safety retention, deletion lineage, and artifact identity. Stage 13 passes all 8 mandatory gate checks; artifacts are written to `artifacts/stage-13/cpp-gate/`. `make ci-stage14` adds governed preference records, DPO-like pairwise optimization, verifier-weighted reranking, calibration, adversarial reward-hacking controls, blind review, and expert escalation. `make ci-stage15` adds real-source knowledge ingestion, lexical/vector/hybrid retrieval, tenant isolation, freshness, citation hashes, conflict abstention, poisoning isolation, deletion replay, version checks, auditability, efficiency, and grounded-review controls. `make ci-stage16` adds the versioned native serving binding, authentication and tenant policy, dynamic batching, deadline admission, streaming cancellation and backpressure, state/cache isolation and eviction, model routing, retrieval and verifier integration, p50/p95/p99 SLO measurement, circuit breaking, fault injection, redacted audit traces, canary shadowing, failed-promotion blocking, and rollback. `make ci-stage17` adds immutable release scope, locked offline parity, side-effect-free shadowing, pilot allowlists and quotas, human review and escalation, safety and SLO observations, incident containment and resume approval, deletion propagation, drift ownership, rollback rehearsal, four-role approval signatures, and the terminal bounded-release decision. These are declared-scope gate measurements, not unrestricted public deployment or evidence of general language-model quality.
@@ -227,8 +231,9 @@ The strengthened Stage 2 gate requires **12 mandatory checks** plus limitation-c
 | `cpp/src/release.cpp` | Stage 17 native controlled-pilot and terminal release implementation |
 | `cpp/tests/release_tests.cpp` | Stage 17 scope, phase, pilot, safety, incident, deletion, drift, and approval regressions |
 | `cpp/tools/stage17_gate.cpp` | Stage 17 terminal bounded-release gate and artifacts |
-| `run.sh` | Repository-root one-command native C++20/CUDA Colab workflow wrapper |
-| `colab-gpu/run.sh` | GPU data download, preparation, pretraining, SFT, checkpoint, and evaluation orchestration |
+| `run.sh` | Repository-root one-command native C++20 real-data training and qualification workflow |
+| `RUN_TRAINING.md` | Native one-command training, evaluation, configuration, and output contract |
+| `colab-gpu/run.sh` | Optional GPU data download, preparation, pretraining, SFT, checkpoint, and evaluation companion |
 | `colab-gpu/native/prepare.cpp` | Native Wikimedia XML/OASST1 JSONL stream preparer with deterministic splits |
 | `colab-gpu/native/cuda_train.cu` | Native CUDA recurrent CCT-family trainer, checkpointing, validation, and test evaluation |
 | `colab-gpu/README.md` | Colab setup, data licenses, controls, artifacts, and claim boundary |
