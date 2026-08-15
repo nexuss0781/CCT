@@ -1157,6 +1157,8 @@ NlpTrainer::NlpTrainer(NlpModelConfig model_config, NlpOptimizerConfig optimizer
     checkpoint_info_.tokenizer_hash = tokenizer_hash_;
     checkpoint_info_.dataset_hash = dataset_hash_;
     checkpoint_info_.training_contract_hash = training_contract_hash_;
+    checkpoint_info_.session_id = session_id_;
+    checkpoint_info_.parent_checkpoint_hash = parent_checkpoint_hash_;
 }
 
 void NlpTrainer::validate_optimizer() const {
@@ -1342,12 +1344,37 @@ void NlpTrainer::validate_checkpoint_identity(const std::string& tokenizer_hash,
     require(tokenizer_hash == tokenizer_hash_ && dataset_hash == dataset_hash_, "NLP checkpoint identity mismatch");
 }
 
+void NlpTrainer::begin_continuation(const std::string& dataset_hash, const std::string& session_id,
+                                    const std::string& parent_checkpoint_hash, const std::size_t session_steps) {
+    require(!dataset_hash.empty() && !session_id.empty() && !parent_checkpoint_hash.empty(),
+            "NLP continuation identity fields cannot be empty");
+    require(session_steps > 0U, "NLP continuation session budget must be positive");
+    if (!checkpoint_info_.checkpoint_hash.empty()) {
+        require(parent_checkpoint_hash == checkpoint_info_.checkpoint_hash, "NLP continuation parent checkpoint hash mismatch");
+    } else {
+        require(parent_checkpoint_hash == "GENESIS", "NLP initial continuation must use GENESIS parent identity");
+    }
+    require(state_.optimizer_step <= std::numeric_limits<std::size_t>::max() - session_steps,
+            "NLP continuation optimizer budget would overflow");
+    dataset_hash_ = dataset_hash;
+    optimizer_config_.total_steps = state_.optimizer_step + session_steps;
+    state_.data_cursor = 0U;
+    session_id_ = session_id;
+    parent_checkpoint_hash_ = parent_checkpoint_hash;
+    training_contract_hash_ = training_contract_digest(model_.config(), optimizer_config_, tokenizer_hash_, dataset_hash_);
+    checkpoint_info_.dataset_hash = dataset_hash_;
+    checkpoint_info_.training_contract_hash = training_contract_hash_;
+    checkpoint_info_.session_id = session_id_;
+    checkpoint_info_.parent_checkpoint_hash = parent_checkpoint_hash_;
+}
 void NlpTrainer::save_checkpoint(const std::string& path) const {
     std::ostringstream serialized;
-    serialized << "CCT_NLP_CHECKPOINT_V2\n";
+    serialized << "CCT_NLP_CHECKPOINT_V3\n";
     serialized << "tokenizer_hash=" << hex_encode(tokenizer_hash_) << "\n";
     serialized << "dataset_hash=" << hex_encode(dataset_hash_) << "\n";
     serialized << "training_contract_hash=" << hex_encode(training_contract_hash_) << "\n";
+    serialized << "session_id=" << hex_encode(session_id_) << "\n";
+    serialized << "parent_checkpoint_hash=" << hex_encode(parent_checkpoint_hash_) << "\n";
     serialized << "optimizer_step=" << state_.optimizer_step << "\n";
     serialized << "data_cursor=" << state_.data_cursor << "\n";
     serialized << "seed=" << state_.seed << "\n";
@@ -1399,10 +1426,14 @@ NlpTrainer NlpTrainer::load_checkpoint(const std::string& path, const std::strin
     const auto content = buffer.str();
     std::istringstream lines(content);
     std::string line;
-    require(static_cast<bool>(std::getline(lines, line)) && line == "CCT_NLP_CHECKPOINT_V2", "unsupported NLP checkpoint header");
+    require(static_cast<bool>(std::getline(lines, line)) && (line == "CCT_NLP_CHECKPOINT_V2" || line == "CCT_NLP_CHECKPOINT_V3"),
+            "unsupported NLP checkpoint header");
+    const bool lineage_format = line == "CCT_NLP_CHECKPOINT_V3";
     std::string tokenizer_hash;
     std::string dataset_hash;
     std::string contract_hash;
+    std::string session_id;
+    std::string parent_checkpoint_hash;
     std::size_t optimizer_step = 0;
     std::size_t data_cursor = 0;
     std::uint64_t seed = 0;
@@ -1424,8 +1455,14 @@ NlpTrainer NlpTrainer::load_checkpoint(const std::string& path, const std::strin
         }
         if (line.rfind("tokenizer_hash=", 0) == 0) tokenizer_hash = hex_decode(line.substr(15));
         else if (line.rfind("dataset_hash=", 0) == 0) dataset_hash = hex_decode(line.substr(13));
-        else if (line.rfind("training_contract_hash=", 0) == 0) contract_hash = hex_decode(line.substr(23));
-        else if (line.rfind("optimizer_step=", 0) == 0) optimizer_step = parse_size(line.substr(15), "optimizer_step");
+        else         if (line.rfind("training_contract_hash=", 0) == 0) contract_hash = hex_decode(line.substr(23));
+        else if (line.rfind("session_id=", 0) == 0) {
+            require(lineage_format, "lineage field is not valid in V2 checkpoint");
+            session_id = hex_decode(line.substr(11));
+        } else if (line.rfind("parent_checkpoint_hash=", 0) == 0) {
+            require(lineage_format, "lineage field is not valid in V2 checkpoint");
+            parent_checkpoint_hash = hex_decode(line.substr(23));
+        } else if (line.rfind("optimizer_step=", 0) == 0) optimizer_step = parse_size(line.substr(15), "optimizer_step");
         else if (line.rfind("data_cursor=", 0) == 0) data_cursor = parse_size(line.substr(12), "data_cursor");
         else if (line.rfind("seed=", 0) == 0) seed = static_cast<std::uint64_t>(parse_size(line.substr(5), "seed"));
         else if (line.rfind("rng_state=", 0) == 0) rng_state = hex_decode(line.substr(10));
@@ -1510,7 +1547,11 @@ NlpTrainer NlpTrainer::load_checkpoint(const std::string& path, const std::strin
     trainer.state_.seed = seed;
     trainer.state_.rng_state = std::move(rng_state);
     trainer.history_ = std::move(history);
+    trainer.session_id_ = std::move(session_id);
+    trainer.parent_checkpoint_hash_ = std::move(parent_checkpoint_hash);
     trainer.checkpoint_info_.training_contract_hash = trainer.training_contract_hash_;
+    trainer.checkpoint_info_.session_id = trainer.session_id_;
+    trainer.checkpoint_info_.parent_checkpoint_hash = trainer.parent_checkpoint_hash_;
     trainer.checkpoint_info_.checkpoint_hash = nlp_checkpoint_hash(content);
     trainer.checkpoint_info_.optimizer_step = optimizer_step;
     trainer.checkpoint_info_.data_cursor = data_cursor;

@@ -163,6 +163,8 @@ struct NlpCheckpointInfo {
     std::string dataset_hash;
     std::string training_contract_hash;
     std::string checkpoint_hash;
+    std::string session_id;
+    std::string parent_checkpoint_hash;
     std::size_t optimizer_step = 0;
     std::size_t data_cursor = 0;
 };
@@ -185,6 +187,10 @@ public:
     std::vector<NlpTrainingPoint> train_steps(const NlpDataset& dataset, std::size_t steps);
     std::vector<NlpTrainingPoint> train_preference_steps(const std::vector<NlpPreferencePair>& pairs, std::size_t steps, double margin = 0.0);
     void save_checkpoint(const std::string& path) const;
+    void begin_continuation(const std::string& dataset_hash, const std::string& session_id,
+                            const std::string& parent_checkpoint_hash, std::size_t session_steps);
+    const std::string& tokenizer_hash() const noexcept { return tokenizer_hash_; }
+    const std::string& dataset_hash() const noexcept { return dataset_hash_; }
     static NlpTrainer load_checkpoint(const std::string& path, const std::string& expected_tokenizer_hash = {},
                                       const std::string& expected_dataset_hash = {});
 
@@ -194,6 +200,8 @@ private:
     std::string tokenizer_hash_;
     std::string dataset_hash_;
     std::string training_contract_hash_;
+    std::string session_id_;
+    std::string parent_checkpoint_hash_;
     NlpTrainerState state_;
     std::vector<double> first_moment_;
     std::vector<double> second_moment_;

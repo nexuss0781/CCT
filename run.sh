@@ -14,10 +14,10 @@ usage() {
   cat <<'USAGE'
 Usage: bash run.sh
 
-The script installs missing Ubuntu build/runtime dependencies when permitted, downloads and
-prepares the governed real Track 1 sources, builds the native C++20 tools, runs CCT pretraining
-and SFT, qualifies CCT/GRU/diagonal-SSM/dense-causal-attention on the same real-data contract,
-runs the independent gates and full CTest suite, and writes all outputs below runs/<run-id>/.
+The default mode installs missing Ubuntu build/runtime dependencies when permitted, downloads
+pinned FineWeb-Edu and OpenAssistant ranges, builds the native C++20 tools, trains one competency
+session from its parent checkpoint, writes a human mastery packet, and stops before advancement.
+Set CURRICULUM_MODE=0 to run the legacy Track 1 pretraining/SFT and architecture qualification path.
 
 Useful environment overrides:
   RUN_ID=...                         Stable output directory name.
@@ -39,6 +39,14 @@ Useful environment overrides:
   RUN_FULL_CTEST=0                  Skip the full 44-test repository suite.
   INSTALL_DEPENDENCIES=0            Do not attempt apt installation; fail if missing.
   SMOKE=1                           Use a bounded local validation configuration.
+  CURRICULUM_MODE=1                 Use competency-based continual sessions (default).
+  CURRICULUM_ROOT=...               Durable curriculum state, data, sessions, and validation packets.
+  HUMAN_VALIDATION_FILE=...         JSON result for the pending session; required before advancing.
+  CURRICULUM_CHUNK_ROWS=100         FineWeb/OASST training rows per session.
+  CURRICULUM_VALIDATION_ROWS=40     FineWeb/OASST validation rows per session.
+  CURRICULUM_TEST_ROWS=40           FineWeb held-out test rows per session.
+  CURRICULUM_PRETRAIN_STEPS=100     Native CCT steps per session pretraining phase.
+  CURRICULUM_SFT_STEPS=50           Native CCT steps per session SFT phase.
 
 The default path is a real-data run. SMOKE=1 is only for checking the orchestration locally and
 is not an architecture or language-quality result.
@@ -122,6 +130,14 @@ SEED="$(number_or_default SEED "${SEED:-1701}")"
 RUN_FULL_CTEST="${RUN_FULL_CTEST:-1}"
 SKIP_DATA_PREPARATION="${SKIP_DATA_PREPARATION:-0}"
 SMOKE="${SMOKE:-0}"
+CURRICULUM_MODE="${CURRICULUM_MODE:-1}"
+CURRICULUM_ROOT="${CURRICULUM_ROOT:-${ROOT_DIR}/runs/curriculum-focused-english}"
+CURRICULUM_CHUNK_ROWS="$(number_or_default CURRICULUM_CHUNK_ROWS "${CURRICULUM_CHUNK_ROWS:-100}")"
+CURRICULUM_VALIDATION_ROWS="$(number_or_default CURRICULUM_VALIDATION_ROWS "${CURRICULUM_VALIDATION_ROWS:-40}")"
+CURRICULUM_TEST_ROWS="$(number_or_default CURRICULUM_TEST_ROWS "${CURRICULUM_TEST_ROWS:-40}")"
+CURRICULUM_PRETRAIN_STEPS="$(number_or_default CURRICULUM_PRETRAIN_STEPS "${CURRICULUM_PRETRAIN_STEPS:-100}")"
+CURRICULUM_SFT_STEPS="$(number_or_default CURRICULUM_SFT_STEPS "${CURRICULUM_SFT_STEPS:-50}")"
+CURRICULUM_MAX_LEVEL="$(number_or_default CURRICULUM_MAX_LEVEL "${CURRICULUM_MAX_LEVEL:-7}")"
 
 if [[ "${SMOKE}" == "1" ]]; then
   PRETRAIN_TOKEN_CAP=20000
@@ -136,6 +152,11 @@ if [[ "${SMOKE}" == "1" ]]; then
   ARCHITECTURE_BATCH=2
   ARCHITECTURE_TRAIN_SEQUENCES=32
   ARCHITECTURE_EVAL_SEQUENCES=16
+  CURRICULUM_CHUNK_ROWS=4
+  CURRICULUM_VALIDATION_ROWS=2
+  CURRICULUM_TEST_ROWS=2
+  CURRICULUM_PRETRAIN_STEPS=2
+  CURRICULUM_SFT_STEPS=2
   log "SMOKE=1: bounded orchestration validation only; this is not a quality result"
 fi
 
@@ -175,8 +196,229 @@ log "building native preparation, training, qualification, gate, and regression 
 cmake --build "${BUILD_DIR}" --parallel "${JOBS}" \
   --target cct_track1_prepare cct_track1_train cct_track1_gate \
            cct_architecture_qualification cct_architecture_qualification_gate \
+           cct_curriculum_prepare cct_curriculum_session \
            cct_nlp_trainer_tests cct_track1_tests cct_documentation_consistency_tests \
   2>&1 | tee "${RUN_DIR}/build.log"
+
+if [[ "${CURRICULUM_MODE}" == "1" ]]; then
+  CURRICULUM_STATE_FILE="${CURRICULUM_ROOT}/state.env"
+  CURRICULUM_VALIDATION_ROOT="${CURRICULUM_ROOT}/validation"
+  CURRICULUM_SESSIONS_ROOT="${CURRICULUM_ROOT}/sessions"
+  CURRICULUM_DATA_ROOT="${CURRICULUM_ROOT}/data"
+  CURRICULUM_CHUNK_STRIDE="$(number_or_default CURRICULUM_CHUNK_STRIDE "${CURRICULUM_CHUNK_STRIDE:-10000}")"
+  CURRICULUM_RETRY_STRIDE="$(number_or_default CURRICULUM_RETRY_STRIDE "${CURRICULUM_RETRY_STRIDE:-5000}")"
+  CURRICULUM_VALIDATION_GAP="$(number_or_default CURRICULUM_VALIDATION_GAP "${CURRICULUM_VALIDATION_GAP:-1000}")"
+  CURRICULUM_TEST_GAP="$(number_or_default CURRICULUM_TEST_GAP "${CURRICULUM_TEST_GAP:-2000}")"
+  CURRICULUM_SFT_VALIDATION_GAP="$(number_or_default CURRICULUM_SFT_VALIDATION_GAP "${CURRICULUM_SFT_VALIDATION_GAP:-1000}")"
+  FINEWEB_REVISION="${FINEWEB_REVISION:-87f09149ef4734204d70ed1d046ddc9ca3f2b8f9}"
+  OASST_REVISION="${OASST_REVISION:-fdf72ae0827c1cda404aff25b6603abec9e3399b}"
+  MINIMUM_EDUCATION_SCORE="${MINIMUM_EDUCATION_SCORE:-2.0}"
+  mkdir -p "${CURRICULUM_VALIDATION_ROOT}" "${CURRICULUM_SESSIONS_ROOT}" "${CURRICULUM_DATA_ROOT}"
+
+  log "running native regression and documentation checks before curriculum training"
+  "${BUILD_DIR}/cct_nlp_trainer_tests" 2>&1 | tee "${RUN_DIR}/curriculum_nlp_trainer_tests.log"
+  "${BUILD_DIR}/cct_track1_tests" 2>&1 | tee "${RUN_DIR}/curriculum_track1_tests.log"
+  "${BUILD_DIR}/cct_documentation_consistency_tests" 2>&1 | tee "${RUN_DIR}/curriculum_documentation_consistency.log"
+  grep -q 'SUMMARY 14/14 passed' "${RUN_DIR}/curriculum_nlp_trainer_tests.log" || fatal "curriculum NLP trainer regressions did not pass 14/14"
+  grep -q 'SUMMARY 1/1 passed' "${RUN_DIR}/curriculum_documentation_consistency.log" || fatal "curriculum documentation consistency did not pass 1/1"
+  if [[ "${RUN_FULL_CTEST}" == "1" ]]; then
+    log "running complete native CTest suite before curriculum session"
+    ctest --test-dir "${BUILD_DIR}" --output-on-failure 2>&1 | tee "${RUN_DIR}/curriculum_ctest.log"
+  fi
+
+  write_curriculum_state() {
+    local status="$1" level="$2" failures="$3" pending_session="$4" pending_checkpoint="$5" pending_hash="$6" parent_checkpoint="$7"
+    cat > "${CURRICULUM_STATE_FILE}" <<EOF
+CURRICULUM_STATUS=${status}
+CURRICULUM_LEVEL=${level}
+CURRICULUM_FAILURES=${failures}
+CURRICULUM_PENDING_SESSION=${pending_session}
+CURRICULUM_PENDING_CHECKPOINT=${pending_checkpoint}
+CURRICULUM_PENDING_CHECKPOINT_HASH=${pending_hash}
+CURRICULUM_PARENT_CHECKPOINT=${parent_checkpoint}
+EOF
+  }
+
+  write_curriculum_summary() {
+    local status="$1" message="$2"
+    cat > "${RUN_DIR}/run_summary.json" <<EOF
+{
+  "status":"${status}",
+  "curriculum_status":"${status}",
+  "message":"${message}",
+  "curriculum_root":"${CURRICULUM_ROOT}",
+  "state_file":"${CURRICULUM_STATE_FILE}",
+  "training_authorized":false,
+  "claim_boundary":"competency-session research workflow; human mastery validation is mandatory and no broad language or intelligence claim is made"
+}
+EOF
+    sed -i 's/"status":"RUNNING"/"status":"'"${status}"'"/' "${RUN_DIR}/run_config.json"
+  }
+
+  if [[ -f "${CURRICULUM_STATE_FILE}" ]]; then
+    # This file is generated by this script and contains only scalar state values.
+    # shellcheck disable=SC1090
+    source "${CURRICULUM_STATE_FILE}"
+  else
+    CURRICULUM_STATUS=READY_TO_TRAIN
+    CURRICULUM_LEVEL=0
+    CURRICULUM_FAILURES=0
+    CURRICULUM_PENDING_SESSION=
+    CURRICULUM_PENDING_CHECKPOINT=
+    CURRICULUM_PENDING_CHECKPOINT_HASH=
+    CURRICULUM_PARENT_CHECKPOINT=
+    write_curriculum_state "${CURRICULUM_STATUS}" "${CURRICULUM_LEVEL}" "${CURRICULUM_FAILURES}" "" "" "" ""
+  fi
+
+  if [[ "${CURRICULUM_STATUS}" == "AWAITING_HUMAN_VALIDATION" ]]; then
+    HUMAN_VALIDATION_FILE="${HUMAN_VALIDATION_FILE:-${CURRICULUM_VALIDATION_ROOT}/${CURRICULUM_PENDING_SESSION}.json}"
+    MASTERY_PACKET="${CURRICULUM_SESSIONS_ROOT}/${CURRICULUM_PENDING_SESSION}/mastery_prompt.md"
+    if [[ ! -s "${HUMAN_VALIDATION_FILE}" ]]; then
+      log "session ${CURRICULUM_PENDING_SESSION} is awaiting human validation"
+      log "review ${MASTERY_PACKET} and write PASS/FAIL JSON to ${HUMAN_VALIDATION_FILE}"
+      write_curriculum_summary "AWAITING_HUMAN_VALIDATION" "human mastery validation is required before the next session"
+      exit 0
+    fi
+    grep -Eq '"session_id"[[:space:]]*:[[:space:]]*"'"${CURRICULUM_PENDING_SESSION}"'"' "${HUMAN_VALIDATION_FILE}" || fatal "human validation session_id does not match pending session"
+    grep -Eq '"checkpoint_hash"[[:space:]]*:[[:space:]]*"'"${CURRICULUM_PENDING_CHECKPOINT_HASH}"'"' "${HUMAN_VALIDATION_FILE}" || fatal "human validation checkpoint hash does not match pending checkpoint"
+    if grep -Eq '"result"[[:space:]]*:[[:space:]]*"PASS"' "${HUMAN_VALIDATION_FILE}"; then
+      log "human mastery PASS for ${CURRICULUM_PENDING_SESSION}; advancing exactly one curriculum level"
+      NEXT_LEVEL=$((CURRICULUM_LEVEL + 1))
+      if ((NEXT_LEVEL > CURRICULUM_MAX_LEVEL)); then
+        write_curriculum_state "CURRICULUM_COMPLETE" "${NEXT_LEVEL}" "0" "" "" "" "${CURRICULUM_PENDING_CHECKPOINT}"
+        write_curriculum_summary "CURRICULUM_COMPLETE" "all declared curriculum levels have human PASS records"
+        exit 0
+      fi
+      PREVIOUS_CHECKPOINT="${CURRICULUM_PENDING_CHECKPOINT}"
+      write_curriculum_state "READY_TO_TRAIN" "${NEXT_LEVEL}" "0" "" "" "" "${PREVIOUS_CHECKPOINT}"
+      CURRICULUM_STATUS=READY_TO_TRAIN
+      CURRICULUM_LEVEL=${NEXT_LEVEL}
+      CURRICULUM_FAILURES=0
+      CURRICULUM_PENDING_SESSION=
+      CURRICULUM_PENDING_CHECKPOINT=
+      CURRICULUM_PENDING_CHECKPOINT_HASH=
+      CURRICULUM_PARENT_CHECKPOINT="${PREVIOUS_CHECKPOINT}"
+    elif grep -Eq '"result"[[:space:]]*:[[:space:]]*"FAIL"' "${HUMAN_VALIDATION_FILE}"; then
+      if ((CURRICULUM_FAILURES == 0)); then
+        NEXT_FAILURES=1
+        write_curriculum_state "READY_TO_RETRY" "${CURRICULUM_LEVEL}" "${NEXT_FAILURES}" "" "" "" "${CURRICULUM_PENDING_CHECKPOINT}"
+        cat > "${CURRICULUM_ROOT}/retry_required.md" <<EOF
+# Retry Required
+
+Human validation failed for session ${CURRICULUM_PENDING_SESSION}. The curriculum is stopped. The next invocation will select a fresh disjoint chunk at the same competency under the same model, tokenizer, optimizer, and validation contract.
+
+The failed checkpoint remains immutable at ${CURRICULUM_PENDING_CHECKPOINT}. This is not yet an architectural conclusion; a second controlled failure is required.
+EOF
+        write_curriculum_summary "READY_TO_RETRY" "human mastery failed once; repeat the same competency on a fresh disjoint chunk"
+        exit 0
+      fi
+      write_curriculum_state "ARCHITECTURE_DIAGNOSIS_REQUIRED" "${CURRICULUM_LEVEL}" "${CURRICULUM_FAILURES}" "" "${CURRICULUM_PENDING_CHECKPOINT}" "${CURRICULUM_PENDING_CHECKPOINT_HASH}" "${CURRICULUM_PARENT_CHECKPOINT}"
+      cat > "${CURRICULUM_ROOT}/architecture_diagnosis_required.md" <<EOF
+# Architecture Diagnosis Required
+
+Human validation failed twice for curriculum level ${CURRICULUM_LEVEL} under disjoint data chunks with the same declared contract. Preserve both session directories and review their reports before changing architecture, data, or optimization.
+
+The workflow is fail-closed and will not advance automatically.
+EOF
+      write_curriculum_summary "ARCHITECTURE_DIAGNOSIS_REQUIRED" "the same competency failed twice; architecture/data diagnosis is required"
+      exit 0
+    else
+      fatal "human validation result must be PASS or FAIL"
+    fi
+  elif [[ "${CURRICULUM_STATUS}" == "READY_TO_RETRY" ]]; then
+    CURRICULUM_STATUS=READY_TO_TRAIN
+  elif [[ "${CURRICULUM_STATUS}" == "ARCHITECTURE_DIAGNOSIS_REQUIRED" || "${CURRICULUM_STATUS}" == "CURRICULUM_COMPLETE" ]]; then
+    write_curriculum_summary "${CURRICULUM_STATUS}" "curriculum state is terminal until explicitly reviewed"
+    exit 0
+  fi
+
+  BASE_OFFSET=$((CURRICULUM_LEVEL * CURRICULUM_CHUNK_STRIDE + CURRICULUM_FAILURES * CURRICULUM_RETRY_STRIDE))
+  SESSION_ID="level-${CURRICULUM_LEVEL}-attempt-${CURRICULUM_FAILURES}"
+  SESSION_DIR="${CURRICULUM_SESSIONS_ROOT}/${SESSION_ID}"
+  DATA_DIR="${CURRICULUM_DATA_ROOT}/${SESSION_ID}"
+  rm -rf "${SESSION_DIR}" "${DATA_DIR}"
+  mkdir -p "${SESSION_DIR}" "${DATA_DIR}"
+  log "preparing FineWeb-Edu and OpenAssistant session ${SESSION_ID} at source offset ${BASE_OFFSET}"
+  "${BUILD_DIR}/cct_curriculum_prepare" \
+    --output "${DATA_DIR}" \
+    --pretrain-offset "${BASE_OFFSET}" \
+    --pretrain-rows "${CURRICULUM_CHUNK_ROWS}" \
+    --validation-offset "$((BASE_OFFSET + CURRICULUM_VALIDATION_GAP))" \
+    --validation-rows "${CURRICULUM_VALIDATION_ROWS}" \
+    --test-offset "$((BASE_OFFSET + CURRICULUM_TEST_GAP))" \
+    --test-rows "${CURRICULUM_TEST_ROWS}" \
+    --sft-offset "${BASE_OFFSET}" \
+    --sft-rows "${CURRICULUM_CHUNK_ROWS}" \
+    --sft-validation-offset "$((BASE_OFFSET + CURRICULUM_SFT_VALIDATION_GAP))" \
+    --sft-validation-rows "${CURRICULUM_VALIDATION_ROWS}" \
+    --page-length 100 \
+    --minimum-education-score "${MINIMUM_EDUCATION_SCORE}" \
+    --fineweb-revision "${FINEWEB_REVISION}" \
+    --oasst-revision "${OASST_REVISION}" \
+    2>&1 | tee "${RUN_DIR}/curriculum_prepare.log"
+  [[ -s "${DATA_DIR}/manifest.json" && -s "${DATA_DIR}/pretrain_test.txt" ]] || fatal "curriculum preparation did not publish its governed manifest and test split"
+  PARENT_ARG=()
+  if [[ -n "${CURRICULUM_PARENT_CHECKPOINT}" ]]; then PARENT_ARG=(--parent-checkpoint "${CURRICULUM_PARENT_CHECKPOINT}"); fi
+  log "training exactly one competency session from its immutable parent checkpoint"
+  "${BUILD_DIR}/cct_curriculum_session" \
+    --input "${DATA_DIR}" \
+    --output "${SESSION_DIR}" \
+    --tokenizer "${TOKENIZER}" \
+    "${PARENT_ARG[@]}" \
+    --session-id "${SESSION_ID}" \
+    --level "${CURRICULUM_LEVEL}" \
+    --pretrain-steps "${CURRICULUM_PRETRAIN_STEPS}" \
+    --sft-steps "${CURRICULUM_SFT_STEPS}" \
+    --context "${CONTEXT_LENGTH}" \
+    --embedding "${EMBEDDING_DIM}" \
+    --hidden "${HIDDEN_DIM}" \
+    --batch "${ARCHITECTURE_BATCH}" \
+    --seed "${SEED}" \
+    2>&1 | tee "${RUN_DIR}/curriculum_session.log"
+  [[ -s "${SESSION_DIR}/session_report.json" && -s "${SESSION_DIR}/checkpoint.bin" ]] || fatal "curriculum session did not publish a checkpoint and report"
+  PENDING_HASH="$(grep -o '"checkpoint_hash":"[0-9a-f]*"' "${SESSION_DIR}/session_report.json" | head -1 | cut -d'"' -f4)"
+  [[ "${#PENDING_HASH}" -eq 64 ]] || fatal "curriculum session report does not contain a valid final checkpoint hash"
+  case "${CURRICULUM_LEVEL}" in
+    0) COMPETENCY_NAME="stable_symbols_and_word_boundaries"; PROMPT="Continue unseen English sentences exactly, preserving word boundaries, punctuation, and valid token output." ;;
+    1) COMPETENCY_NAME="sentence_completion_and_local_grammar"; PROMPT="Complete unseen English sentences with grammatical agreement, tense, articles, and punctuation." ;;
+    2) COMPETENCY_NAME="paragraph_coherence_and_topic_persistence"; PROMPT="Continue unseen educational paragraphs while preserving topic, referents, and sentence coherence." ;;
+    3) COMPETENCY_NAME="reading_comprehension_and_answer_targeting"; PROMPT="Answer unseen English questions from supplied passages, abstaining when the passage does not support an answer." ;;
+    4) COMPETENCY_NAME="instruction_following_and_response_structure"; PROMPT="Follow unseen English instructions with relevant, complete, correctly structured responses." ;;
+    5) COMPETENCY_NAME="ambiguity_recognition_and_clarification"; PROMPT="Identify underspecified prompts and ask a useful clarification before answering." ;;
+    6) COMPETENCY_NAME="conversational_continuity_and_repair"; PROMPT="Use prior turns, handle corrections, and repair contradictions without losing context." ;;
+    *) COMPETENCY_NAME="bounded_transfer_and_generalization"; PROMPT="Handle new-domain English prompts while preserving the earlier declared competencies." ;;
+  esac
+  cat > "${SESSION_DIR}/mastery_prompt.md" <<EOF
+# Human Mastery Validation — ${SESSION_ID}
+
+**Competency:** ${COMPETENCY_NAME}
+
+**Prompt:** ${PROMPT}
+
+Review the session report, held-out metrics, checkpoint lineage, and the disjoint held-out test material at ${DATA_DIR}/pretrain_test.txt. Ask at least five unseen prompts appropriate to this competency, including one adversarial or boundary case. Record prompt-by-prompt observations. Do not mark PASS from loss alone. PASS requires the declared competency to be demonstrated consistently on unseen examples; otherwise mark FAIL.
+
+Write the result to ${CURRICULUM_VALIDATION_ROOT}/${SESSION_ID}.json using this exact shape:
+
+JSON shape:
+
+{
+  "session_id": "${SESSION_ID}",
+  "checkpoint_hash": "${PENDING_HASH}",
+  "competency": "${COMPETENCY_NAME}",
+  "result": "PASS",
+  "evaluator": "replace-with-your-identifier",
+  "timestamp_utc": "replace-with-UTC-timestamp",
+  "observations": ["prompt 1: ...", "prompt 2: ...", "prompt 3: ...", "prompt 4: ...", "prompt 5: ..."],
+  "diagnosis": "optional"
+}
+
+The script will stop until this record exists. It will never self-approve the competency.
+EOF
+  write_curriculum_state "AWAITING_HUMAN_VALIDATION" "${CURRICULUM_LEVEL}" "${CURRICULUM_FAILURES}" "${SESSION_ID}" "${SESSION_DIR}/checkpoint.bin" "${PENDING_HASH}" "${CURRICULUM_PARENT_CHECKPOINT}"
+  write_curriculum_summary "AWAITING_HUMAN_VALIDATION" "session completed; human mastery validation is required before advancement"
+  log "session ${SESSION_ID} complete; review ${SESSION_DIR}/mastery_prompt.md and provide the validation JSON"
+  exit 0
+fi
 
 if [[ "${SKIP_DATA_PREPARATION}" == "1" ]]; then
   log "SKIP_DATA_PREPARATION=1: reusing ${PREP_DIR}"
@@ -275,7 +517,7 @@ log "running focused native regression and documentation checks"
 "${BUILD_DIR}/cct_track1_tests" 2>&1 | tee "${RUN_DIR}/track1_tests.log"
 "${BUILD_DIR}/cct_documentation_consistency_tests" 2>&1 | tee "${RUN_DIR}/documentation_consistency.log"
 
-grep -q 'SUMMARY 13/13 passed' "${RUN_DIR}/nlp_trainer_tests.log" || fatal "NLP trainer regression suite did not pass 13/13"
+grep -q 'SUMMARY 14/14 passed' "${RUN_DIR}/nlp_trainer_tests.log" || fatal "NLP trainer regression suite did not pass 14/14"
 grep -q 'SUMMARY 1/1 passed' "${RUN_DIR}/documentation_consistency.log" || fatal "documentation consistency test did not pass 1/1"
 
 if [[ "${RUN_FULL_CTEST}" == "1" ]]; then
