@@ -47,6 +47,9 @@ Useful environment overrides:
   CURRICULUM_TEST_ROWS=40           FineWeb held-out test rows per session.
   CURRICULUM_PRETRAIN_STEPS=100     Native CCT steps per session pretraining phase.
   CURRICULUM_SFT_STEPS=50           Native CCT steps per session SFT phase.
+  CURRICULUM_PAGE_DELAY_MS=5000      Delay between dataset API pages.
+  CURRICULUM_RETRY_COUNT=12          Curl retries for transient/rate-limit failures.
+  CURRICULUM_SFT_SCAN_MULTIPLIER=100 OpenAssistant rows scanned per accepted row.
 
 The default path is a real-data run. SMOKE=1 is only for checking the orchestration locally and
 is not an architecture or language-quality result.
@@ -192,13 +195,18 @@ EOF
 
 log "configuring native C++20 Release build in ${BUILD_DIR}"
 cmake -S cpp -B "${BUILD_DIR}" -DCMAKE_BUILD_TYPE=Release -DCCT_STRICT_WARNINGS=ON 2>&1 | tee "${RUN_DIR}/cmake_configure.log"
-log "building native preparation, training, qualification, gate, and regression executables"
-cmake --build "${BUILD_DIR}" --parallel "${JOBS}" \
-  --target cct_track1_prepare cct_track1_train cct_track1_gate \
-           cct_architecture_qualification cct_architecture_qualification_gate \
-           cct_curriculum_prepare cct_curriculum_session \
-           cct_nlp_trainer_tests cct_track1_tests cct_documentation_consistency_tests \
-  2>&1 | tee "${RUN_DIR}/build.log"
+if [[ "${RUN_FULL_CTEST}" == "1" ]]; then
+  log "building the complete native C++ target graph for full CTest"
+  cmake --build "${BUILD_DIR}" --parallel "${JOBS}" 2>&1 | tee "${RUN_DIR}/build.log"
+else
+  log "building native preparation, training, qualification, gate, and regression executables"
+  cmake --build "${BUILD_DIR}" --parallel "${JOBS}" \
+    --target cct_track1_prepare cct_track1_train cct_track1_gate \
+             cct_architecture_qualification cct_architecture_qualification_gate \
+             cct_curriculum_prepare cct_curriculum_session \
+             cct_nlp_trainer_tests cct_track1_tests cct_documentation_consistency_tests \
+    2>&1 | tee "${RUN_DIR}/build.log"
+fi
 
 if [[ "${CURRICULUM_MODE}" == "1" ]]; then
   CURRICULUM_STATE_FILE="${CURRICULUM_ROOT}/state.env"
@@ -210,6 +218,9 @@ if [[ "${CURRICULUM_MODE}" == "1" ]]; then
   CURRICULUM_VALIDATION_GAP="$(number_or_default CURRICULUM_VALIDATION_GAP "${CURRICULUM_VALIDATION_GAP:-1000}")"
   CURRICULUM_TEST_GAP="$(number_or_default CURRICULUM_TEST_GAP "${CURRICULUM_TEST_GAP:-2000}")"
   CURRICULUM_SFT_VALIDATION_GAP="$(number_or_default CURRICULUM_SFT_VALIDATION_GAP "${CURRICULUM_SFT_VALIDATION_GAP:-1000}")"
+  CURRICULUM_PAGE_DELAY_MS="$(number_or_default CURRICULUM_PAGE_DELAY_MS "${CURRICULUM_PAGE_DELAY_MS:-5000}")"
+  CURRICULUM_RETRY_COUNT="$(number_or_default CURRICULUM_RETRY_COUNT "${CURRICULUM_RETRY_COUNT:-12}")"
+  CURRICULUM_SFT_SCAN_MULTIPLIER="$(number_or_default CURRICULUM_SFT_SCAN_MULTIPLIER "${CURRICULUM_SFT_SCAN_MULTIPLIER:-100}")"
   FINEWEB_REVISION="${FINEWEB_REVISION:-87f09149ef4734204d70ed1d046ddc9ca3f2b8f9}"
   OASST_REVISION="${OASST_REVISION:-fdf72ae0827c1cda404aff25b6603abec9e3399b}"
   MINIMUM_EDUCATION_SCORE="${MINIMUM_EDUCATION_SCORE:-2.0}"
@@ -336,7 +347,6 @@ EOF
   SESSION_ID="level-${CURRICULUM_LEVEL}-attempt-${CURRICULUM_FAILURES}"
   SESSION_DIR="${CURRICULUM_SESSIONS_ROOT}/${SESSION_ID}"
   DATA_DIR="${CURRICULUM_DATA_ROOT}/${SESSION_ID}"
-  rm -rf "${SESSION_DIR}" "${DATA_DIR}"
   mkdir -p "${SESSION_DIR}" "${DATA_DIR}"
   log "preparing FineWeb-Edu and OpenAssistant session ${SESSION_ID} at source offset ${BASE_OFFSET}"
   "${BUILD_DIR}/cct_curriculum_prepare" \
@@ -352,6 +362,9 @@ EOF
     --sft-validation-offset "$((BASE_OFFSET + CURRICULUM_SFT_VALIDATION_GAP))" \
     --sft-validation-rows "${CURRICULUM_VALIDATION_ROWS}" \
     --page-length 100 \
+    --page-delay-ms "${CURRICULUM_PAGE_DELAY_MS}" \
+    --retry-count "${CURRICULUM_RETRY_COUNT}" \
+    --sft-scan-multiplier "${CURRICULUM_SFT_SCAN_MULTIPLIER}" \
     --minimum-education-score "${MINIMUM_EDUCATION_SCORE}" \
     --fineweb-revision "${FINEWEB_REVISION}" \
     --oasst-revision "${OASST_REVISION}" \
