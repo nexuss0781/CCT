@@ -960,3 +960,17 @@ These commands are valid only when the declared native toolchain is installed an
 - [CCT internal goal map](../Goal.md)
 - [CCT actionable todo](../Todo.md)
 - [Track 1 operational guide](../artifacts/track1/README.md)
+
+## 11. Module 1 focused-English submodule curriculum
+
+The approved academic learning path is defined in [`SPEC/Focused_English_Academic_Learning_Curriculum.md`](Focused_English_Academic_Learning_Curriculum.md). The executable Module 1 session contract is defined in [`SPEC/Module1_Curriculum_Sessions.md`](Module1_Curriculum_Sessions.md).
+
+- [x] Define the four ordered Module 1 submodules: character and symbol awareness; whitespace and word boundaries; common word patterns; stable short continuation.
+- [x] Define one-submodule-per-invocation state, disjoint retry ranges, parent-checkpoint continuation, and fail-closed human validation.
+- [x] Add Module 1-specific FineWeb-Edu and OpenAssistant budgets, source identities, manifests, and submodule labels.
+- [x] Add the native deterministic checkpoint inspector with prompt continuations, token validity, UTF-8 diagnostics, EOS, repetition, whitespace, punctuation, and context-window evidence.
+- [x] Add Module 1 mastery packets containing the exact submodule objective, persisted inference output path, acceptance rule, rejection rule, and validation schema.
+- [x] Validate strict native build, 44/44 CTest, 14/14 NLP regressions, 9/9 preparation tests, 1/1 documentation consistency, smoke training, deterministic inspection, retry transition, and PASS-to-next-submodule transition.
+- [ ] Run the approved real-data Module 1.1 qualification session in the user’s persisted Colab Drive root.
+- [ ] Receive human Module 1.1 competency evidence and record PASS or FAIL.
+- [ ] Do not execute Module 1.2 until Module 1.1 receives a valid human PASS.

@@ -9,7 +9,7 @@ The repository root `run.sh` is now the canonical focused-English continual-lear
 > bash run.sh
 > ```
 
-The first invocation creates the durable state directory `runs/curriculum-focused-english/`, prepares the first session, trains it, and stops with `AWAITING_HUMAN_VALIDATION`. Review the generated mastery packet and test the checkpoint on unseen prompts yourself. Then write the required validation JSON at the path printed by the script and run `bash run.sh` again. A human `PASS` advances exactly one curriculum level. A human `FAIL` causes one controlled retry at the same level on a disjoint source range. Two failures stop the workflow in `ARCHITECTURE_DIAGNOSIS_REQUIRED`.
+With the approved Module 1 curriculum enabled by default, the first invocation creates the durable state directory `runs/curriculum-module1/`, prepares exactly one Module 1 submodule session, trains it, runs the native deterministic checkpoint inspector, prints the actual inference outputs, and stops with `AWAITING_HUMAN_VALIDATION`. Review the generated mastery packet and inference JSONL. Then write the required validation JSON at the path printed by the script and run `bash run.sh` again. A human `PASS` advances exactly one Module 1 submodule. A human `FAIL` causes one controlled retry of the same submodule on a fresh disjoint source range. Two failures stop the workflow in `ARCHITECTURE_DIAGNOSIS_REQUIRED`. Set `CURRICULUM_MODULE1=0` only when intentionally using the older level-based curriculum path.
 
 The script requires Internet access for the pinned Hugging Face rows API. If a dependency is missing, it attempts non-interactive Ubuntu installation with `apt-get`; this requires root or passwordless `sudo`. No Python runtime is used by data preparation, training, checkpointing, or evaluation. The native requirements are C++20, CMake, `pkg-config`, FFTW3 development files, `curl`, `sha256sum`, `zip`, and `unzip`. The default `bash run.sh` path skips the full CTest suite so training can start directly; setting `RUN_FULL_CTEST=1` builds the complete CMake target graph before invoking all 44 tests.
 
@@ -60,8 +60,10 @@ Do not mark `PASS` from training loss, perplexity, token accuracy, or a short au
 
 | Variable | Default | Meaning |
 |---|---:|---|
-| `CURRICULUM_MODE` | `1` | Enables the continual-learning state machine. Set `0` only for the legacy Track 1 workflow. |
-| `CURRICULUM_ROOT` | `runs/curriculum-focused-english` | Durable state, data, validation, and session root. |
+|   `CURRICULUM_MODE` | `1` | Enables the continual-learning state machine. Set `0` only for the legacy Track 1 workflow. |
+| `CURRICULUM_MODULE1` | `1` | Runs the approved Module 1 submodule curriculum; one submodule session per invocation. |
+| `CURRICULUM_ROOT` | `runs/curriculum-module1` | Durable Module 1 state, data, sessions, and validation root when Module 1 is enabled. |
+| `CURRICULUM_ROOT` | `runs/curriculum-focused-english` when Module 1 is disabled | Durable state, data, validation, and session root for the legacy level-based curriculum. |
 | `CURRICULUM_CHUNK_ROWS` | `100` | Requested accepted training rows per source per session. |
 | `CURRICULUM_VALIDATION_ROWS` | `40` | Requested validation rows per source per session. |
 | `CURRICULUM_TEST_ROWS` | `40` | Requested held-out FineWeb test rows per session. |
@@ -98,6 +100,19 @@ Every session publishes `pretrain_checkpoint.bin` and the final `checkpoint.bin`
 
 The state file is a small generated scalar record at `CURRICULUM_ROOT/state.env`. Its meaningful states are `READY_TO_TRAIN`, `AWAITING_HUMAN_VALIDATION`, `READY_TO_RETRY`, `ARCHITECTURE_DIAGNOSIS_REQUIRED`, and `CURRICULUM_COMPLETE`. Never edit it to bypass a pending validation record. The evidence of each session remains under `CURRICULUM_ROOT/sessions/<session-id>/`, and each retry uses a fresh source range.
 
+## Module 1 academic submodules
+
+Module 1 is executed in this order, with one submodule per session:
+
+| Submodule | Objective | Qualification budget |
+|---|---|---|
+| `1.1` | Character and symbol awareness | 500 / 100 / 100 FineWeb train/validation/test rows; 250 / 50 SFT rows; 500 / 250 steps |
+| `1.2` | Whitespace and word boundaries | 750 / 150 / 150 FineWeb rows; 375 / 75 SFT rows; 750 / 375 steps |
+| `1.3` | Common word patterns | 1,000 / 200 / 200 FineWeb rows; 500 / 100 SFT rows; 1,000 / 500 steps |
+| `1.4` | Stable short continuation | 1,250 / 250 / 250 FineWeb rows; 625 / 125 SFT rows; 1,250 / 625 steps |
+
+For each submodule, the native workflow prepares the FineWeb-Edu and OpenAssistant chunks, trains pretraining followed by SFT, creates `inference.jsonl`, writes `mastery_prompt.md`, and stops. It never trains the next submodule in the same initial invocation.
+
 ## Main output files
 
 | Path | Contents |
@@ -112,6 +127,8 @@ The state file is a small generated scalar record at `CURRICULUM_ROOT/state.env`
 | `CURRICULUM_ROOT/sessions/<session-id>/checkpoint.bin` | Immutable final checkpoint for the session. |
 | `CURRICULUM_ROOT/sessions/<session-id>/mastery_prompt.md` | Human competency test instructions and validation schema. |
 | `CURRICULUM_ROOT/validation/<session-id>.json` | User-supplied mastery decision. |
+| `CURRICULUM_ROOT/sessions/<module-1-session-id>/inference.jsonl` | Native deterministic continuations and symbol/boundary diagnostics for human review. |
+| `data/curriculum/module-1/prompts/<submodule>.txt` | Versioned unseen prompt packet for the current Module 1 submodule. |
 | `CURRICULUM_ROOT/retry_required.md` | First-failure controlled-retry explanation. |
 | `CURRICULUM_ROOT/architecture_diagnosis_required.md` | Terminal two-failure diagnosis gate. |
 

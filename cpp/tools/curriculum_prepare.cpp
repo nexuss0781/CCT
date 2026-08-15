@@ -368,6 +368,8 @@ std::string normalize_record(const std::string& value) {
 
 struct Options {
     std::filesystem::path output = "artifacts/curriculum/current";
+    std::string module = "focused-english";
+    std::string submodule = "level-0";
     std::size_t pretrain_offset = 0U;
     std::size_t pretrain_rows = 100U;
     std::size_t validation_offset = 1000U;
@@ -407,6 +409,8 @@ Options parse_options(const int argc, char** argv) {
             return std::string(argv[++index]);
         };
         if (key == "--output") options.output = value();
+        else if (key == "--module") options.module = value();
+        else if (key == "--submodule") options.submodule = value();
         else if (key == "--pretrain-offset") options.pretrain_offset = number(value(), key);
         else if (key == "--pretrain-rows") options.pretrain_rows = number(value(), key);
         else if (key == "--validation-offset") options.validation_offset = number(value(), key);
@@ -425,13 +429,14 @@ Options parse_options(const int argc, char** argv) {
         else if (key == "--fineweb-revision") options.fineweb_revision = value();
         else if (key == "--oasst-revision") options.oasst_revision = value();
         else if (key == "--help") {
-            std::cout << "cct_curriculum_prepare --output PATH --pretrain-offset N --pretrain-rows N --validation-offset N --validation-rows N "
+            std::cout << "cct_curriculum_prepare --output PATH --module NAME --submodule NAME --pretrain-offset N --pretrain-rows N --validation-offset N --validation-rows N "
                          "--test-offset N --test-rows N --sft-offset N --sft-rows N --sft-validation-offset N --sft-validation-rows N --page-delay-ms N --retry-count N "
                          "--sft-scan-multiplier N --minimum-education-score N [--fineweb-revision SHA] [--oasst-revision SHA]\n";
             std::exit(0);
         } else throw PreparationError("unknown argument " + key);
     }
-    require(options.page_length > 0U && options.page_length <= 100U && options.page_delay_ms <= 60000U && options.retry_count > 0U &&
+    require(!options.module.empty() && !options.submodule.empty() && options.page_length > 0U && options.page_length <= 100U &&
+                options.page_delay_ms <= 60000U && options.retry_count > 0U &&
                 options.sft_scan_multiplier > 0U && options.pretrain_rows > 0U && options.validation_rows > 0U && options.test_rows > 0U &&
                 options.sft_rows > 0U && options.sft_validation_rows > 0U && std::isfinite(options.minimum_education_score),
             "curriculum range configuration is invalid");
@@ -539,7 +544,7 @@ int main(int argc, char** argv) {
         }), "OpenAssistant SFT and validation IDs overlap");
         const auto manifest = [&]() {
             std::ostringstream output;
-            output << "{\n  \"status\":\"PASS\",\n  \"fineweb\":{\"dataset\":\"HuggingFaceFW/fineweb-edu\",\"config\":\"sample-10BT\",\"split\":\"train\",\"revision\":\""
+            output << "{\n  \"status\":\"PASS\",\n  \"module\":\"" << json_escape(options.module) << "\",\n  \"submodule\":\"" << json_escape(options.submodule) << "\",\n  \"fineweb\":{\"dataset\":\"HuggingFaceFW/fineweb-edu\",\"config\":\"sample-10BT\",\"split\":\"train\",\"revision\":\""
                    << json_escape(options.fineweb_revision) << "\",\"pretrain_offset\":" << options.pretrain_offset << ",\"pretrain_requested_rows\":"
                    << options.pretrain_rows << ",\"validation_offset\":" << options.validation_offset << ",\"validation_requested_rows\":"
                    << options.validation_rows << ",\"test_offset\":" << options.test_offset << ",\"test_requested_rows\":" << options.test_rows
@@ -562,7 +567,8 @@ int main(int argc, char** argv) {
                                                             sha256_hex(read_file(pretrain_test_path)) + "\nsft_train_sha256=" +
                                                             sha256_hex(read_file(sft_train_path)) + "\nsft_validation_sha256=" +
                                                             sha256_hex(read_file(sft_validation_path)) + "\n");
-        std::cout << "{\"status\":\"PASS\",\"output\":\"" << json_escape(options.output.string()) << "\",\"pretrain_train_records\":"
+        std::cout << "{\"status\":\"PASS\",\"module\":\"" << json_escape(options.module) << "\",\"submodule\":\"" << json_escape(options.submodule)
+                  << "\",\"output\":\"" << json_escape(options.output.string()) << "\",\"pretrain_train_records\":"
                   << pretrain_train_ids.size() << ",\"pretrain_validation_records\":" << pretrain_validation_ids.size()
                   << ",\"pretrain_test_records\":" << pretrain_test_ids.size() << ",\"sft_train_records\":" << sft_train_ids.size() << ",\"sft_validation_records\":" << sft_validation_ids.size() << "}\n";
         return 0;

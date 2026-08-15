@@ -83,6 +83,8 @@ struct Options {
     std::filesystem::path input = "artifacts/curriculum/current";
     std::filesystem::path output = "artifacts/curriculum/session";
     std::filesystem::path tokenizer = "data/stage-10/tokenizer_snapshot.bin";
+    std::string module = "focused-english";
+    std::string submodule = "level-0";
     std::filesystem::path parent_checkpoint;
     std::string session_id = "level-0-session-0";
     std::size_t level = 0U;
@@ -106,6 +108,8 @@ Options parse_options(const int argc, char** argv) {
         if (key == "--input") options.input = value();
         else if (key == "--output") options.output = value();
         else if (key == "--tokenizer") options.tokenizer = value();
+        else if (key == "--module") options.module = value();
+        else if (key == "--submodule") options.submodule = value();
         else if (key == "--parent-checkpoint") options.parent_checkpoint = value();
         else if (key == "--session-id") options.session_id = value();
         else if (key == "--level") options.level = number(value(), key);
@@ -117,12 +121,13 @@ Options parse_options(const int argc, char** argv) {
         else if (key == "--batch") options.batch_size = number(value(), key);
         else if (key == "--seed") options.seed = static_cast<std::uint64_t>(number(value(), key));
         else if (key == "--help") {
-            std::cout << "cct_curriculum_session --input PATH --output PATH --tokenizer PATH [--parent-checkpoint PATH] --session-id ID --level N "
-                         "--pretrain-steps N --sft-steps N --context N --embedding N --hidden N --batch N --seed N\n";
+            std::cout << "cct_curriculum_session --input PATH --output PATH --tokenizer PATH --module NAME --submodule NAME [--parent-checkpoint PATH] "
+                         "--session-id ID --level N --pretrain-steps N --sft-steps N --context N --embedding N --hidden N --batch N --seed N\n";
             std::exit(0);
         } else throw NlpTrainingError("unknown argument " + key);
     }
-    require(!options.session_id.empty() && options.pretrain_steps > 0U && options.sft_steps > 0U && options.context_length >= 2U &&
+    require(!options.module.empty() && !options.submodule.empty() && !options.session_id.empty() && options.pretrain_steps > 0U &&
+                options.sft_steps > 0U && options.context_length >= 2U &&
                 options.embedding_dim > 0U && options.hidden_dim > 0U && options.batch_size > 0U,
             "curriculum session configuration is invalid");
     return options;
@@ -251,7 +256,8 @@ int main(int argc, char** argv) {
         require_same_model(reloaded.model(), sft_trainer.model());
         const auto elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
         std::ostringstream report;
-        report << std::setprecision(12) << "{\"status\":\"PASS\",\"session_id\":\"" << json_escape(options.session_id)
+        report << std::setprecision(12) << "{\"status\":\"PASS\",\"module\":\"" << json_escape(options.module)
+               << "\",\"submodule\":\"" << json_escape(options.submodule) << "\",\"session_id\":\"" << json_escape(options.session_id)
                << "\",\"level\":" << options.level << ",\"tokenizer_hash\":\"" << tokenizer_hash << "\",\"parent_checkpoint_hash\":\""
                << parent_checkpoint_hash << "\",\"pretrain_dataset_hash\":\"" << pretrain.dataset_hash << "\",\"sft_dataset_hash\":\""
                << sft.dataset_hash << "\",\"pretrain_test_sha256\":\"" << pretrain_test_hash
