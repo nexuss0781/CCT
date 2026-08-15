@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <fcntl.h>
 #include <fstream>
+#include <future>
 #include <iomanip>
 #include <limits>
 #include <numeric>
@@ -35,7 +36,7 @@ std::string training_contract_digest(const NlpModelConfig& model, const NlpOptim
              << "|seed=" << model.seed << "|objective=next-token-cross-entropy|mask=target-only-v1|optimizer=" << std::setprecision(17)
              << optimizer.learning_rate << ',' << optimizer.beta1 << ',' << optimizer.beta2 << ',' << optimizer.epsilon << ','
              << optimizer.weight_decay << ',' << optimizer.clip_norm << ',' << optimizer.warmup_steps << ',' << optimizer.batch_size << ',' << optimizer.total_steps << ','
-             << optimizer.validation_interval_steps << "|compact_vocabulary=" << (model.compact_vocabulary ? 1 : 0)
+             << optimizer.validation_interval_steps << "," << optimizer.worker_count << "|compact_vocabulary=" << (model.compact_vocabulary ? 1 : 0)
              << "|token_id_limit=" << model.token_id_limit << "|tokenizer=" << tokenizer_hash << "|dataset=" << dataset_hash << "|code=native-c++20-nlp-v4";
     return GovernedCorpus::content_sha256(contract.str());
 }
@@ -150,6 +151,19 @@ std::vector<double> matvec(const std::vector<double>& parameters, const std::siz
     return result;
 }
 
+void matvec_into(const std::vector<double>& parameters, const std::size_t offset, const std::size_t rows, const std::size_t columns,
+                 const std::vector<double>& input, std::vector<double>& output) {
+    require(input.size() == columns, "NLP matrix input dimension mismatch");
+    require(offset + rows * columns <= parameters.size(), "NLP matrix parameter range exceeds model");
+    output.assign(rows, 0.0);
+    for (std::size_t row = 0; row < rows; ++row) {
+        const auto row_offset = offset + row * columns;
+        double total = 0.0;
+        for (std::size_t column = 0; column < columns; ++column) total += parameters[row_offset + column] * input[column];
+        output[row] = total;
+    }
+}
+
 std::size_t token_slot(const NlpModelConfig& config, const TokenId token) {
     if (!config.compact_vocabulary) {
         require(static_cast<std::size_t>(token) < config.vocabulary_size, "NLP token ID exceeds model vocabulary");
@@ -170,17 +184,22 @@ TokenId token_from_slot(const NlpModelConfig& config, const std::size_t slot) {
     return token;
 }
 
-std::vector<double> softmax(const std::vector<double>& logits) {
+void softmax_into(const std::vector<double>& logits, std::vector<double>& probabilities) {
     require(!logits.empty(), "NLP softmax received empty logits");
+    probabilities.resize(logits.size());
     const auto maximum = *std::max_element(logits.begin(), logits.end());
-    std::vector<double> probabilities(logits.size(), 0.0);
     double denominator = 0.0;
-    for (std::size_t index = 0; index < logits.size(); ++index) {
+    for (std::size_t index = 0U; index < logits.size(); ++index) {
         probabilities[index] = std::exp(std::clamp(logits[index] - maximum, -80.0, 80.0));
         denominator += probabilities[index];
     }
     require(std::isfinite(denominator) && denominator > 0.0, "NLP softmax denominator is non-finite");
     for (auto& probability : probabilities) probability /= denominator;
+}
+
+std::vector<double> softmax(const std::vector<double>& logits) {
+    std::vector<double> probabilities;
+    softmax_into(logits, probabilities);
     return probabilities;
 }
 
@@ -383,38 +402,42 @@ void NextTokenModel::validate_sequence(const NlpSequence& sequence) const {
     }
 }
 
+void project_logits_into(const std::vector<double>& parameters, std::size_t head_offset, std::size_t bias_offset,
+                         std::size_t vocabulary, std::size_t hidden, const std::vector<double>& hidden_state,
+                         std::vector<double>& logits);
+
 std::vector<std::vector<double>> forward_track1_cct_recurrence(const std::vector<double>& parameters, const NlpModelConfig& config,
                                              const NlpSequence& sequence) {
     const auto input = config.embedding_dim;
     const auto hidden = config.hidden_dim;
     const auto vocabulary = config.vocabulary_size;
-    const auto embedding_offset = 0U;
     const auto recurrent_offset = vocabulary * input;
     const auto head_offset = recurrent_offset + 4U * hidden * input + 3U * hidden;
     const auto bias_offset = head_offset + vocabulary * hidden;
     std::vector<double> hidden_state(hidden, 0.0);
     std::vector<double> previous_input(input, 0.0);
+    std::vector<double> x(input, 0.0);
+    std::vector<double> retain_raw(hidden, 0.0);
+    std::vector<double> write_raw(hidden, 0.0);
+    std::vector<double> candidate_raw(hidden, 0.0);
+    std::vector<double> previous_effect(hidden, 0.0);
     std::vector<std::vector<double>> logits;
     logits.reserve(sequence.input_ids.size());
     for (const auto id : sequence.input_ids) {
-        const auto x = std::vector<double>(parameters.begin() + static_cast<std::ptrdiff_t>(embedding_offset + token_slot(config, id) * input),
-                                           parameters.begin() + static_cast<std::ptrdiff_t>(embedding_offset + (token_slot(config, id) + 1U) * input));
-        const auto retain_raw = matvec(parameters, recurrent_offset + 2U * hidden * input, hidden, input, x);
-        const auto write_raw = matvec(parameters, recurrent_offset + 3U * hidden * input, hidden, input, x);
-        const auto candidate_raw = matvec(parameters, recurrent_offset, hidden, input, x);
-        const auto previous_effect = matvec(parameters, recurrent_offset + hidden * input, hidden, input, previous_input);
-        for (std::size_t index = 0; index < hidden; ++index) {
+        const auto offset = token_slot(config, id) * input;
+        std::copy(parameters.begin() + static_cast<std::ptrdiff_t>(offset), parameters.begin() + static_cast<std::ptrdiff_t>(offset + input), x.begin());
+        matvec_into(parameters, recurrent_offset + 2U * hidden * input, hidden, input, x, retain_raw);
+        matvec_into(parameters, recurrent_offset + 3U * hidden * input, hidden, input, x, write_raw);
+        matvec_into(parameters, recurrent_offset, hidden, input, x, candidate_raw);
+        matvec_into(parameters, recurrent_offset + hidden * input, hidden, input, previous_input, previous_effect);
+        for (std::size_t index = 0U; index < hidden; ++index) {
             const auto retain = sigmoid(retain_raw[index] + parameters[recurrent_offset + 4U * hidden * input + hidden + index]);
             const auto write = sigmoid(write_raw[index] + parameters[recurrent_offset + 4U * hidden * input + 2U * hidden + index]);
             const auto candidate = std::tanh(candidate_raw[index] + previous_effect[index] + parameters[recurrent_offset + 4U * hidden * input + index]);
             hidden_state[index] = retain * hidden_state[index] + write * candidate;
         }
-        std::vector<double> output(vocabulary, 0.0);
-        for (std::size_t token = 0; token < vocabulary; ++token) {
-            output[token] = parameters[ bias_offset + token];
-            for (std::size_t index = 0; index < hidden; ++index) output[token] += parameters[head_offset + token * hidden + index] * hidden_state[index];
-        }
-        logits.push_back(std::move(output));
+        logits.emplace_back(vocabulary, 0.0);
+        project_logits_into(parameters, head_offset, bias_offset, vocabulary, hidden, hidden_state, logits.back());
         previous_input = x;
     }
     return logits;
@@ -433,29 +456,29 @@ std::vector<std::vector<double>> forward_gru(const std::vector<double>& paramete
     const auto head_offset = n_offset + gate_size;
     const auto bias_offset = head_offset + vocabulary * hidden;
     std::vector<double> hidden_state(hidden, 0.0);
+    std::vector<double> x(input, 0.0);
+    std::vector<double> z(hidden, 0.0);
+    std::vector<double> r(hidden, 0.0);
+    std::vector<double> candidate(hidden, 0.0);
+    std::vector<double> recurrent(hidden, 0.0);
     std::vector<std::vector<double>> logits;
     logits.reserve(sequence.input_ids.size());
+    const auto gate = [&](const std::size_t offset, std::vector<double>& result) {
+        matvec_into(parameters, offset, hidden, input, x, result);
+        matvec_into(parameters, offset + hidden * input, hidden, hidden, hidden_state, recurrent);
+        for (std::size_t index = 0U; index < hidden; ++index) result[index] = sigmoid(result[index] + recurrent[index] + parameters[offset + hidden * input + hidden * hidden + index]);
+    };
     for (const auto id : sequence.input_ids) {
-        const auto x = std::vector<double>(parameters.begin() + static_cast<std::ptrdiff_t>(token_slot(config, id) * input),
-                                           parameters.begin() + static_cast<std::ptrdiff_t>((token_slot(config, id) + 1U) * input));
-        const auto gate = [&](const std::size_t offset) {
-            auto result = matvec(parameters, offset, hidden, input, x);
-            const auto recurrent = matvec(parameters, offset + hidden * input, hidden, hidden, hidden_state);
-            for (std::size_t index = 0; index < hidden; ++index) result[index] = sigmoid(result[index] + recurrent[index] + parameters[offset + hidden * input + hidden * hidden + index]);
-            return result;
-        };
-        const auto z = gate(z_offset);
-        const auto r = gate(r_offset);
-        auto candidate = matvec(parameters, n_offset, hidden, input, x);
-        const auto recurrent = matvec(parameters, n_offset + hidden * input, hidden, hidden, hidden_state);
-        for (std::size_t index = 0; index < hidden; ++index) candidate[index] = std::tanh(candidate[index] + r[index] * recurrent[index] + parameters[n_offset + hidden * input + hidden * hidden + index]);
-        for (std::size_t index = 0; index < hidden; ++index) hidden_state[index] = z[index] * hidden_state[index] + (1.0 - z[index]) * candidate[index];
-        std::vector<double> output(vocabulary, 0.0);
-        for (std::size_t token = 0; token < vocabulary; ++token) {
-            output[token] = parameters[bias_offset + token];
-            for (std::size_t index = 0; index < hidden; ++index) output[token] += parameters[head_offset + token * hidden + index] * hidden_state[index];
-        }
-        logits.push_back(std::move(output));
+        const auto offset = token_slot(config, id) * input;
+        std::copy(parameters.begin() + static_cast<std::ptrdiff_t>(offset), parameters.begin() + static_cast<std::ptrdiff_t>(offset + input), x.begin());
+        gate(z_offset, z);
+        gate(r_offset, r);
+        matvec_into(parameters, n_offset, hidden, input, x, candidate);
+        matvec_into(parameters, n_offset + hidden * input, hidden, hidden, hidden_state, recurrent);
+        for (std::size_t index = 0U; index < hidden; ++index) candidate[index] = std::tanh(candidate[index] + r[index] * recurrent[index] + parameters[n_offset + hidden * input + hidden * hidden + index]);
+        for (std::size_t index = 0U; index < hidden; ++index) hidden_state[index] = z[index] * hidden_state[index] + (1.0 - z[index]) * candidate[index];
+        logits.emplace_back(vocabulary, 0.0);
+        project_logits_into(parameters, head_offset, bias_offset, vocabulary, hidden, hidden_state, logits.back());
     }
     return logits;
 }
@@ -470,19 +493,17 @@ std::vector<std::vector<double>> forward_ssm(const std::vector<double>& paramete
     const auto head_offset = input_offset + hidden * input;
     const auto bias_offset = head_offset + vocabulary * hidden;
     std::vector<double> hidden_state(hidden, 0.0);
+    std::vector<double> x(input, 0.0);
+    std::vector<double> effect(hidden, 0.0);
     std::vector<std::vector<double>> logits;
     logits.reserve(sequence.input_ids.size());
     for (const auto id : sequence.input_ids) {
-        const auto x = std::vector<double>(parameters.begin() + static_cast<std::ptrdiff_t>(token_slot(config, id) * input),
-                                           parameters.begin() + static_cast<std::ptrdiff_t>((token_slot(config, id) + 1U) * input));
-        const auto effect = matvec(parameters, input_offset, hidden, input, x);
-        for (std::size_t index = 0; index < hidden; ++index) hidden_state[index] = 0.999 * sigmoid(parameters[recurrent_offset + index]) * hidden_state[index] + effect[index];
-        std::vector<double> output(vocabulary, 0.0);
-        for (std::size_t token = 0; token < vocabulary; ++token) {
-            output[token] = parameters[bias_offset + token];
-            for (std::size_t index = 0; index < hidden; ++index) output[token] += parameters[head_offset + token * hidden + index] * hidden_state[index];
-        }
-        logits.push_back(std::move(output));
+        const auto offset = token_slot(config, id) * input;
+        std::copy(parameters.begin() + static_cast<std::ptrdiff_t>(offset), parameters.begin() + static_cast<std::ptrdiff_t>(offset + input), x.begin());
+        matvec_into(parameters, input_offset, hidden, input, x, effect);
+        for (std::size_t index = 0U; index < hidden; ++index) hidden_state[index] = 0.999 * sigmoid(parameters[recurrent_offset + index]) * hidden_state[index] + effect[index];
+        logits.emplace_back(vocabulary, 0.0);
+        project_logits_into(parameters, head_offset, bias_offset, vocabulary, hidden, hidden_state, logits.back());
     }
     return logits;
 }
@@ -492,47 +513,53 @@ std::vector<std::vector<double>> forward_dense(const std::vector<double>& parame
     const auto input = config.embedding_dim;
     const auto hidden = config.hidden_dim;
     const auto vocabulary = config.vocabulary_size;
-    const auto embedding_offset = 0U;
     const auto attention_offset = vocabulary * input;
     const auto q_offset = attention_offset;
     const auto k_offset = q_offset + hidden * input;
     const auto v_offset = k_offset + hidden * input;
     const auto head_offset = v_offset + hidden * input;
     const auto bias_offset = head_offset + vocabulary * hidden;
-    std::vector<std::vector<double>> inputs;
+    const auto length = sequence.input_ids.size();
+    std::vector<double> keys(length * hidden, 0.0);
+    std::vector<double> values(length * hidden, 0.0);
+    std::vector<double> x(input, 0.0);
+    std::vector<double> query(hidden, 0.0);
+    std::vector<double> key(hidden, 0.0);
+    std::vector<double> value(hidden, 0.0);
+    std::vector<double> scores(length, 0.0);
+    std::vector<double> context(hidden, 0.0);
     std::vector<std::vector<double>> logits;
-    inputs.reserve(sequence.input_ids.size());
-    logits.reserve(sequence.input_ids.size());
-    for (const auto id : sequence.input_ids) {
-        inputs.emplace_back(parameters.begin() + static_cast<std::ptrdiff_t>(embedding_offset + token_slot(config, id) * input),
-                            parameters.begin() + static_cast<std::ptrdiff_t>(embedding_offset + (token_slot(config, id) + 1U) * input));
-        const auto time = inputs.size() - 1U;
-        const auto query = matvec(parameters, q_offset, hidden, input, inputs[time]);
-        std::vector<double> scores(time + 1U, 0.0);
+    logits.reserve(length);
+    for (std::size_t time = 0U; time < length; ++time) {
+        const auto offset = token_slot(config, sequence.input_ids[time]) * input;
+        std::copy(parameters.begin() + static_cast<std::ptrdiff_t>(offset), parameters.begin() + static_cast<std::ptrdiff_t>(offset + input), x.begin());
+        matvec_into(parameters, q_offset, hidden, input, x, query);
+        matvec_into(parameters, k_offset, hidden, input, x, key);
+        matvec_into(parameters, v_offset, hidden, input, x, value);
+        std::copy(key.begin(), key.end(), keys.begin() + static_cast<std::ptrdiff_t>(time * hidden));
+        std::copy(value.begin(), value.end(), values.begin() + static_cast<std::ptrdiff_t>(time * hidden));
         double maximum = -std::numeric_limits<double>::infinity();
-        for (std::size_t position = 0; position <= time; ++position) {
-            const auto key = matvec(parameters, k_offset, hidden, input, inputs[position]);
-            scores[position] = std::inner_product(query.begin(), query.end(), key.begin(), 0.0) /
-                               std::sqrt(static_cast<double>(hidden));
+        for (std::size_t position = 0U; position <= time; ++position) {
+            const auto key_offset = position * hidden;
+            double score = 0.0;
+            for (std::size_t index = 0U; index < hidden; ++index) score += query[index] * keys[key_offset + index];
+            scores[position] = score / std::sqrt(static_cast<double>(hidden));
             maximum = std::max(maximum, scores[position]);
         }
         double denominator = 0.0;
-        for (auto& score : scores) {
-            score = std::exp(std::clamp(score - maximum, -80.0, 80.0));
-            denominator += score;
+        for (std::size_t position = 0U; position <= time; ++position) {
+            scores[position] = std::exp(std::clamp(scores[position] - maximum, -80.0, 80.0));
+            denominator += scores[position];
         }
         require(std::isfinite(denominator) && denominator > 0.0, "dense attention denominator is non-finite");
-        std::vector<double> context(hidden, 0.0);
-        for (std::size_t position = 0; position <= time; ++position) {
-            const auto value = matvec(parameters, v_offset, hidden, input, inputs[position]);
-            for (std::size_t index = 0; index < hidden; ++index) context[index] += scores[position] / denominator * value[index];
+        std::fill(context.begin(), context.end(), 0.0);
+        for (std::size_t position = 0U; position <= time; ++position) {
+            const auto value_offset = position * hidden;
+            const auto weight = scores[position] / denominator;
+            for (std::size_t index = 0U; index < hidden; ++index) context[index] += weight * values[value_offset + index];
         }
-        std::vector<double> output(vocabulary, 0.0);
-        for (std::size_t token = 0; token < vocabulary; ++token) {
-            output[token] = parameters[bias_offset + token];
-            for (std::size_t index = 0; index < hidden; ++index) output[token] += parameters[head_offset + token * hidden + index] * context[index];
-        }
-        logits.push_back(std::move(output));
+        logits.emplace_back(vocabulary, 0.0);
+        project_logits_into(parameters, head_offset, bias_offset, vocabulary, hidden, context, logits.back());
     }
     return logits;
 }
@@ -545,15 +572,29 @@ std::vector<std::vector<double>> model_forward(const std::vector<double>& parame
     return forward_dense(parameters, config, sequence);
 }
 
+void project_logits_into(const std::vector<double>& parameters, const std::size_t head_offset, const std::size_t bias_offset,
+                         const std::size_t vocabulary, const std::size_t hidden, const std::vector<double>& hidden_state,
+                         std::vector<double>& logits) {
+    require(hidden_state.size() == hidden, "NLP projection hidden dimension mismatch");
+    logits.assign(vocabulary, 0.0);
+    for (std::size_t token = 0U; token < vocabulary; ++token) {
+        const auto row_offset = head_offset + token * hidden;
+        double value = parameters[bias_offset + token];
+        for (std::size_t index = 0U; index < hidden; ++index) value += parameters[row_offset + index] * hidden_state[index];
+        logits[token] = value;
+    }
+}
+
 double cross_entropy_from_logits(const std::vector<std::vector<double>>& logits, const NlpSequence& sequence,
                                  const NlpModelConfig& config, std::size_t* token_count, double* accuracy) {
     require(logits.size() == sequence.target_ids.size(), "NLP logits/targets length mismatch");
     double loss = 0.0;
     std::size_t count = 0;
     std::size_t correct = 0;
+    std::vector<double> probabilities;
     for (std::size_t time = 0; time < logits.size(); ++time) {
         if (sequence.loss_mask[time] == 0U) continue;
-        const auto probabilities = softmax(logits[time]);
+        softmax_into(logits[time], probabilities);
         const auto target = token_slot(config, sequence.target_ids[time]);
         require(target < probabilities.size(), "NLP target is outside logits");
         loss -= std::log(std::max(probabilities[target], std::numeric_limits<double>::min()));
@@ -1011,17 +1052,150 @@ NlpGradientResult NextTokenModel::loss_and_gradients(const NlpSequence& sequence
     return dense_gradients(parameters_, config_, sequence);
 }
 
+void NextTokenModel::validate_inference_state(const NlpInferenceState& state) const {
+    require(state.kind == config_.kind && state.context_length == config_.context_length, "NLP inference state model contract mismatch");
+    require(state.valid_length <= state.context_length && state.write_index < state.context_length, "NLP inference state cursor is invalid");
+    require(state.hidden.size() == config_.hidden_dim && state.previous_input.size() == config_.embedding_dim &&
+                state.input.size() == config_.embedding_dim && state.query.size() == config_.hidden_dim &&
+                state.context.size() == config_.hidden_dim && state.logits.size() == config_.vocabulary_size &&
+                state.scores.size() == config_.context_length && state.scratch1.size() == config_.hidden_dim && state.scratch2.size() == config_.hidden_dim &&
+                state.scratch3.size() == config_.hidden_dim && state.scratch4.size() == config_.hidden_dim,
+            "NLP inference state scratch shape is invalid");
+    if (config_.kind == NlpModelKind::DenseCausalAttention) {
+        require(state.keys.size() == config_.context_length * config_.hidden_dim && state.values.size() == config_.context_length * config_.hidden_dim,
+                "NLP dense inference cache shape is invalid");
+    }
+}
+
+NlpInferenceState NextTokenModel::create_inference_state() const {
+    NlpInferenceState state;
+    state.kind = config_.kind;
+    state.context_length = config_.context_length;
+    state.hidden.assign(config_.hidden_dim, 0.0);
+    state.previous_input.assign(config_.embedding_dim, 0.0);
+    state.input.assign(config_.embedding_dim, 0.0);
+    state.query.assign(config_.hidden_dim, 0.0);
+    state.context.assign(config_.hidden_dim, 0.0);
+    state.logits.assign(config_.vocabulary_size, 0.0);
+    state.scores.assign(config_.context_length, 0.0);
+    state.scratch1.assign(config_.hidden_dim, 0.0);
+    state.scratch2.assign(config_.hidden_dim, 0.0);
+    state.scratch3.assign(config_.hidden_dim, 0.0);
+    state.scratch4.assign(config_.hidden_dim, 0.0);
+    if (config_.kind == NlpModelKind::DenseCausalAttention) {
+        state.keys.assign(config_.context_length * config_.hidden_dim, 0.0);
+        state.values.assign(config_.context_length * config_.hidden_dim, 0.0);
+    }
+    validate_inference_state(state);
+    return state;
+}
+
+void NextTokenModel::next_logits_incremental_into(const TokenId token, NlpInferenceState& state, std::vector<double>& output) const {
+    validate_inference_state(state);
+    static_cast<void>(token_slot(config_, token));
+    const auto input = config_.embedding_dim;
+    const auto hidden = config_.hidden_dim;
+    const auto vocabulary = config_.vocabulary_size;
+    const auto embedding_offset_for_token = token_slot(config_, token) * input;
+    std::copy(parameters_.begin() + static_cast<std::ptrdiff_t>(embedding_offset_for_token),
+              parameters_.begin() + static_cast<std::ptrdiff_t>(embedding_offset_for_token + input), state.input.begin());
+    const auto recurrent_offset = vocabulary * input;
+    if (config_.kind == NlpModelKind::Track1CctRecurrence) {
+        const auto head = recurrent_offset + 4U * hidden * input + 3U * hidden;
+        const auto bias = head + vocabulary * hidden;
+        matvec_into(parameters_, recurrent_offset + 2U * hidden * input, hidden, input, state.input, state.scratch1);
+        matvec_into(parameters_, recurrent_offset + 3U * hidden * input, hidden, input, state.input, state.scratch2);
+        matvec_into(parameters_, recurrent_offset, hidden, input, state.input, state.scratch3);
+        matvec_into(parameters_, recurrent_offset + hidden * input, hidden, input, state.previous_input, state.scratch4);
+        for (std::size_t index = 0U; index < hidden; ++index) {
+            const auto retain = sigmoid(state.scratch1[index] + parameters_[recurrent_offset + 4U * hidden * input + hidden + index]);
+            const auto write = sigmoid(state.scratch2[index] + parameters_[recurrent_offset + 4U * hidden * input + 2U * hidden + index]);
+            const auto candidate = std::tanh(state.scratch3[index] + state.scratch4[index] + parameters_[recurrent_offset + 4U * hidden * input + index]);
+            state.hidden[index] = retain * state.hidden[index] + write * candidate;
+        }
+        project_logits_into(parameters_, head, bias, vocabulary, hidden, state.hidden, output);
+        state.previous_input = state.input;
+    } else if (config_.kind == NlpModelKind::GRU) {
+        const auto gate_size = hidden * input + hidden * hidden + hidden;
+        const auto z_offset = recurrent_offset;
+        const auto r_offset = z_offset + gate_size;
+        const auto n_offset = r_offset + gate_size;
+        const auto head = n_offset + gate_size;
+        const auto bias = head + vocabulary * hidden;
+        const auto gate = [&](const std::size_t offset, std::vector<double>& result) {
+            matvec_into(parameters_, offset, hidden, input, state.input, result);
+            matvec_into(parameters_, offset + hidden * input, hidden, hidden, state.hidden, state.scratch4);
+            for (std::size_t index = 0U; index < hidden; ++index) result[index] = sigmoid(result[index] + state.scratch4[index] + parameters_[offset + hidden * input + hidden * hidden + index]);
+        };
+        gate(z_offset, state.scratch1);
+        gate(r_offset, state.scratch2);
+        matvec_into(parameters_, n_offset, hidden, input, state.input, state.scratch3);
+        matvec_into(parameters_, n_offset + hidden * input, hidden, hidden, state.hidden, state.scratch4);
+        for (std::size_t index = 0U; index < hidden; ++index) state.scratch3[index] = std::tanh(state.scratch3[index] + state.scratch2[index] * state.scratch4[index] + parameters_[n_offset + hidden * input + hidden * hidden + index]);
+        for (std::size_t index = 0U; index < hidden; ++index) state.hidden[index] = state.scratch1[index] * state.hidden[index] + (1.0 - state.scratch1[index]) * state.scratch3[index];
+        project_logits_into(parameters_, head, bias, vocabulary, hidden, state.hidden, output);
+    } else if (config_.kind == NlpModelKind::DiagonalSSM) {
+        const auto input_offset = recurrent_offset + hidden;
+        const auto head = input_offset + hidden * input;
+        const auto bias = head + vocabulary * hidden;
+        matvec_into(parameters_, input_offset, hidden, input, state.input, state.scratch1);
+        for (std::size_t index = 0U; index < hidden; ++index) state.hidden[index] = 0.999 * sigmoid(parameters_[recurrent_offset + index]) * state.hidden[index] + state.scratch1[index];
+        project_logits_into(parameters_, head, bias, vocabulary, hidden, state.hidden, output);
+    } else {
+        const auto attention_offset = recurrent_offset;
+        const auto q_offset = attention_offset;
+        const auto k_offset = q_offset + hidden * input;
+        const auto v_offset = k_offset + hidden * input;
+        const auto head = v_offset + hidden * input;
+        const auto bias = head + vocabulary * hidden;
+        const auto physical = state.write_index;
+        matvec_into(parameters_, q_offset, hidden, input, state.input, state.query);
+        matvec_into(parameters_, k_offset, hidden, input, state.input, state.scratch1);
+        matvec_into(parameters_, v_offset, hidden, input, state.input, state.scratch2);
+        std::copy(state.scratch1.begin(), state.scratch1.end(), state.keys.begin() + static_cast<std::ptrdiff_t>(physical * hidden));
+        std::copy(state.scratch2.begin(), state.scratch2.end(), state.values.begin() + static_cast<std::ptrdiff_t>(physical * hidden));
+        const auto count = std::min(state.valid_length + 1U, state.context_length);
+        double maximum = -std::numeric_limits<double>::infinity();
+        for (std::size_t position = 0U; position < count; ++position) {
+            const auto slot = state.valid_length < state.context_length ? position : (state.write_index + position) % state.context_length;
+            const auto key_offset = slot * hidden;
+            double score = 0.0;
+            for (std::size_t index = 0U; index < hidden; ++index) score += state.query[index] * state.keys[key_offset + index];
+            state.scores[position] = score / std::sqrt(static_cast<double>(hidden));
+            maximum = std::max(maximum, state.scores[position]);
+        }
+        double denominator = 0.0;
+        for (auto& score : state.scores) {
+            score = std::exp(std::clamp(score - maximum, -80.0, 80.0));
+            denominator += score;
+        }
+        require(std::isfinite(denominator) && denominator > 0.0, "incremental dense attention denominator is non-finite");
+        std::fill(state.context.begin(), state.context.end(), 0.0);
+        for (std::size_t position = 0U; position < count; ++position) {
+            const auto slot = state.valid_length < state.context_length ? position : (state.write_index + position) % state.context_length;
+            const auto value_offset = slot * hidden;
+            const auto weight = state.scores[position] / denominator;
+            for (std::size_t index = 0U; index < hidden; ++index) state.context[index] += weight * state.values[value_offset + index];
+        }
+        project_logits_into(parameters_, head, bias, vocabulary, hidden, state.context, output);
+    }
+    state.valid_length = std::min(state.valid_length + 1U, state.context_length);
+    state.write_index = state.valid_length < state.context_length ? state.valid_length : (state.write_index + 1U) % state.context_length;
+    require_finite(output, "NLP incremental inference logits became non-finite");
+}
+
 std::vector<double> NextTokenModel::next_logits(const std::vector<TokenId>& context) const {
     require(!context.empty() && context.size() <= config_.context_length, "NLP inference context length is invalid");
-    for (const auto id : context) static_cast<void>(token_slot(config_, id));
-    NlpSequence sequence;
-    sequence.input_ids = context;
-    sequence.target_ids.assign(context.size(), Tokenizer::kPadId);
-    sequence.loss_mask.assign(context.size(), 0U);
-    const auto logits = model_forward(parameters_, config_, sequence);
-    require(!logits.empty() && logits.back().size() == config_.vocabulary_size, "NLP inference logits shape is invalid");
-    require_finite(logits.back(), "NLP inference logits became non-finite");
-    return logits.back();
+    auto state = create_inference_state();
+    std::vector<double> output(config_.vocabulary_size, 0.0);
+    for (const auto id : context) next_logits_incremental_into(id, state, output);
+    return output;
+}
+
+std::vector<double> NextTokenModel::next_logits_incremental(const TokenId token, NlpInferenceState& state) const {
+    std::vector<double> output(config_.vocabulary_size, 0.0);
+    next_logits_incremental_into(token, state, output);
+    return output;
 }
 
 TokenId NextTokenModel::token_id_from_logit_slot(const std::size_t slot) const { return token_from_slot(config_, slot); }
@@ -1066,10 +1240,21 @@ NlpEvaluation NextTokenModel::evaluate(const std::vector<NlpSequence>& sequences
     return result;
 }
 
+void NextTokenModel::copy_parameter_vector_to(std::vector<double>& values) const {
+    values.resize(parameters_.size());
+    std::copy(parameters_.begin(), parameters_.end(), values.begin());
+}
+
 void NextTokenModel::set_parameter_vector(const std::vector<double>& values) {
     require(values.size() == expected_parameter_count(), "NLP parameter vector size mismatch");
-    require_finite(values, "NLP parameter vector contains non-finite values");
+    require_finite(values, "NLP parameter vector contains non-finite value");
     parameters_ = values;
+}
+
+void NextTokenModel::set_parameter_vector(std::vector<double>&& values) {
+    require(values.size() == expected_parameter_count(), "NLP parameter vector size mismatch");
+    require_finite(values, "NLP parameter vector contains non-finite value");
+    parameters_ = std::move(values);
 }
 
 std::size_t NextTokenModel::state_memory_bytes() const noexcept {
@@ -1151,6 +1336,9 @@ NlpTrainer::NlpTrainer(NlpModelConfig model_config, NlpOptimizerConfig optimizer
     validate_optimizer();
     first_moment_.assign(model_.parameter_count(), 0.0);
     second_moment_.assign(model_.parameter_count(), 0.0);
+    update_parameters_.resize(model_.parameter_count());
+    update_first_moment_.resize(model_.parameter_count());
+    update_second_moment_.resize(model_.parameter_count());
     state_.seed = model_.config().seed;
     state_.rng_state = "seed=" + std::to_string(state_.seed);
     training_contract_hash_ = training_contract_digest(model_.config(), optimizer_config_, tokenizer_hash_, dataset_hash_);
@@ -1169,7 +1357,7 @@ void NlpTrainer::validate_optimizer() const {
                 std::isfinite(optimizer_config_.weight_decay) && optimizer_config_.weight_decay >= 0.0 &&
                 std::isfinite(optimizer_config_.clip_norm) && optimizer_config_.clip_norm > 0.0 &&
                 optimizer_config_.batch_size > 0U && optimizer_config_.total_steps > 0U &&
-                optimizer_config_.validation_interval_steps > 0U,
+                optimizer_config_.validation_interval_steps > 0U && optimizer_config_.worker_count > 0U,
             "NLP optimizer configuration is invalid or non-finite");
 }
 
@@ -1200,9 +1388,30 @@ NlpTrainingPoint NlpTrainer::train_step(const NlpDataset& dataset) {
     std::vector<double> aggregate_gradients(model_.parameter_count(), 0.0);
     double aggregate_loss = 0.0;
     std::size_t aggregate_tokens = 0U;
-    for (std::size_t batch_index = 0U; batch_index < optimizer_config_.batch_size; ++batch_index) {
+    std::vector<NlpGradientResult> batch_results(optimizer_config_.batch_size);
+    const auto evaluate_batch_item = [&](const std::size_t batch_index) {
         const auto& sequence = dataset.train[(state_.data_cursor + batch_index) % dataset.train.size()];
-        const auto gradient_result = model_.loss_and_gradients(sequence);
+        return model_.loss_and_gradients(sequence);
+    };
+    const auto worker_limit = std::min(optimizer_config_.worker_count, optimizer_config_.batch_size);
+    for (std::size_t batch_start = 0U; batch_start < optimizer_config_.batch_size; batch_start += worker_limit) {
+        const auto batch_end = std::min(batch_start + worker_limit, optimizer_config_.batch_size);
+        std::vector<std::future<NlpGradientResult>> futures;
+        if (worker_limit > 1U) futures.reserve(batch_end - batch_start);
+        for (std::size_t batch_index = batch_start; batch_index < batch_end; ++batch_index) {
+            if (worker_limit > 1U) {
+                futures.emplace_back(std::async(std::launch::async, evaluate_batch_item, batch_index));
+            } else {
+                batch_results[batch_index] = evaluate_batch_item(batch_index);
+            }
+        }
+        if (worker_limit > 1U) {
+            for (std::size_t future_index = 0U; future_index < futures.size(); ++future_index) {
+                batch_results[batch_start + future_index] = futures[future_index].get();
+            }
+        }
+    }
+    for (const auto& gradient_result : batch_results) {
         require(std::isfinite(gradient_result.cross_entropy) && std::isfinite(gradient_result.gradient_norm), "NLP training objective is non-finite");
         require(gradient_result.token_count > 0U && gradient_result.gradients.size() == model_.parameter_count(),
                 "NLP training gradient shape is invalid");
@@ -1216,41 +1425,39 @@ NlpTrainingPoint NlpTrainer::train_step(const NlpDataset& dataset) {
     for (auto& gradient : aggregate_gradients) gradient /= static_cast<double>(aggregate_tokens);
     require_finite(aggregate_gradients, "NLP training gradient is non-finite");
     const auto aggregate_gradient_norm = vector_norm(aggregate_gradients);
-    auto parameters = model_.parameter_vector();
-    auto next_first_moment = first_moment_;
-    auto next_second_moment = second_moment_;
+    model_.copy_parameter_vector_to(update_parameters_);
+    std::copy(first_moment_.begin(), first_moment_.end(), update_first_moment_.begin());
+    std::copy(second_moment_.begin(), second_moment_.end(), update_second_moment_.begin());
     const auto gradient_norm = aggregate_gradient_norm;
     const auto scale = std::min(1.0, optimizer_config_.clip_norm / std::max(gradient_norm, 1e-12));
     const auto learning_rate = scheduled_learning_rate();
     const auto step = state_.optimizer_step + 1U;
-    for (std::size_t index = 0; index < parameters.size(); ++index) {
+    const auto first_correction = 1.0 - std::pow(optimizer_config_.beta1, static_cast<double>(step));
+    const auto second_correction = 1.0 - std::pow(optimizer_config_.beta2, static_cast<double>(step));
+    for (std::size_t index = 0; index < update_parameters_.size(); ++index) {
         const auto gradient = aggregate_gradients[index] * scale;
-        next_first_moment[index] = optimizer_config_.beta1 * next_first_moment[index] + (1.0 - optimizer_config_.beta1) * gradient;
-        next_second_moment[index] = optimizer_config_.beta2 * next_second_moment[index] + (1.0 - optimizer_config_.beta2) * gradient * gradient;
-        const auto first_correction = 1.0 - std::pow(optimizer_config_.beta1, static_cast<double>(step));
-        const auto second_correction = 1.0 - std::pow(optimizer_config_.beta2, static_cast<double>(step));
-        const auto first_hat = next_first_moment[index] / std::max(first_correction, 1e-12);
-        const auto second_hat = next_second_moment[index] / std::max(second_correction, 1e-12);
-        parameters[index] -= learning_rate * (first_hat / (std::sqrt(second_hat) + optimizer_config_.epsilon) + optimizer_config_.weight_decay * parameters[index]);
+        update_first_moment_[index] = optimizer_config_.beta1 * update_first_moment_[index] + (1.0 - optimizer_config_.beta1) * gradient;
+        update_second_moment_[index] = optimizer_config_.beta2 * update_second_moment_[index] + (1.0 - optimizer_config_.beta2) * gradient * gradient;
+        const auto first_hat = update_first_moment_[index] / std::max(first_correction, 1e-12);
+        const auto second_hat = update_second_moment_[index] / std::max(second_correction, 1e-12);
+        update_parameters_[index] -= learning_rate * (first_hat / (std::sqrt(second_hat) + optimizer_config_.epsilon) + optimizer_config_.weight_decay * update_parameters_[index]);
     }
-    require_finite(next_first_moment, "NLP optimizer produced non-finite first moments");
-    require_finite(next_second_moment, "NLP optimizer produced non-finite second moments");
-    require_finite(parameters, "NLP optimizer produced non-finite parameters");
-    auto candidate_model = model_;
-    candidate_model.set_parameter_vector(parameters);
+    require_finite(update_first_moment_, "NLP optimizer produced non-finite first moments");
+    require_finite(update_second_moment_, "NLP optimizer produced non-finite second moments");
+    require_finite(update_parameters_, "NLP optimizer produced non-finite parameters");
+    model_.set_parameter_vector(update_parameters_);
     const auto training_elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - training_started).count();
     NlpEvaluation validation;
     double validation_elapsed = 0.0;
     const bool validation_performed = step % optimizer_config_.validation_interval_steps == 0U;
     if (validation_performed) {
         const auto validation_started = std::chrono::steady_clock::now();
-        validation = candidate_model.evaluate(dataset.validation);
+        validation = model_.evaluate(dataset.validation);
         validation_elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - validation_started).count();
         require(std::isfinite(validation.cross_entropy) && std::isfinite(validation.perplexity), "NLP validation metrics are non-finite");
     }
-    first_moment_ = std::move(next_first_moment);
-    second_moment_ = std::move(next_second_moment);
-    model_ = std::move(candidate_model);
+    first_moment_.swap(update_first_moment_);
+    second_moment_.swap(update_second_moment_);
     state_.optimizer_step = step;
     state_.data_cursor += optimizer_config_.batch_size;
     NlpTrainingPoint point;
@@ -1288,27 +1495,25 @@ NlpTrainingPoint NlpTrainer::train_preference_step(const NlpPreferencePair& pair
     const auto scale = std::min(1.0, optimizer_config_.clip_norm / std::max(gradient_norm, 1e-12));
     const auto learning_rate = scheduled_learning_rate();
     const auto step = state_.optimizer_step + 1U;
-    auto parameters = model_.parameter_vector();
-    auto next_first_moment = first_moment_;
-    auto next_second_moment = second_moment_;
-    for (std::size_t index = 0U; index < parameters.size(); ++index) {
+    model_.copy_parameter_vector_to(update_parameters_);
+    std::copy(first_moment_.begin(), first_moment_.end(), update_first_moment_.begin());
+    std::copy(second_moment_.begin(), second_moment_.end(), update_second_moment_.begin());
+    const auto first_correction = 1.0 - std::pow(optimizer_config_.beta1, static_cast<double>(step));
+    const auto second_correction = 1.0 - std::pow(optimizer_config_.beta2, static_cast<double>(step));
+    for (std::size_t index = 0U; index < update_parameters_.size(); ++index) {
         const auto gradient = gradients[index] * scale;
-        next_first_moment[index] = optimizer_config_.beta1 * next_first_moment[index] + (1.0 - optimizer_config_.beta1) * gradient;
-        next_second_moment[index] = optimizer_config_.beta2 * next_second_moment[index] + (1.0 - optimizer_config_.beta2) * gradient * gradient;
-        const auto first_correction = 1.0 - std::pow(optimizer_config_.beta1, static_cast<double>(step));
-        const auto second_correction = 1.0 - std::pow(optimizer_config_.beta2, static_cast<double>(step));
-        const auto first_hat = next_first_moment[index] / std::max(first_correction, 1e-12);
-        const auto second_hat = next_second_moment[index] / std::max(second_correction, 1e-12);
-        parameters[index] -= learning_rate * (first_hat / (std::sqrt(second_hat) + optimizer_config_.epsilon) + optimizer_config_.weight_decay * parameters[index]);
+        update_first_moment_[index] = optimizer_config_.beta1 * update_first_moment_[index] + (1.0 - optimizer_config_.beta1) * gradient;
+        update_second_moment_[index] = optimizer_config_.beta2 * update_second_moment_[index] + (1.0 - optimizer_config_.beta2) * gradient * gradient;
+        const auto first_hat = update_first_moment_[index] / std::max(first_correction, 1e-12);
+        const auto second_hat = update_second_moment_[index] / std::max(second_correction, 1e-12);
+        update_parameters_[index] -= learning_rate * (first_hat / (std::sqrt(second_hat) + optimizer_config_.epsilon) + optimizer_config_.weight_decay * update_parameters_[index]);
     }
-    require_finite(next_first_moment, "NLP preference optimizer first moment is non-finite");
-    require_finite(next_second_moment, "NLP preference optimizer second moment is non-finite");
-    require_finite(parameters, "NLP preference optimizer parameters are non-finite");
-    auto candidate_model = model_;
-    candidate_model.set_parameter_vector(parameters);
-    first_moment_ = std::move(next_first_moment);
-    second_moment_ = std::move(next_second_moment);
-    model_ = std::move(candidate_model);
+    require_finite(update_first_moment_, "NLP preference optimizer first moment is non-finite");
+    require_finite(update_second_moment_, "NLP preference optimizer second moment is non-finite");
+    require_finite(update_parameters_, "NLP preference optimizer parameters are non-finite");
+    model_.set_parameter_vector(update_parameters_);
+    first_moment_.swap(update_first_moment_);
+    second_moment_.swap(update_second_moment_);
     state_.optimizer_step = step;
     state_.data_cursor += 1U;
     NlpTrainingPoint point;
@@ -1382,7 +1587,7 @@ void NlpTrainer::save_checkpoint(const std::string& path) const {
     serialized << "optimizer=" << std::setprecision(17) << optimizer_config_.learning_rate << ' ' << optimizer_config_.beta1 << ' '
                << optimizer_config_.beta2 << ' ' << optimizer_config_.epsilon << ' ' << optimizer_config_.weight_decay << ' '
                << optimizer_config_.clip_norm << ' ' << optimizer_config_.warmup_steps << ' ' << optimizer_config_.batch_size << ' '
-               << optimizer_config_.total_steps << ' ' << optimizer_config_.validation_interval_steps << "\n";
+               << optimizer_config_.total_steps << ' ' << optimizer_config_.validation_interval_steps << ' ' << optimizer_config_.worker_count << "\n";
     serialized << "history_count=" << history_.size() << "\n";
     for (const auto& point : history_) {
         serialized << "history=" << point.step << ' ' << point.data_cursor << ' ' << point.learning_rate << ' '
@@ -1474,7 +1679,7 @@ NlpTrainer NlpTrainer::load_checkpoint(const std::string& path, const std::strin
             std::vector<std::size_t> optimizer_tail;
             std::size_t tail_value = 0U;
             while (values >> tail_value) optimizer_tail.push_back(tail_value);
-            require(optimizer_tail.size() >= 1U && optimizer_tail.size() <= 3U, "checkpoint optimizer field count is invalid");
+            require(optimizer_tail.size() >= 1U && optimizer_tail.size() <= 4U, "checkpoint optimizer field count is invalid");
             if (optimizer_tail.size() == 1U) {
                 optimizer.total_steps = optimizer_tail[0];
             } else if (optimizer_tail.size() == 2U) {
@@ -1484,6 +1689,7 @@ NlpTrainer NlpTrainer::load_checkpoint(const std::string& path, const std::strin
                 optimizer.batch_size = optimizer_tail[0];
                 optimizer.total_steps = optimizer_tail[1];
                 optimizer.validation_interval_steps = optimizer_tail[2];
+                if (optimizer_tail.size() == 4U) optimizer.worker_count = optimizer_tail[3];
             }
 
         } else if (line.rfind("history_count=", 0) == 0) {

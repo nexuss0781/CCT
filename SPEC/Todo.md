@@ -974,3 +974,20 @@ The approved academic learning path is defined in [`SPEC/Focused_English_Academi
 - [ ] Run the approved real-data Module 1.1 qualification session in the user’s persisted Colab Drive root.
 - [ ] Receive human Module 1.1 competency evidence and record PASS or FAIL.
 - [ ] Do not execute Module 1.2 until Module 1.1 receives a valid human PASS.
+
+## 12. Grand cross-architecture optimization upgrade
+
+The before/after contract is defined in [`SPEC/Optimization_Before_After_Contract.md`](Optimization_Before_After_Contract.md), and the completed audit is defined in [`SPEC/Optimization_Grand_Upgrade_Before_After.md`](Optimization_Grand_Upgrade_Before_After.md).
+
+- [x] Add reusable allocation-free matrix-vector and vocabulary-projection kernels across CCT, GRU, diagonal SSM, and dense attention forward paths.
+- [x] Add dense key/value reuse for sequence evaluation and bounded KV-cache inference.
+- [x] Add persistent incremental inference state for all four architectures with full-context equivalence tests.
+- [x] Add in-place stable softmax evaluation and reusable Adam optimizer scratch buffers.
+- [x] Add deterministic bounded worker-aware batch-gradient execution and persist worker count in the training contract.
+- [x] Apply optimizer scratch changes to supervised preference/SFT training.
+- [x] Reduce continual-session validation overhead while preserving explicit final phase evaluation.
+- [x] Add 17 NLP regressions, including incremental equivalence, worker determinism, and zero-worker fail-closed behavior.
+- [x] Run the full strict repository suite: 44/44 CTest passed.
+- [x] Run the frozen real-data before/after benchmark and optimized context/width sweeps for all four architectures.
+- [ ] Implement persistent worker pool, binary checkpoint V4, contiguous backward arenas, and float32/mixed-precision qualification before unrestricted large-corpus training.
+- [ ] Repeat the complete before/after audit after those remaining production-scale optimizations.
