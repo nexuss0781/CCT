@@ -308,6 +308,45 @@ void test_minibatch_checkpoint_resume() {
             "mini-batch optimizer configuration or cursor was not preserved in checkpoint");
 }
 
+void test_continuation_lineage_and_dataset_rebinding() {
+    const auto data = dataset();
+    auto next_data = data;
+    next_data.dataset_hash = "next-dataset-hash";
+    NlpOptimizerConfig optimizer;
+    optimizer.learning_rate = 0.01;
+    optimizer.warmup_steps = 1U;
+    optimizer.total_steps = 2U;
+    optimizer.validation_interval_steps = 1U;
+    NlpTrainer trainer(model_config(NlpModelKind::Track1CctRecurrence, 43), optimizer, data.tokenizer_hash, data.dataset_hash);
+    trainer.begin_continuation(data.dataset_hash, "level-0-session", "GENESIS", 2U);
+    trainer.train_steps(data, 2U);
+    trainer.save_checkpoint("artifacts/stage-11-continuation-session-0.bin");
+    const auto parent_hash = trainer.checkpoint_info().checkpoint_hash;
+    require(trainer.checkpoint_info().session_id == "level-0-session" && trainer.checkpoint_info().parent_checkpoint_hash == "GENESIS",
+            "initial continuation lineage metadata was not persisted in memory");
+    auto restored = NlpTrainer::load_checkpoint("artifacts/stage-11-continuation-session-0.bin", data.tokenizer_hash, data.dataset_hash);
+    require(restored.checkpoint_info().session_id == "level-0-session" &&
+                restored.checkpoint_info().parent_checkpoint_hash == "GENESIS" && restored.state().optimizer_step == 2U,
+            "V3 checkpoint lineage or optimizer state did not reload");
+    bool rejected = false;
+    try {
+        restored.begin_continuation(next_data.dataset_hash, "level-1-session", "wrong-parent", 2U);
+    } catch (const NlpTrainingError&) {
+        rejected = true;
+    }
+    require(rejected, "incorrect continuation parent checkpoint was accepted");
+    restored.begin_continuation(next_data.dataset_hash, "level-1-session", parent_hash, 2U);
+    require(restored.dataset_hash() == next_data.dataset_hash && restored.state().data_cursor == 0U &&
+                restored.optimizer_config().total_steps == 4U,
+            "dataset rebinding did not reset the chunk cursor or extend the global optimizer budget");
+    restored.train_steps(next_data, 2U);
+    restored.save_checkpoint("artifacts/stage-11-continuation-session-1.bin");
+    const auto reloaded = NlpTrainer::load_checkpoint("artifacts/stage-11-continuation-session-1.bin", data.tokenizer_hash, next_data.dataset_hash);
+    require(reloaded.checkpoint_info().session_id == "level-1-session" &&
+                reloaded.checkpoint_info().parent_checkpoint_hash == parent_hash && reloaded.state().optimizer_step == 4U,
+            "continued checkpoint lineage or global optimizer step was not durable");
+}
+
 void test_invalid_masks_and_nonfinite_parameters_fail_closed() {
     auto model = NextTokenModel(model_config(NlpModelKind::Track1CctRecurrence));
     auto invalid = sequence("invalid", {256, 257, 258});
@@ -435,6 +474,7 @@ int main() {
         {"deterministic_initialization_and_controls", test_deterministic_initialization_and_controls},
         {"checkpoint_resume_exactness_and_fail_closed", test_checkpoint_resume_exactness_and_fail_closed},
         {"minibatch_checkpoint_resume", test_minibatch_checkpoint_resume},
+        {"continuation_lineage_and_dataset_rebinding", test_continuation_lineage_and_dataset_rebinding},
         {"invalid_masks_and_nonfinite_parameters_fail_closed", test_invalid_masks_and_nonfinite_parameters_fail_closed},
         {"dataset_context_budget_and_optimizer_domain_fail_closed", test_dataset_context_budget_and_optimizer_domain_fail_closed}};
     std::size_t passed = 0;

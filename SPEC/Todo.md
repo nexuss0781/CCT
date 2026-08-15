@@ -701,6 +701,56 @@ cat artifacts/track1/training/training_report.json
 
 ---
 
+# Focused-English Competency Continual-Learning Milestone
+
+**Objective:** Replace one-shot training progression with a governed sequence of focused-English competency sessions. Each session selects disjoint pinned source ranges, trains from the previous immutable checkpoint, records held-out and test identities, stops for human mastery validation, and advances only after an exact user-supplied `PASS` record.
+
+**Status:** `[x] IMPLEMENTED; [ ] HUMAN CURRICULUM MASTERY PENDING`. The native implementation and state machine are complete and smoke-validated. No real competency is marked mastered automatically.
+
+## Dataset and curriculum contract
+
+- [x] Select and document FineWeb-Edu `sample-10BT` as the focused-English pretraining source at pinned revision `87f09149ef4734204d70ed1d046ddc9ca3f2b8f9`.
+- [x] Select and document English-filtered OpenAssistant/oasst1 as the supervised source at pinned revision `fdf72ae0827c1cda404aff25b6603abec9e3399b`.
+- [x] Define disjoint train, validation, and held-out test row ranges, stable source-ID manifests, language/quality filters, and SHA-256 source digests.
+- [x] Define the competency ladder from symbols/word boundaries through grammar, paragraph coherence, comprehension, instruction following, ambiguity recognition, continuity/repair, and bounded transfer.
+- [x] Preserve the curriculum specification in `SPEC/Continual_Learning_Curriculum.md` and dataset research in `artifacts/continual_learning_dataset_research.md`.
+
+## Native implementation
+
+- [x] Add `cpp/tools/curriculum_prepare.cpp` for native C++ row acquisition, JSON decoding, filtering, exact accepted counts, split disjointness, manifests, and source hashes.
+- [x] Add `cpp/tools/curriculum_session.cpp` for native CCT pretraining plus SFT on one session chunk, immutable intermediate/final checkpoints, reload verification, finite held-out metrics, and human-test identity.
+- [x] Extend NLP checkpoint serialization to V3 with session ID and parent-checkpoint hash while retaining V2 loading compatibility.
+- [x] Add explicit trainer continuation rebinding that changes dataset identity, resets the new-chunk cursor, preserves optimizer moments/global step, and verifies parent lineage.
+- [x] Add regression coverage for V3 lineage, wrong-parent rejection, dataset rebinding, cursor reset, and global optimizer-step continuation; the NLP trainer suite passes `14/14`.
+- [x] Integrate preparation, one-session training, human validation stop, PASS advancement, one controlled retry, and terminal two-failure diagnosis into root `run.sh`.
+- [x] Make the human test non-automatic: the session report records `pretrain_test_sha256`, `human_test_file`, and `human_test_automatic:false`; the evaluator supplies the result.
+
+## State-machine and validation evidence
+
+- [x] `READY_TO_TRAIN` selects exactly one level/attempt and writes a durable state record.
+- [x] `AWAITING_HUMAN_VALIDATION` stops execution and requires exact session ID, checkpoint hash, evaluator, timestamp, observations, and `PASS`/`FAIL` JSON.
+- [x] `PASS` advances exactly one level while retaining the mastered checkpoint as the next parent.
+- [x] First `FAIL` selects a fresh disjoint retry range at the same level and preserves the failed checkpoint.
+- [x] Second `FAIL` enters `ARCHITECTURE_DIAGNOSIS_REQUIRED` and blocks silent architecture or data changes.
+- [x] Root `run.sh` completes a real API-row smoke session through `AWAITING_HUMAN_VALIDATION`; temporary smoke tests also verified PASS advancement, retry, and terminal diagnosis behavior.
+- [x] Strict Release and expanded-warning builds pass; full native CTest remains `44/44` in both profiles, and direct documentation consistency passes `1/1`.
+
+## Run artifacts and transition
+
+- [x] Canonical user workflow: `bash run.sh`.
+- [x] Execution guide: `RUN_TRAINING.md`.
+- [x] Durable curriculum state: `runs/curriculum-focused-english/state.env`.
+- [x] Per-session data: `runs/curriculum-focused-english/data/<session-id>/`.
+- [x] Per-session checkpoints/reports/mastery packet: `runs/curriculum-focused-english/sessions/<session-id>/`.
+- [ ] Execute the first non-smoke real curriculum session and review its held-out/test evidence.
+- [ ] Supply the first human mastery validation record; do not use smoke observations as language evidence.
+- [ ] Complete each competency only after human PASS; stop and diagnose after the controlled two-failure rule.
+- [ ] Record explicit user approval before implementing L1-9 conversational or bounded teaching behavior.
+
+**Transition:** `IMPLEMENTED` does not mean English mastery. The next action is the user’s `bash run.sh` execution and human review of the first mastery packet. Conversational/teaching work remains blocked until the declared curriculum evidence and explicit approval exist.
+
+---
+
 # Stage L1-9 — Bounded Teaching Behavior
 
 **Objective:** Demonstrate that CCT can communicate, demonstrate, evaluate, correct, and abstain through a defined teacher interface.

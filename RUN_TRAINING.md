@@ -1,6 +1,6 @@
-# One-Command Native CCT Training and Evaluation
+# One-Command Native CCT Competency Training
 
-The repository root `run.sh` is the canonical one-command workflow for the next Level 1 training run. It is a native C++20 path: it verifies or installs the Ubuntu build dependencies, downloads and prepares the pinned real Track 1 sources, builds the CCT executables, trains the Track 1 CCT recurrence through pretraining and supervised fine-tuning, evaluates the held-out and frozen splits, qualifies CCT against GRU, diagonal SSM, and dense causal attention under a matched contract, runs the independent gates, and writes a durable run bundle.
+The repository root `run.sh` is now the canonical focused-English continual-learning workflow. It is implemented in native C++20 and orchestrated by one shell command. On each invocation it verifies or installs Ubuntu build dependencies, builds the native preparation and session executables, selects one deterministic range from pinned real datasets, trains one competency session, publishes immutable checkpoints and lineage reports, writes a human mastery packet, and stops. It never automatically declares a competency mastered.
 
 > **Run command:**
 >
@@ -9,71 +9,115 @@ The repository root `run.sh` is the canonical one-command workflow for the next 
 > bash run.sh
 > ```
 
-The script requires Internet access for source acquisition. If a dependency is missing, it attempts non-interactive Ubuntu installation with `apt-get`; this requires root or passwordless `sudo`. No Python runtime is used by the training or evaluation path. The native requirements are C++20, CMake, `pkg-config`, FFTW3 development files, `curl`, `zip`, and `unzip`.
+The first invocation creates the durable state directory `runs/curriculum-focused-english/`, prepares the first session, trains it, and stops with `AWAITING_HUMAN_VALIDATION`. Review the generated mastery packet and test the checkpoint on unseen prompts yourself. Then write the required validation JSON at the path printed by the script and run `bash run.sh` again. A human `PASS` advances exactly one curriculum level. A human `FAIL` causes one controlled retry at the same level on a disjoint source range. Two failures stop the workflow in `ARCHITECTURE_DIAGNOSIS_REQUIRED`.
 
-## Default training contract
+The script requires Internet access for the pinned Hugging Face rows API. If a dependency is missing, it attempts non-interactive Ubuntu installation with `apt-get`; this requires root or passwordless `sudo`. No Python runtime is used by data preparation, training, checkpointing, or evaluation. The native requirements are C++20, CMake, `pkg-config`, FFTW3 development files, `curl`, `sha256sum`, `zip`, and `unzip`.
 
-| Setting | Default |
-|---|---:|
-| WikiText pretraining token cap | 2,000,000 |
-| Track 1 pretraining steps | 10,000 |
-| Track 1 SFT steps | 2,000 |
-| Context length | 128 |
-| Embedding and hidden width | 16 / 16 |
-| Seed | 1701 |
-| Architecture qualification steps | 10,000 |
-| Architecture qualification batch | 8 |
-| Architecture train/evaluation caps | 5,000 / 128 sequences |
-| Architecture vocabulary mode | Compact |
-| Full CTest suite | Enabled |
+## Dataset contract
 
-The default workflow is intentionally a real-data run rather than a smoke test. Training remains bounded and reproducible; it is not a claim of broad language competence, human-speaker equivalence, production readiness, or general intelligence.
+The initial pretraining source is the English educational FineWeb-Edu `sample-10BT` configuration at the pinned revision recorded in the session manifest. FineWeb-Edu is a large educational web corpus with text, stable identifiers, language metadata, token counts, and educational quality scores.[1] The supervised source is English-filtered OpenAssistant/oasst1 at its pinned revision; the native preparer retains stable message IDs, language, role, review, deletion, and tree metadata.[2] The downloader requests explicit row ranges from the official datasets-server API, applies the declared filters, records selected IDs, and writes a source digest.
 
-## Configuration overrides
+Each session contains disjoint pretraining train, validation, and test rows. The OpenAssistant training and validation rows are also selected from separate ranges. The actual source revisions, offsets, requested counts, selected IDs, text-file hashes, and manifest hash are stored in `data/<session-id>/manifest.json` and `data/<session-id>/source_digest.txt`. A future dataset change requires a new explicit revision and should not silently reuse an old session state.
 
-The workflow accepts environment variables so the same script can be used for a bounded validation or a larger run without editing source code.
+| Source | Role | Default pinned configuration | Native output |
+|---|---|---|---|
+| FineWeb-Edu | Focused-English pretraining | `sample-10BT`, `train` | `pretrain_train.txt`, `pretrain_validation.txt`, `pretrain_test.txt` |
+| OpenAssistant/oasst1 | English supervised response-format practice | `default`, `train` | `sft_train.txt`, `sft_validation.txt` |
+| Human-provided prompts | Mastery validation only | User-controlled and unseen | `validation/<session-id>.json` |
 
-| Variable | Purpose |
-|---|---|
-| `RUN_ID` | Names the output directory below `runs/`. |
-| `JOBS` | Controls CMake build parallelism; default is `2`. |
-| `PRETRAIN_TOKEN_CAP` | Changes the real WikiText preparation cap. |
-| `SFT_EXAMPLES`, `SFT_EVAL_EXAMPLES` | Changes governed SQuAD training/evaluation selection sizes. |
-| `PRETRAIN_STEPS`, `SFT_STEPS` | Changes Track 1 CCT training budgets. |
-| `CONTEXT_LENGTH`, `EMBEDDING_DIM`, `HIDDEN_DIM` | Changes Track 1 and matched qualification model dimensions. |
-| `ARCHITECTURE_STEPS`, `ARCHITECTURE_BATCH` | Changes the matched four-architecture qualification budget. |
-| `ARCHITECTURE_TRAIN_SEQUENCES`, `ARCHITECTURE_EVAL_SEQUENCES` | Changes qualification sequence caps. |
-| `SKIP_DATA_PREPARATION=1` and `PREP_DIR=...` | Reuses an already prepared Track 1 directory. |
-| `RUN_FULL_CTEST=0` | Skips the complete 44-test suite when only focused training validation is desired. |
-| `INSTALL_DEPENDENCIES=0` | Disables automatic package installation and fails if a dependency is missing. |
-| `SMOKE=1` | Runs bounded orchestration validation; expected architecture coherence failure is recorded as `EXPECTED_SMOKE_FAIL` and is not a quality result. |
+## Competency ladder
 
-For example, a bounded local orchestration check using already prepared real data is:
+The curriculum starts with stable English symbols and word boundaries, then progresses through local grammar, paragraph coherence, reading comprehension, instruction following, ambiguity recognition, conversational continuity, and bounded transfer. Levels 0–2 must be demonstrated before conversational levels are attempted. The exact prompt and validation requirements are copied into each session’s `mastery_prompt.md`.
+
+The automatic report supplies finite before/after held-out metrics, test data identity, checkpoint hashes, parent lineage, optimizer steps, and token throughput. These are evidence for the human evaluator, not substitutes for human mastery judgment. The validation record must contain at least five unseen prompt observations, an evaluator identifier, a timestamp, the exact session ID, the exact checkpoint hash, and either `PASS` or `FAIL`.
+
+## Required human validation record
+
+The script prints the exact required path. The following is the required schema; preserve the session and checkpoint values generated by the script.
+
+```json
+{
+  "session_id": "level-0-attempt-0",
+  "checkpoint_hash": "replace-with-session-checkpoint-hash",
+  "competency": "stable_symbols_and_word_boundaries",
+  "result": "PASS",
+  "evaluator": "replace-with-your-identifier",
+  "timestamp_utc": "2026-08-15T00:00:00Z",
+  "observations": [
+    "prompt 1: ...",
+    "prompt 2: ...",
+    "prompt 3: ...",
+    "prompt 4: ...",
+    "prompt 5: ..."
+  ],
+  "diagnosis": "optional"
+}
+```
+
+Do not mark `PASS` from training loss, perplexity, token accuracy, or a short automatic continuation alone. The mastery decision is intentionally external to the automatic training path. If a session fails, preserve its checkpoint and report; do not overwrite it or change architecture before the controlled retry has completed.
+
+## Default curriculum configuration
+
+| Variable | Default | Meaning |
+|---|---:|---|
+| `CURRICULUM_MODE` | `1` | Enables the continual-learning state machine. Set `0` only for the legacy Track 1 workflow. |
+| `CURRICULUM_ROOT` | `runs/curriculum-focused-english` | Durable state, data, validation, and session root. |
+| `CURRICULUM_CHUNK_ROWS` | `100` | Requested accepted training rows per source per session. |
+| `CURRICULUM_VALIDATION_ROWS` | `40` | Requested validation rows per source per session. |
+| `CURRICULUM_TEST_ROWS` | `40` | Requested held-out FineWeb test rows per session. |
+| `CURRICULUM_PRETRAIN_STEPS` | `100` | Native CCT pretraining steps per session. |
+| `CURRICULUM_SFT_STEPS` | `50` | Native CCT SFT steps per session. |
+| `CURRICULUM_MAX_LEVEL` | `7` | Last declared level in the curriculum. |
+| `CONTEXT_LENGTH` | `128` | Native sequence context. |
+| `EMBEDDING_DIM`, `HIDDEN_DIM` | `16`, `16` | Native compact CCT dimensions. |
+| `ARCHITECTURE_BATCH` | `8` | Token-weighted mini-batch size. |
+| `SEED` | `1701` | Deterministic initialization and session seed. |
+| `FINEWEB_REVISION` | pinned SHA | FineWeb-Edu dataset revision. |
+| `OASST_REVISION` | pinned SHA | OpenAssistant dataset revision. |
+| `MINIMUM_EDUCATION_SCORE` | `2.0` | FineWeb-Edu quality threshold. |
+| `RUN_FULL_CTEST` | `1` | Runs the full native repository suite after the build. |
+| `INSTALL_DEPENDENCIES` | `1` | Allows automatic package installation when needed. |
+
+For a bounded orchestration check that does not count as language evidence, use an isolated state root:
 
 ```bash
 SMOKE=1 \
-SKIP_DATA_PREPARATION=1 \
-PREP_DIR="$PWD/artifacts/track1/real-release" \
+MINIMUM_EDUCATION_SCORE=0 \
+CURRICULUM_ROOT=/tmp/cct-curriculum-smoke \
+RUN_ROOT=/tmp/cct-curriculum-runs \
 RUN_FULL_CTEST=0 \
 bash run.sh
 ```
 
-## Output bundle
+## Checkpoint and lineage behavior
 
-Each run creates `runs/<run-id>/`, and `runs/latest` points to the most recent run. The most important files are shown below.
+Every session publishes `pretrain_checkpoint.bin` and the final `checkpoint.bin`. The checkpoint format is V3 and retains the tokenizer hash, current dataset hash, optimizer state, global optimizer step, session ID, and parent checkpoint hash. The native trainer atomically publishes checkpoints, supports V2 loading for backward compatibility, verifies model configuration on continuation, resets the new chunk cursor, and retains optimizer moments and global step across sessions.
 
-| File | Contents |
+The state file is a small generated scalar record at `CURRICULUM_ROOT/state.env`. Its meaningful states are `READY_TO_TRAIN`, `AWAITING_HUMAN_VALIDATION`, `READY_TO_RETRY`, `ARCHITECTURE_DIAGNOSIS_REQUIRED`, and `CURRICULUM_COMPLETE`. Never edit it to bypass a pending validation record. The evidence of each session remains under `CURRICULUM_ROOT/sessions/<session-id>/`, and each retry uses a fresh source range.
+
+## Main output files
+
+| Path | Contents |
 |---|---|
-| `run_summary.json` | Final status and paths to all key outputs. |
-| `run_config.json` | Exact configuration and claim boundary. |
-| `track1/` | Prepared manifests, source attestations, evaluation contract, and data splits. |
-| `training/training_report.json` | Track 1 pretraining/SFT metrics and checkpoint lineage. |
-| `training/pretrain_checkpoint.bin` | Native CCT pretraining checkpoint. |
-| `training/sft_checkpoint.bin` | Native CCT SFT checkpoint. |
-| `track1-gate/` | Independent Track 1 provenance, isolation, replay, and training gate outputs. |
-| `architecture-qualification/report.json` | Matched CCT/GRU/SSM/attention results and generation diagnostics. |
-| `architecture-qualification/gate/checks.json` | Machine-readable 10-check architecture gate. |
-| `ctest.log` | Complete native CTest output when enabled. |
-| `artifact_sha256.txt` | SHA-256 identities for the principal run artifacts. |
+| `runs/<run-id>/run_config.json` | Exact invocation configuration and claim boundary. |
+| `runs/<run-id>/run_summary.json` | Session completion or wait state. |
+| `CURRICULUM_ROOT/state.env` | Durable curriculum pointer and lineage path. |
+| `CURRICULUM_ROOT/data/<session-id>/manifest.json` | Dataset revisions, row ranges, filters, selected IDs, and output files. |
+| `CURRICULUM_ROOT/data/<session-id>/source_digest.txt` | SHA-256 digests for source manifest and split text files. |
+| `CURRICULUM_ROOT/sessions/<session-id>/session_report.json` | Before/after metrics, lineage, and checkpoint hashes. |
+| `CURRICULUM_ROOT/sessions/<session-id>/pretrain_checkpoint.bin` | Intermediate native checkpoint after the pretraining phase. |
+| `CURRICULUM_ROOT/sessions/<session-id>/checkpoint.bin` | Immutable final checkpoint for the session. |
+| `CURRICULUM_ROOT/sessions/<session-id>/mastery_prompt.md` | Human competency test instructions and validation schema. |
+| `CURRICULUM_ROOT/validation/<session-id>.json` | User-supplied mastery decision. |
+| `CURRICULUM_ROOT/retry_required.md` | First-failure controlled-retry explanation. |
+| `CURRICULUM_ROOT/architecture_diagnosis_required.md` | Terminal two-failure diagnosis gate. |
 
-The selected production decoding policy is deterministic no-repeat decoding. Greedy continuations remain recorded as a diagnostic baseline; the workflow does not relabel them as human-like fluency.
+## Claim boundary
+
+This workflow is a disciplined training and evaluation protocol for a focused-English research engine. A human `PASS` means only that the declared competency was judged demonstrated on the supplied unseen prompts under the recorded session contract. It does not establish broad language competence, factual reliability, human-speaker equivalence, production readiness, safety approval, or general intelligence.
+
+## References
+
+[1]: https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu "HuggingFaceFW/fineweb-edu dataset card"
+[2]: https://huggingface.co/datasets/OpenAssistant/oasst1 "OpenAssistant/oasst1 dataset card"
+[3]: https://huggingface.co/docs/dataset-viewer/en/rows "Hugging Face Dataset Viewer rows API"
